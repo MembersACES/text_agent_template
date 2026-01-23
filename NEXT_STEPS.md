@@ -12,3 +12,9 @@ v2
 - interface to update the prompt of the agent
 - interface to update the content of the knowledge base
 
+- End of chat report
+- variable injection
+
+- Added guardrails
+- Sensitive data
+- External API integration
