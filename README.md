@@ -1,36 +1,101 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Design AI Chatbot
 
-## Getting Started
+A simple chatbot application built with Next.js 16, Tailwind CSS, and Google Gemini AI.
 
-First, run the development server:
+## Features
+
+- 🎨 Clean, modern UI with orange-themed design
+- 💬 Real-time chat with Google Gemini AI
+- 🔒 Secure API implementation (no API keys exposed to client)
+- ⚡ Fast and responsive
+- 📱 Mobile-friendly design
+
+## Setup Instructions
+
+### 1. Install Dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure Environment Variables
+
+You need to add your Google Gemini API key to the `.env.local` file:
+
+1. Get your Gemini API key from: [https://makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey)
+2. Open the `.env.local` file in the project root
+3. Add your API key:
+
+```env
+GEMINI_API_KEY=your_actual_api_key_here
+```
+
+**Important:** 
+- Never commit your `.env.local` file to version control
+- The API key is only used server-side and never exposed to the browser
+- `.env.local` is already in `.gitignore` to prevent accidental commits
+
+### 3. Run the Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 4. Use the Chatbot
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Click the orange chat button in the bottom right corner
+2. The chat window will open with a welcome message
+3. Type your message and press Enter or click the send button
+4. The AI will respond to your questions
 
-## Learn More
+## Project Structure
 
-To learn more about Next.js, take a look at the following resources:
+```
+text-agent-template/
+├── app/
+│   ├── api/
+│   │   └── chat/
+│   │       └── route.ts          # API endpoint for chat (server-side only)
+│   ├── components/
+│   │   └── ChatWindow.tsx        # Main chat UI component
+│   ├── layout.tsx                # Root layout
+│   ├── page.tsx                  # Home page with chat button
+│   └── globals.css               # Global styles
+├── .env.local                    # Environment variables (DO NOT COMMIT)
+├── .env.example                  # Example environment file
+└── package.json
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## How It Works
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. **Client Side**: User types a message in the chat interface
+2. **API Call**: Message is sent to `/api/chat` endpoint via POST request
+3. **Server Side**: The API route receives the message and calls Google Gemini API
+4. **Response**: Gemini's response is sent back to the client and displayed in the chat
 
-## Deploy on Vercel
+## Security
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- ✅ API keys are stored in environment variables
+- ✅ API calls to Gemini are made server-side only
+- ✅ No sensitive data is exposed to the browser
+- ✅ `.env.local` is gitignored
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tech Stack
+
+- **Framework**: Next.js 16 (App Router)
+- **Styling**: Tailwind CSS
+- **AI**: Google Gemini AI
+- **Language**: TypeScript
+
+## Build for Production
+
+```bash
+npm run build
+npm start
+```
+
+## License
+
+MIT
