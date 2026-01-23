@@ -114,6 +114,7 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
                     </div>
                     <div className="flex items-center gap-1.5">
                         <button
+                            onClick={onClose}
                             className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-1.5 transition-colors"
                             aria-label="Minimize"
                         >
@@ -122,6 +123,7 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
                             </svg>
                         </button>
                         <button
+                            onClick={onClose}
                             className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-1.5 transition-colors"
                             aria-label="Close"
                         >
