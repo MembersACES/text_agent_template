@@ -41,13 +41,16 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
         setIsLoading(true);
 
         try {
-            // Call API
+            // Call API with knowledge base enabled
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message: userMessage }),
+                body: JSON.stringify({
+                    message: userMessage,
+                    useKnowledgeBase: true  // Always query KB, AI decides if context is relevant
+                }),
             });
 
             const data = await response.json();
