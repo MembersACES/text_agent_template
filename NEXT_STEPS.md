@@ -15,6 +15,8 @@ v2
 - End of chat report
 - variable injection
 
+- Contigency plan when models are done to use other models
+- Tracking 
 - Added guardrails
 - Sensitive data
 - External API integration
