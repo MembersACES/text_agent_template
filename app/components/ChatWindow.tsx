@@ -20,7 +20,30 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
     ]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [showEndChatPopup, setShowEndChatPopup] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const handleCloseClick = () => {
+        setShowEndChatPopup(true);
+    };
+
+    const confirmEndChat = async () => {
+        try {
+            await fetch('/api/end-of-chat-report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: messages,
+                    dynamicVariables: []
+                })
+            });
+        } catch (err) {
+            console.error("Failed to save chat logs", err);
+        }
+
+        setShowEndChatPopup(false);
+        onClose();
+    };
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -41,7 +64,6 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
         setIsLoading(true);
 
         try {
-            // Call API with knowledge base enabled
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
@@ -49,7 +71,7 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
                 },
                 body: JSON.stringify({
                     message: userMessage,
-                    useKnowledgeBase: true  // Always query KB, AI decides if context is relevant
+                    useKnowledgeBase: true
                 }),
             });
 
@@ -59,7 +81,6 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
                 throw new Error(data.error || 'Failed to get response');
             }
 
-            // Add AI response
             setMessages(prev => [
                 ...prev,
                 { role: 'assistant', content: data.response },
@@ -94,7 +115,40 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
             />
 
             {/* Floating Chat Window */}
-            <div className="fixed bottom-28 right-8 w-[530px] h-[680px] bg-white rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-up">
+            <div className="fixed bottom-28 right-8 w-[530px] h-[680px] bg-white rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-up relative">
+
+                {/* End Chat Popup Overlay */}
+                {showEndChatPopup && (
+                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm p-6">
+                        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 flex flex-col items-center animate-scale-in border border-gray-100">
+                            <h3 className="text-xl font-medium text-gray-900 mb-8 text-center leading-relaxed">
+                                Do you want to end this chat?
+                            </h3>
+
+                            <div className="w-full space-y-3">
+                                <button
+                                    onClick={confirmEndChat}
+                                    className="w-full py-3 px-4 bg-white border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 group"
+                                >
+                                    <svg className="w-5 h-5 text-gray-400 group-hover:text-green-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                    Yes, I'm done
+                                </button>
+
+                                <button
+                                    onClick={() => setShowEndChatPopup(false)}
+                                    className="w-full py-3 px-4 bg-white border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 group"
+                                >
+                                    <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                    No, go back
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {/* Header */}
                 <div className="bg-gradient-to-r from-orange-400 to-orange-500 rounded-t-2xl px-5 py-3.5 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
@@ -126,7 +180,7 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
                             </svg>
                         </button>
                         <button
-                            onClick={onClose}
+                            onClick={handleCloseClick}
                             className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-1.5 transition-colors"
                             aria-label="Close"
                         >
@@ -235,7 +289,7 @@ export default function ChatWindow({ onClose }: ChatWindowProps) {
 
             {/* Floating Close Button */}
             <button
-                onClick={onClose}
+                onClick={handleCloseClick}
                 className="fixed bottom-8 right-8 w-16 h-16 bg-gray-900 hover:bg-gray-800 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 animate-morph-to-x group z-[60] border-4 border-blue-500"
                 aria-label="Close chat"
             >
