@@ -39,7 +39,7 @@ export async function POST(request: Request) {
             .join('\n\n---\n\n');
 
         // 5. Generate answer using Gemini
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
         const prompt = `You are a helpful assistant answering questions based on the provided document context.
 
