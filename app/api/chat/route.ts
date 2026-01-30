@@ -3,6 +3,23 @@ import { NextResponse } from 'next/server';
 import { generateEmbedding } from '@/lib/embeddings';
 import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { findSimilarChunks } from '@/lib/document-chunker';
+import { traceable } from 'langsmith/traceable';
+
+const retrieveContext = traceable(async (query: string) => {
+    const kb = await getCachedKnowledgeBase();
+    if (!kb) return null;
+
+    const queryEmbedding = await generateEmbedding(query);
+    const similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
+
+    return similarChunks;
+}, { name: "retrieve_documents" });
+
+const generateAIResponse = traceable(async ({ model, prompt }: { model: any, prompt: string }) => {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+}, { name: "generate_answer" });
 
 export async function POST(request: Request) {
     try {
@@ -34,16 +51,12 @@ export async function POST(request: Request) {
 
         // If knowledge base mode is enabled, retrieve relevant context
         if (useKnowledgeBase) {
-            const kb = await getCachedKnowledgeBase();
+            const similarChunks = await retrieveContext(message);
 
-            if (kb) {
-                // Generate query embedding and find similar chunks
-                const queryEmbedding = await generateEmbedding(message);
-                const similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
-
+            if (similarChunks) {
                 // Build context from chunks
                 const context = similarChunks
-                    .map((chunk, i) => `[Source ${i + 1}]:\n${chunk.text}`)
+                    .map((chunk: any, i: number) => `[Source ${i + 1}]:\n${chunk.text}`)
                     .join('\n\n---\n\n');
 
                 // Enhance message with context
@@ -73,7 +86,7 @@ Remember: ONE step at a time. Keep it SHORT and FRIENDLY.
 
 Response:`;
 
-                sources = similarChunks.map((chunk, i) => ({
+                sources = similarChunks.map((chunk: any, i: number) => ({
                     id: i + 1,
                     text: chunk.text,
                     similarity: chunk.score,
@@ -81,10 +94,8 @@ Response:`;
             }
         }
 
-        // Generate response
-        const result = await model.generateContent(finalMessage);
-        const response = await result.response;
-        const text = response.text();
+        // Generate response using the traceable function
+        const text = await generateAIResponse({ model, prompt: finalMessage });
 
         return NextResponse.json({
             response: text,

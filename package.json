@@ -12,6 +12,7 @@
     "@google-cloud/storage": "^7.18.0",
     "@google/generative-ai": "^0.24.1",
     "googleapis": "^170.1.0",
+    "langsmith": "^0.4.11",
     "next": "16.1.4",
     "react": "19.2.3",
     "react-dom": "19.2.3"
