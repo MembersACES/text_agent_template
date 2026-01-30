@@ -56,7 +56,10 @@ export async function POST(request: Request) {
             if (similarChunks) {
                 // Build context from chunks
                 const context = similarChunks
-                    .map((chunk: any, i: number) => `[Source ${i + 1}]:\n${chunk.text}`)
+                    .map((chunk: any, i: number) => {
+                        const sourceInfo = chunk.source ? ` (File: ${chunk.source})` : '';
+                        return `[Source ${i + 1}${sourceInfo}]:\n${chunk.text}`;
+                    })
                     .join('\n\n---\n\n');
 
                 // Enhance message with context
@@ -90,6 +93,7 @@ Response:`;
                     id: i + 1,
                     text: chunk.text,
                     similarity: chunk.score,
+                    source: chunk.source // Pass source metadata to client
                 }));
             }
         }

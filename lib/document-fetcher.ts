@@ -42,3 +42,36 @@ export async function getDocumentMetadata(documentId: string) {
         name: response.data.name || '',
     };
 }
+
+// List files in a Google Drive folder
+export async function listFilesInFolder(folderId: string): Promise<Array<{ id: string; name: string; modifiedTime: string }>> {
+    const auth = getGoogleAuth();
+    const drive = google.drive({ version: 'v3', auth });
+
+    const response = await drive.files.list({
+        q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false`,
+        fields: 'files(id, name, modifiedTime)',
+        pageSize: 100, // Limit to 100 files to avoid overwhelming
+    });
+
+    return (response.data.files || []).map(f => ({
+        id: f.id || '',
+        name: f.name || '',
+        modifiedTime: f.modifiedTime || '',
+    }));
+}
+
+// Get folder metadata
+export async function getFolderMetadata(folderId: string) {
+    const auth = getGoogleAuth();
+    const drive = google.drive({ version: 'v3', auth });
+
+    const response = await drive.files.get({
+        fileId: folderId,
+        fields: 'name',
+    });
+
+    return {
+        name: response.data.name || 'Knowledge Base',
+    };
+}

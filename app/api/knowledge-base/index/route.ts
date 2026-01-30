@@ -1,70 +1,157 @@
 import { NextResponse } from 'next/server';
-import { fetchGoogleDoc, getDocumentMetadata } from '@/lib/document-fetcher';
+import { fetchGoogleDoc, listFilesInFolder, getFolderMetadata } from '@/lib/document-fetcher';
 import { chunkDocument } from '@/lib/document-chunker';
 import { generateEmbeddings } from '@/lib/embeddings';
-import { saveKnowledgeBase } from '@/lib/knowledge-base-storage';
+import { saveKnowledgeBase, loadKnowledgeBase } from '@/lib/knowledge-base-storage';
 
 export async function POST() {
     try {
-        const documentId = process.env.GOOGLE_DOC_ID;
+        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
-        if (!documentId) {
+        if (!folderId) {
             return NextResponse.json(
-                { error: 'GOOGLE_DOC_ID not configured' },
+                { error: 'GOOGLE_DRIVE_FOLDER_ID not configured' },
                 { status: 500 }
             );
         }
 
-        console.log('Starting document indexing...');
+        console.log('Starting knowledge base indexing...');
 
-        // 1. Fetch document
-        console.log('Fetching document from Google Drive...');
-        const text = await fetchGoogleDoc(documentId);
-        const metadata = await getDocumentMetadata(documentId);
+        // Load existing knowledge base to check for changes
+        const existingKB = await loadKnowledgeBase();
+        const existingFileMetadata = existingKB?.fileMetadata || {};
 
-        console.log(`Document fetched: "${metadata.name}" (${text.length} characters)`);
+        let allChunks: Array<{ text: string; embedding: number[]; source?: string }> = [];
+        let fileMetadata: Record<string, { modifiedTime: string; chunkCount: number }> = {};
+        let totalStats = {
+            processedDocs: 0,
+            skippedDocs: 0,
+            totalOriginalChars: 0,
+            totalChunks: 0
+        };
 
-        // 2. Chunk document
-        console.log('Chunking document...');
-        const textChunks = chunkDocument(text);
-        console.log(`Created ${textChunks.length} chunks`);
+        console.log(`Processing folder: ${folderId}`);
 
-        // 3. Generate embeddings
-        console.log('Generating embeddings...');
-        const embeddings = await generateEmbeddings(textChunks);
-        console.log('Embeddings generated');
+        // Get folder metadata
+        const folderMeta = await getFolderMetadata(folderId);
+        const kbName = folderMeta.name;
 
-        // 4. Combine chunks with embeddings
-        const chunks = textChunks.map((text, i) => ({
-            text,
-            embedding: embeddings[i],
-        }));
+        // List all files in folder
+        const files = await listFilesInFolder(folderId);
+        console.log(`Found ${files.length} documents in folder`);
 
-        // 5. Save to Cloud Storage
-        console.log('Saving to Cloud Storage...');
+        // Keep track of which files are still in the folder
+        const currentFileIds = new Set(files.map(f => f.id));
+
+        // First, preserve chunks from files that haven't changed
+        if (existingKB) {
+            for (const chunk of existingKB.chunks) {
+                const sourceFileName = chunk.source;
+                if (!sourceFileName) continue;
+
+                // Find the file by name in current folder
+                const currentFile = files.find(f => f.name === sourceFileName);
+
+                if (currentFile && existingFileMetadata[currentFile.id]) {
+                    const existingMeta = existingFileMetadata[currentFile.id];
+
+                    // If file hasn't been modified, keep existing chunks
+                    if (existingMeta.modifiedTime === currentFile.modifiedTime) {
+                        allChunks.push(chunk);
+
+                        // Only add to fileMetadata once per file
+                        if (!fileMetadata[currentFile.id]) {
+                            fileMetadata[currentFile.id] = existingMeta;
+                            totalStats.skippedDocs++;
+                            console.log(`✓ Skipping unchanged file: ${currentFile.name}`);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now process new or modified files
+        for (const file of files) {
+            try {
+                // Skip if we already have up-to-date chunks for this file
+                if (fileMetadata[file.id]) {
+                    continue;
+                }
+
+                console.log(`Processing file: ${file.name} (${file.id})`);
+                const text = await fetchGoogleDoc(file.id);
+
+                if (!text) {
+                    console.log(`Skipping empty file: ${file.name}`);
+                    continue;
+                }
+
+                const textChunks = chunkDocument(text);
+                const embeddings = await generateEmbeddings(textChunks);
+
+                const fileChunks = textChunks.map((chunkText, i) => ({
+                    text: chunkText,
+                    embedding: embeddings[i],
+                    source: file.name
+                }));
+
+                allChunks = [...allChunks, ...fileChunks];
+
+                // Track this file's metadata
+                fileMetadata[file.id] = {
+                    modifiedTime: file.modifiedTime,
+                    chunkCount: fileChunks.length
+                };
+
+                totalStats.processedDocs++;
+                totalStats.totalOriginalChars += text.length;
+                totalStats.totalChunks += fileChunks.length;
+
+                console.log(`✓ Indexed ${fileChunks.length} chunks from: ${file.name}`);
+            } catch (err) {
+                console.error(`Error processing file ${file.name}:`, err);
+                // Continue with other files
+            }
+        }
+
+        if (allChunks.length === 0) {
+            return NextResponse.json(
+                { error: 'No content found to index' },
+                { status: 400 }
+            );
+        }
+
+        // Save to Cloud Storage
+        console.log(`Saving ${allChunks.length} chunks to Cloud Storage...`);
         await saveKnowledgeBase({
-            chunks,
-            documentId,
-            documentName: metadata.name,
-            lastModified: metadata.modifiedTime,
+            chunks: allChunks,
+            documentId: folderId,
+            documentName: kbName,
+            lastModified: new Date().toISOString(),
             indexedAt: new Date().toISOString(),
+            fileMetadata: fileMetadata,
         });
 
         console.log('Indexing complete!');
 
         return NextResponse.json({
             success: true,
-            message: 'Document indexed successfully',
+            message: 'Knowledge base indexed successfully',
             stats: {
-                documentName: metadata.name,
-                chunksCount: chunks.length,
-                totalCharacters: text.length,
+                name: kbName,
+                documentsFound: files.length,
+                documentsProcessed: totalStats.processedDocs,
+                documentsSkipped: totalStats.skippedDocs,
+                totalChunks: allChunks.length,
+                newChunks: totalStats.totalChunks,
+                totalCharacters: totalStats.totalOriginalChars,
             },
         });
+
     } catch (error) {
-        console.error('Error indexing document:', error);
+        console.error('Error indexing knowledge base:', error);
         return NextResponse.json(
-            { error: 'Failed to index document', details: String(error) },
+            { error: 'Failed to index knowledge base', details: String(error) },
             { status: 500 }
         );
     }
