@@ -121,9 +121,9 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 overflow-y-auto">
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       {/* Header */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 sticky top-0">
+      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 sticky top-0 shrink-0">
         <div className="flex items-center gap-2">
           <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
           <div className="w-px h-4 bg-gray-200 mx-1"></div>
@@ -131,20 +131,28 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center p-6 pb-24">
-        <div className="w-full max-w-5xl">
+      {/* Main Split View */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* Left Panel: Prompt Editor - scrollable */}
+        <div className="w-1/2 min-w-[400px] h-full overflow-y-auto">
           <PromptEditor />
+        </div>
+
+        {/* Right Panel: Chat - fixed */}
+        <div className="flex-1 h-full bg-white relative border-l border-gray-200">
+          <ChatWindow />
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="h-12 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white">
+      {/* Footer - optional in split screen, maybe sticky bottom? Check functionality. 
+          Step 152 didn't have footer. User asked for it "Readd the copyright at the bottom like before".
+          If I put it at the bottom of the screen, it consumes vertical space.
+          The split view takes "flex-1".
+          I can put footer below main.
+      */}
+      <footer className="h-8 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white shrink-0">
         © Prograde IP Holdings 2026
       </footer>
-
-      {/* Chat FAB/Window */}
-      <ChatWindow />
     </div>
   );
 }
