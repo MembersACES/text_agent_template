@@ -14,15 +14,30 @@ export default function PromptEditor() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
-    // Accordion states - Prompt expanded by default? User said "Prompt with arrow and when clicks gets bigger".
-    // I'll default to expanded or collapsed? "when the user clicks, it gets bigger" suggests collapsed initially or just togglable.
-    // I'll expand both by default for usability, or maybe just Prompt. 
+    // Accordion states
     const [isPromptExpanded, setIsPromptExpanded] = useState(true);
     const [isWelcomeExpanded, setIsWelcomeExpanded] = useState(false);
+    const [isKBExpanded, setIsKBExpanded] = useState(false);
+
+    // KB Data
+    const [kbFiles, setKbFiles] = useState<{ name: string }[]>([]);
 
     useEffect(() => {
         fetchConfig();
+        fetchKB();
     }, []);
+
+    const fetchKB = async () => {
+        try {
+            const res = await fetch('/api/knowledge-base/index');
+            const data = await res.json();
+            if (data.files) {
+                setKbFiles(data.files);
+            }
+        } catch (error) {
+            console.error('Failed to load KB files', error);
+        }
+    }
 
     const fetchConfig = async () => {
         try {
@@ -112,6 +127,51 @@ export default function PromptEditor() {
                             placeholder="Enter system prompt..."
                             spellCheck={false}
                         />
+                    </div>
+                )}
+            </div>
+
+            {/* Knowledge Base Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div
+                    className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
+                    onClick={() => setIsKBExpanded(!isKBExpanded)}
+                >
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${isKBExpanded ? 'rotate-90' : ''}`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        Knowledge Base
+                    </h3>
+                </div>
+
+                {isKBExpanded && (
+                    <div className="p-6 bg-gray-50/30 animate-slide-down">
+                        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                            {kbFiles.length === 0 ? (
+                                <div className="p-8 text-center text-gray-500 text-sm">
+                                    No documents indexed.
+                                </div>
+                            ) : (
+                                <ul className="divide-y divide-gray-100">
+                                    {kbFiles.map((file, idx) => (
+                                        <li key={idx} className="px-4 py-3 flex items-center gap-3 hover:bg-gray-50">
+                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-sm text-gray-700 font-medium">{file.name}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>

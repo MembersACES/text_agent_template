@@ -44,13 +44,13 @@ export async function getDocumentMetadata(documentId: string) {
 }
 
 // List files in a Google Drive folder
-export async function listFilesInFolder(folderId: string): Promise<Array<{ id: string; name: string; modifiedTime: string }>> {
+export async function listFilesInFolder(folderId: string): Promise<Array<{ id: string; name: string; modifiedTime: string; webViewLink: string }>> {
     const auth = getGoogleAuth();
     const drive = google.drive({ version: 'v3', auth });
 
     const response = await drive.files.list({
         q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false`,
-        fields: 'files(id, name, modifiedTime)',
+        fields: 'files(id, name, modifiedTime, webViewLink)',
         pageSize: 100, // Limit to 100 files to avoid overwhelming
     });
 
@@ -58,6 +58,7 @@ export async function listFilesInFolder(folderId: string): Promise<Array<{ id: s
         id: f.id || '',
         name: f.name || '',
         modifiedTime: f.modifiedTime || '',
+        webViewLink: f.webViewLink || '',
     }));
 }
 

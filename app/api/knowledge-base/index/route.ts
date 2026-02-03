@@ -4,6 +4,52 @@ import { chunkDocument } from '@/lib/document-chunker';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { saveKnowledgeBase, loadKnowledgeBase } from '@/lib/knowledge-base-storage';
 
+export async function GET() {
+    try {
+        const kb = await loadKnowledgeBase();
+
+        if (!kb) {
+            return NextResponse.json({ files: [] });
+        }
+
+        // Extract file list from fileMetadata
+        // If fileMetadata is missing (legacy KB), try to infer from chunks
+        let files = [];
+
+        if (kb.fileMetadata) {
+            files = await Promise.all(Object.entries(kb.fileMetadata).map(async ([id, meta]) => {
+                // Ideally we'd have the name in metadata, but currently only modifiedTime/chunkCount
+                // We might need to fetch the name, or if we stored source in chunks, we can find it.
+                // Looking at POST: source is stored in chunks.
+                const sampleChunk = kb.chunks.find(c => {
+                    // This is a bit inefficient but workable for small KBs. 
+                    // Better would be to store filename in fileMetadata in the future.
+                    // For now, let's just return what we have.
+                    return true;
+                    // Wait, we need the filename associated with this ID.
+                    // The current implementation is a bit disconnected. 
+                    // In POST: we map file.id to metadata. And chunks have `source` (filename).
+                });
+                return { id, ...meta };
+            }));
+
+            // Actually, let's just return the list of unique sources from chunks as a fallback or primary
+            // since that's the visible name.
+            const sources = Array.from(new Set(kb.chunks.map(c => c.source).filter(Boolean)));
+            return NextResponse.json({ files: sources.map(name => ({ name })) });
+
+        } else {
+            const sources = Array.from(new Set(kb.chunks.map(c => c.source).filter(Boolean)));
+            return NextResponse.json({ files: sources.map(name => ({ name })) });
+        }
+
+    } catch (error) {
+        console.error('Error fetching knowledge base:', error);
+        return NextResponse.json({ error: 'Failed to fetch knowledge base' }, { status: 500 });
+    }
+}
+
+
 export async function POST() {
     try {
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -120,7 +121,7 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <div className="min-h-screen flex flex-col bg-gray-50 overflow-y-auto">
       {/* Header */}
       <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 sticky top-0">
         <div className="flex items-center gap-2">
@@ -128,28 +129,22 @@ export default function Home() {
           <div className="w-px h-4 bg-gray-200 mx-1"></div>
           <div className="text-gray-900 font-bold tracking-tight">ACES</div>
         </div>
-
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-            Gemini Flash
-          </div>
-        </div>
       </header>
 
-      {/* Main Split View */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left Panel: Prompt Editor */}
-        <div className="w-1/2 min-w-[400px] h-full">
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col items-center p-6 pb-24">
+        <div className="w-full max-w-5xl">
           <PromptEditor />
         </div>
-
-        {/* Right Panel: Chat */}
-        <div className="flex-1 h-full bg-white relative">
-          <ChatWindow />
-        </div>
       </main>
+
+      {/* Footer */}
+      <footer className="h-12 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white">
+        © Prograde IP Holdings 2026
+      </footer>
+
+      {/* Chat FAB/Window */}
+      <ChatWindow />
     </div>
   );
 }
-
