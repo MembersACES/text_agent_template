@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import ChatWindow from './components/ChatWindow';
+import PromptEditor from './components/PromptEditor';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -76,6 +77,7 @@ function LockScreen({ onUnlock }: LockScreenProps) {
 
 export default function Home() {
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
 
@@ -133,7 +135,7 @@ export default function Home() {
         {/* Chat Button */}
         <button
           onClick={() => setIsChatOpen(true)}
-          className="fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110 flex items-center justify-center group"
+          className="fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110 flex items-center justify-center group z-40"
           aria-label="Open chat"
         >
           <svg
@@ -151,9 +153,25 @@ export default function Home() {
           </svg>
         </button>
 
+        {/* Edit Prompt Button - Only visible when authorized */}
+        <button
+          onClick={() => setShowPromptEditor(true)}
+          className="fixed bottom-6 left-6 px-4 py-2 bg-white text-gray-600 rounded-lg shadow hover:shadow-md transition-all duration-300 text-sm font-medium border border-gray-200 flex items-center gap-2 z-40"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+          Edit Prompt
+        </button>
+
         {/* Chat Window */}
         {isChatOpen && (
           <ChatWindow onClose={() => setIsChatOpen(false)} />
+        )}
+
+        {/* Prompt Editor */}
+        {showPromptEditor && (
+          <PromptEditor onClose={() => setShowPromptEditor(false)} />
         )}
 
         {/* Main Content */}

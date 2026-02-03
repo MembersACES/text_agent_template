@@ -4,6 +4,7 @@ import { generateEmbedding } from '@/lib/embeddings';
 import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { findSimilarChunks } from '@/lib/document-chunker';
 import { traceable } from 'langsmith/traceable';
+import { getPromptTemplate } from '@/lib/gcs-client';
 
 const retrieveContext = traceable(async (query: string) => {
     const kb = await getCachedKnowledgeBase();
@@ -62,32 +63,13 @@ export async function POST(request: Request) {
                     })
                     .join('\n\n---\n\n');
 
-                // Enhance message with context
-                finalMessage = `You are a friendly, conversational AI assistant helping users with step-by-step guidance.
+                // Retrieve dynamic prompt template
+                let template = await getPromptTemplate();
 
-Context from documentation:
-${context}
-
-User message: ${message}
-
-CRITICAL INSTRUCTIONS:
-1. **Be concise and conversational** - Keep responses SHORT (2-4 sentences typically)
-2. **Step-by-step approach** - If the context contains a procedure with multiple steps:
-   - Only explain the FIRST step in detail
-   - Give clear, actionable instructions for that step
-   - End by asking if they've completed it before moving on
-   - Wait for user confirmation before explaining the next step
-3. **Formatting** - Use plain text, natural language. NO markdown symbols like ** or ##
-4. **Tone** - Be friendly, supportive, and patient like a helpful colleague
-5. **If not procedural** - Answer the question directly and briefly
-
-Examples:
-- Bad: "**Step 1:** Go to Settings. **Step 2:** Click on API Keys..."
-- Good: "Let's start! First, go to Settings in your Google Cloud console. Once you're there, let me know and I'll guide you to the next step."
-
-Remember: ONE step at a time. Keep it SHORT and FRIENDLY.
-
-Response:`;
+                // Replace placeholders with actual content
+                finalMessage = template
+                    .replace('{{context}}', context)
+                    .replace('{{message}}', message);
 
                 sources = similarChunks.map((chunk: any, i: number) => ({
                     id: i + 1,
