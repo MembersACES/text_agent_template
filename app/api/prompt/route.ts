@@ -1,29 +1,36 @@
 
 import { NextResponse } from 'next/server';
-import { getPromptTemplate, savePromptTemplate } from '@/lib/gcs-client';
+import { getPromptConfig, savePromptConfig, PromptConfig } from '@/lib/gcs-client';
 
 export async function GET() {
     try {
-        const template = await getPromptTemplate();
-        return NextResponse.json({ template });
+        const config = await getPromptConfig();
+        return NextResponse.json(config);
     } catch (error) {
-        console.error('Error fetching prompt:', error);
-        return NextResponse.json({ error: 'Failed to fetch prompt' }, { status: 500 });
+        console.error('Error fetching prompt config:', error);
+        return NextResponse.json({ error: 'Failed to fetch prompt config' }, { status: 500 });
     }
 }
 
 export async function POST(request: Request) {
     try {
-        const { template } = await request.json();
+        const data = await request.json();
 
-        if (!template) {
-            return NextResponse.json({ error: 'Template is required' }, { status: 400 });
+        // Basic validation
+        if (!data.systemPrompt) {
+            return NextResponse.json({ error: 'System prompt is required' }, { status: 400 });
         }
 
-        await savePromptTemplate(template);
+        const config: PromptConfig = {
+            systemPrompt: data.systemPrompt,
+            welcomeMessage: data.welcomeMessage, // Allow empty string
+            config: data.config
+        };
+
+        await savePromptConfig(config);
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error('Error saving prompt:', error);
-        return NextResponse.json({ error: 'Failed to save prompt' }, { status: 500 });
+        console.error('Error saving prompt config:', error);
+        return NextResponse.json({ error: 'Failed to save prompt config' }, { status: 500 });
     }
 }

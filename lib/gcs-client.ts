@@ -43,10 +43,27 @@ Remember: ONE step at a time. Keep it SHORT and FRIENDLY.
 
 Response:`;
 
-export async function getPromptTemplate(): Promise<string> {
+const DEFAULT_WELCOME_MESSAGE = "Hello!\n\nI'm your AI assistant. How can I help you today?";
+
+export interface PromptConfig {
+    systemPrompt: string;
+    welcomeMessage: string;
+    config?: {
+        model?: string;
+        language?: string;
+    };
+}
+
+export async function getPromptConfig(): Promise<PromptConfig> {
+    const defaultData: PromptConfig = {
+        systemPrompt: DEFAULT_PROMPT,
+        welcomeMessage: DEFAULT_WELCOME_MESSAGE,
+        config: { model: 'Gemini 3.0 Flash', language: 'Multilingual' }
+    };
+
     if (!BUCKET_NAME) {
         console.warn('GCS_BUCKET_NAME not configured, using default prompt.');
-        return DEFAULT_PROMPT;
+        return defaultData;
     }
 
     try {
@@ -56,19 +73,32 @@ export async function getPromptTemplate(): Promise<string> {
 
         if (!exists) {
             console.log('Prompt file not found in GCS, returning default.');
-            return DEFAULT_PROMPT;
+            return defaultData;
         }
 
         const [content] = await file.download();
-        const data = JSON.parse(content.toString('utf-8'));
-        return data.template || DEFAULT_PROMPT;
+        const rawData = JSON.parse(content.toString('utf-8'));
+
+        // Handle backward compatibility or new structure
+        return {
+            systemPrompt: rawData.systemPrompt || rawData.template || DEFAULT_PROMPT,
+            welcomeMessage: rawData.welcomeMessage || DEFAULT_WELCOME_MESSAGE,
+            config: rawData.config || { model: 'Gemini 3.0 Flash', language: 'Multilingual' }
+        };
+
     } catch (error) {
         console.error('Error fetching prompt from GCS:', error);
-        return DEFAULT_PROMPT;
+        return defaultData;
     }
 }
 
-export async function savePromptTemplate(template: string): Promise<void> {
+// Keeping original export for backward compatibility relative to imports (will deprecate/refactor usage)
+export async function getPromptTemplate(): Promise<string> {
+    const config = await getPromptConfig();
+    return config.systemPrompt;
+}
+
+export async function savePromptConfig(data: PromptConfig): Promise<void> {
     if (!BUCKET_NAME) {
         throw new Error('GCS_BUCKET_NAME not configured');
     }
@@ -76,10 +106,23 @@ export async function savePromptTemplate(template: string): Promise<void> {
     const bucket = storage.bucket(BUCKET_NAME);
     const file = bucket.file(PROMPT_FILENAME);
 
-    await file.save(JSON.stringify({ template }), {
+    await file.save(JSON.stringify(data), {
         contentType: 'application/json',
         metadata: {
             cacheControl: 'no-cache',
         },
+    });
+}
+
+// Wrapper for existing single-template save (migration helper if needed, or just update callers)
+export async function savePromptTemplate(template: string): Promise<void> {
+    // We shouldn't drop other fields if we can help it, but for now this legacy call
+    // implies we only care about the template. A better approach is to read-modify-write 
+    // or just update all callers to use savePromptConfig. 
+    // For safety, let's fetch first.
+    const current = await getPromptConfig();
+    await savePromptConfig({
+        ...current,
+        systemPrompt: template
     });
 }

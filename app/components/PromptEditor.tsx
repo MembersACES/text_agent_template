@@ -3,30 +3,43 @@
 
 import { useState, useEffect } from 'react';
 
-interface PromptEditorProps {
-    onClose: () => void;
-}
+export default function PromptEditor() {
+    // State for Config
+    const [systemPrompt, setSystemPrompt] = useState('');
+    const [welcomeMessage, setWelcomeMessage] = useState('');
+    const [config, setConfig] = useState({ model: 'Gemini 3.0 Flash', language: 'Multilingual' });
 
-export default function PromptEditor({ onClose }: PromptEditorProps) {
-    const [template, setTemplate] = useState('');
+    // State for UI
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
+    // Accordion states - Prompt expanded by default? User said "Prompt with arrow and when clicks gets bigger".
+    // I'll default to expanded or collapsed? "when the user clicks, it gets bigger" suggests collapsed initially or just togglable.
+    // I'll expand both by default for usability, or maybe just Prompt. 
+    const [isPromptExpanded, setIsPromptExpanded] = useState(true);
+    const [isWelcomeExpanded, setIsWelcomeExpanded] = useState(false);
+
     useEffect(() => {
-        fetchPrompt();
+        fetchConfig();
     }, []);
 
-    const fetchPrompt = async () => {
+    const fetchConfig = async () => {
         try {
             const res = await fetch('/api/prompt');
             const data = await res.json();
-            if (data.template) {
-                setTemplate(data.template);
+            if (data.systemPrompt !== undefined) {
+                setSystemPrompt(data.systemPrompt);
+                setWelcomeMessage(data.welcomeMessage || '');
+                if (data.config) {
+                    setConfig(data.config);
+                }
+            } else if (data.template) {
+                setSystemPrompt(data.template);
             }
         } catch (error) {
-            console.error('Failed to load prompt', error);
-            setMessage({ type: 'error', text: 'Failed to load prompt template' });
+            console.error('Failed to load prompt config', error);
+            setMessage({ type: 'error', text: 'Failed to load configuration' });
         } finally {
             setLoading(false);
         }
@@ -39,87 +52,119 @@ export default function PromptEditor({ onClose }: PromptEditorProps) {
             const res = await fetch('/api/prompt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ template }),
+                body: JSON.stringify({
+                    systemPrompt,
+                    welcomeMessage,
+                    config
+                }),
             });
 
             if (res.ok) {
-                setMessage({ type: 'success', text: 'Prompt saved successfully!' });
-                setTimeout(() => {
-                    setMessage(null);
-                    onClose();
-                }, 1500);
+                setMessage({ type: 'success', text: 'Saved successfully!' });
+                setTimeout(() => setMessage(null), 2000);
             } else {
-                setMessage({ type: 'error', text: 'Failed to save prompt' });
+                setMessage({ type: 'error', text: 'Failed to save' });
             }
         } catch (error) {
-            console.error('Failed to save prompt', error);
-            setMessage({ type: 'error', text: 'Failed to save prompt' });
+            console.error('Failed to save', error);
+            setMessage({ type: 'error', text: 'Failed to save' });
         } finally {
             setSaving(false);
         }
     };
 
+    if (loading) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+            </div>
+        );
+    }
+
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                    <h2 className="text-xl font-bold text-gray-800">System Prompt Editor</h2>
-                    <button
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        <div className="w-full max-w-4xl mx-auto p-6 flex flex-col gap-6">
+
+            {/* Prompt Config Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div
+                    className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
+                    onClick={() => setIsPromptExpanded(!isPromptExpanded)}
+                >
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${isPromptExpanded ? 'rotate-90' : ''}`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                    </button>
+                        Prompt
+                    </h3>
                 </div>
 
-                <div className="p-6 flex-1 overflow-auto bg-gray-50">
-                    {loading ? (
-                        <div className="flex justify-center items-center h-40">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
-                        </div>
-                    ) : (
-                        <div className="space-y-4 h-full flex flex-col">
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-                                <strong>Instructions:</strong> Use <code>{'{'}{'{'}context{'}'}{'}'}</code> where the documentation chunks should appear, and <code>{'{'}{'{'}message{'}'}{'}'}</code> for the user's message.
-                            </div>
+                {isPromptExpanded && (
+                    <div className="p-0 animate-slide-down">
+                        <textarea
+                            value={systemPrompt}
+                            onChange={(e) => setSystemPrompt(e.target.value)}
+                            className="w-full h-[500px] p-6 border-none outline-none resize-none font-mono text-sm leading-relaxed text-gray-800 placeholder-gray-300 bg-gray-50/30 focus:bg-white transition-colors"
+                            placeholder="Enter system prompt..."
+                            spellCheck={false}
+                        />
+                    </div>
+                )}
+            </div>
 
+            {/* Welcome Message Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div
+                    className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
+                    onClick={() => setIsWelcomeExpanded(!isWelcomeExpanded)}
+                >
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${isWelcomeExpanded ? 'rotate-90' : ''}`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        Welcome Message
+                    </h3>
+                </div>
+
+                {isWelcomeExpanded && (
+                    <div className="p-6 bg-gray-50/30 animate-slide-down">
+                        <div className="relative group">
                             <textarea
-                                value={template}
-                                onChange={(e) => setTemplate(e.target.value)}
-                                className="w-full h-full min-h-[400px] p-4 font-mono text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none resize-none"
-                                placeholder="Enter system prompt..."
+                                value={welcomeMessage}
+                                onChange={(e) => setWelcomeMessage(e.target.value)}
+                                className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none min-h-[100px] shadow-sm"
+                                placeholder="Enter custom welcome message..."
                             />
                         </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-between pt-4">
+                <div className="flex-1">
+                    {message && (
+                        <span className={`text-sm font-medium ${message.type === 'success' ? 'text-green-600' : 'text-red-500'} animate-fade-in`}>
+                            {message.text}
+                        </span>
                     )}
                 </div>
-
-                <div className="p-6 border-t border-gray-100 bg-white flex justify-between items-center">
-                    <div>
-                        {message && (
-                            <span className={`text-sm ${message.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
-                                {message.text}
-                            </span>
-                        )}
-                    </div>
-                    <div className="flex gap-3">
-                        <button
-                            onClick={onClose}
-                            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                            disabled={saving}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={handleSave}
-                            disabled={saving || loading}
-                            className="px-6 py-2 bg-gradient-to-r from-orange-400 to-orange-500 text-white rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {saving ? 'Saving...' : 'Save Changes'}
-                        </button>
-                    </div>
-                </div>
+                <button
+                    onClick={handleSave}
+                    disabled={saving || loading}
+                    className="px-8 py-3 bg-black text-white text-sm font-bold rounded-xl shadow-lg hover:bg-gray-800 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none"
+                >
+                    {saving ? 'Saving...' : 'Save'}
+                </button>
             </div>
         </div>
     );
