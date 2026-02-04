@@ -14,7 +14,7 @@ const storage = new Storage({
     },
 });
 
-const PROMPT_FILENAME = 'prompt.json';
+const SETTINGS_FILENAME = 'settings.json';
 
 // Default prompt fallback if GCS fails or file doesn't exist
 const DEFAULT_PROMPT = `You are a friendly, conversational AI assistant helping users with step-by-step guidance.
@@ -44,10 +44,12 @@ Remember: ONE step at a time. Keep it SHORT and FRIENDLY.
 Response:`;
 
 const DEFAULT_WELCOME_MESSAGE = "Hello!\n\nI'm your AI assistant. How can I help you today?";
+const DEFAULT_AGENT_NAME = "Text Agent";
 
 export interface PromptConfig {
     systemPrompt: string;
     welcomeMessage: string;
+    agentName: string;
     config?: {
         model?: string;
         language?: string;
@@ -58,6 +60,7 @@ export async function getPromptConfig(): Promise<PromptConfig> {
     const defaultData: PromptConfig = {
         systemPrompt: DEFAULT_PROMPT,
         welcomeMessage: DEFAULT_WELCOME_MESSAGE,
+        agentName: DEFAULT_AGENT_NAME,
         config: { model: 'Gemini 3.0 Flash', language: 'Multilingual' }
     };
 
@@ -68,11 +71,24 @@ export async function getPromptConfig(): Promise<PromptConfig> {
 
     try {
         const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(PROMPT_FILENAME);
-        const [exists] = await file.exists();
+
+        // Try settings.json first
+        let file = bucket.file(SETTINGS_FILENAME);
+        let [exists] = await file.exists();
 
         if (!exists) {
-            console.log('Prompt file not found in GCS, returning default.');
+            // Fallback to prompt.json for migration
+            const oldFile = bucket.file('prompt.json');
+            const [oldExists] = await oldFile.exists();
+            if (oldExists) {
+                console.log('Found legacy prompt.json, migrating to settings.json');
+                file = oldFile;
+                exists = true;
+            }
+        }
+
+        if (!exists) {
+            console.log('Settings file not found in GCS, returning default.');
             return defaultData;
         }
 
@@ -83,6 +99,7 @@ export async function getPromptConfig(): Promise<PromptConfig> {
         return {
             systemPrompt: rawData.systemPrompt || rawData.template || DEFAULT_PROMPT,
             welcomeMessage: rawData.welcomeMessage || DEFAULT_WELCOME_MESSAGE,
+            agentName: rawData.agentName || DEFAULT_AGENT_NAME,
             config: rawData.config || { model: 'Gemini 3.0 Flash', language: 'Multilingual' }
         };
 
@@ -104,7 +121,7 @@ export async function savePromptConfig(data: PromptConfig): Promise<void> {
     }
 
     const bucket = storage.bucket(BUCKET_NAME);
-    const file = bucket.file(PROMPT_FILENAME);
+    const file = bucket.file(SETTINGS_FILENAME);
 
     await file.save(JSON.stringify(data), {
         contentType: 'application/json',

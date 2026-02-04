@@ -3,10 +3,11 @@
 
 import { useState, useEffect } from 'react';
 
-export default function PromptEditor() {
+export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => void }) {
     // State for Config
     const [systemPrompt, setSystemPrompt] = useState('');
     const [welcomeMessage, setWelcomeMessage] = useState('');
+    const [agentName, setAgentName] = useState('');
     const [config, setConfig] = useState({ model: 'Gemini 3.0 Flash', language: 'Multilingual' });
 
     // State for UI
@@ -15,7 +16,7 @@ export default function PromptEditor() {
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
     // Accordion state - only one open at a time
-    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'welcome' | null>('prompt');
+    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>('prompt');
 
     // KB Data
     interface KBFile {
@@ -87,6 +88,7 @@ export default function PromptEditor() {
             if (data.systemPrompt !== undefined) {
                 setSystemPrompt(data.systemPrompt);
                 setWelcomeMessage(data.welcomeMessage || '');
+                setAgentName(data.agentName || '');
                 if (data.config) {
                     setConfig(data.config);
                 }
@@ -111,12 +113,14 @@ export default function PromptEditor() {
                 body: JSON.stringify({
                     systemPrompt,
                     welcomeMessage,
+                    agentName,
                     config
                 }),
             });
 
             if (res.ok) {
                 setMessage({ type: 'success', text: 'Saved successfully!' });
+                if (onSaveSuccess) onSaveSuccess();
                 setTimeout(() => setMessage(null), 2000);
             } else {
                 setMessage({ type: 'error', text: 'Failed to save' });
@@ -328,34 +332,47 @@ export default function PromptEditor() {
                 )}
             </div>
 
-            {/* Welcome Message Section */}
+            {/* Agent Settings Section */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div
                     className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
-                    onClick={() => setExpandedSection(expandedSection === 'welcome' ? null : 'welcome')}
+                    onClick={() => setExpandedSection(expandedSection === 'agent' ? null : 'agent')}
                 >
                     <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                         <svg
-                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'welcome' ? 'rotate-90' : ''}`}
+                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'agent' ? 'rotate-90' : ''}`}
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        Welcome Message
+                        Agent Settings
                     </h3>
                 </div>
 
-                {expandedSection === 'welcome' && (
+                {expandedSection === 'agent' && (
                     <div className="p-6 bg-gray-50/30 animate-slide-down">
-                        <div className="relative group">
-                            <textarea
-                                value={welcomeMessage}
-                                onChange={(e) => setWelcomeMessage(e.target.value)}
-                                className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none min-h-[100px] shadow-sm"
-                                placeholder="Enter custom welcome message..."
-                            />
+                        <div className="flex flex-col gap-6">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Agent Name</label>
+                                <input
+                                    type="text"
+                                    value={agentName}
+                                    onChange={(e) => setAgentName(e.target.value)}
+                                    className="w-full p-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
+                                    placeholder="e.g. Text Agent"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Welcome Message</label>
+                                <textarea
+                                    value={welcomeMessage}
+                                    onChange={(e) => setWelcomeMessage(e.target.value)}
+                                    className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none min-h-[120px] shadow-sm transition-all"
+                                    placeholder="Enter custom welcome message..."
+                                />
+                            </div>
                         </div>
                     </div>
                 )}

@@ -4,14 +4,14 @@ import { google } from 'googleapis';
 
 export async function POST(request: Request) {
     try {
-        const { messages, dynamicVariables } = await request.json();
+        const { messages, dynamicVariables, agentName = 'Text Agent' } = await request.json();
 
         // 1. Prepare data
         const currentTime = new Date().toISOString();
 
-        // Format messages: "User: Hello\nText Agent: Hi there"
+        // Format messages: "User: Hello\n[Agent Name]: Hi there"
         const formattedMessages = messages.map((msg: any) => {
-            const prefix = msg.role === 'user' ? 'User:' : 'Text Agent:';
+            const prefix = msg.role === 'user' ? 'User:' : `${agentName}:`;
             return `${prefix} ${msg.content}`;
         }).join('\n\n'); // Double newline for better readability in the cell
 

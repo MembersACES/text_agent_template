@@ -9,9 +9,10 @@ interface Message {
 }
 
 interface ChatWindowProps {
+    refreshTrigger?: number;
 }
 
-export default function ChatWindow({ }: ChatWindowProps) {
+export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
@@ -19,6 +20,7 @@ export default function ChatWindow({ }: ChatWindowProps) {
         },
     ]);
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
+    const [agentName, setAgentName] = useState("Text Agent");
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
@@ -41,6 +43,9 @@ export default function ChatWindow({ }: ChatWindowProps) {
                         content: "Hello!\n\nI'm your AI assistant. How can I help you today?"
                     }]);
                 }
+                if (data.agentName) {
+                    setAgentName(data.agentName);
+                }
             } catch (error) {
                 console.error("Failed to load welcome message", error);
                 setMessages([{
@@ -50,7 +55,7 @@ export default function ChatWindow({ }: ChatWindowProps) {
             }
         };
         fetchConfig();
-    }, []);
+    }, [refreshTrigger]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -101,7 +106,7 @@ export default function ChatWindow({ }: ChatWindowProps) {
             await fetch('/api/end-of-chat-report', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messages: messages, dynamicVariables: [] })
+                body: JSON.stringify({ messages: messages, dynamicVariables: [], agentName: agentName })
             });
         } catch (err) { console.error("Failed to save chat logs", err); }
 
@@ -111,7 +116,7 @@ export default function ChatWindow({ }: ChatWindowProps) {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white relative shadow-xl rounded-l-2xl overflow-hidden border-l border-gray-200">
+        <div className="flex flex-col h-full bg-white relative overflow-hidden border-l border-gray-200">
             {/* End Chat Popup Overlay */}
             {showEndChatPopup && (
                 <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm p-6">
@@ -153,7 +158,7 @@ export default function ChatWindow({ }: ChatWindowProps) {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                         </svg>
                     </div>
-                    <h2 className="text-white text-lg font-semibold">Text Agent</h2>
+                    <h2 className="text-white text-lg font-semibold">{agentName}</h2>
                 </div>
                 <div className="flex items-center gap-1.5">
                     <button
@@ -173,26 +178,9 @@ export default function ChatWindow({ }: ChatWindowProps) {
             <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
                 {messages.map((message, index) => (
                     <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        {message.role === 'assistant' && index === 0 && (
-                            <div className="flex flex-col items-center w-full space-y-5 pt-12 pb-6">
-                                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
-                                    <svg className="w-9 h-9 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                                    </svg>
-                                </div>
-                                <div className="text-center px-8">
-                                    <h3 className="text-xl font-semibold text-gray-700 mb-2">Hello!</h3>
-                                    <p className="text-gray-400 text-sm leading-relaxed">
-                                        {message.content.replace('Hello!\n\n', '')}
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-                        {(message.role === 'user' || index > 0) && (
-                            <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${message.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white text-gray-800 shadow-sm'}`}>
-                                <p className="whitespace-pre-line text-sm">{message.content}</p>
-                            </div>
-                        )}
+                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${message.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white text-gray-800 shadow-sm'}`}>
+                            <p className="whitespace-pre-line text-sm">{message.content}</p>
+                        </div>
                     </div>
                 ))}
                 {isLoading && (
