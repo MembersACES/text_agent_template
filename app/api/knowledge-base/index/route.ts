@@ -9,17 +9,57 @@ export async function GET() {
         const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
         if (!folderId) {
-            return NextResponse.json({ files: [] });
+            return NextResponse.json({ indexed: [], pending: [], removed: [] });
         }
 
-        const files = await listFilesInFolder(folderId);
+        // Fetch current files from Drive
+        const driveFiles = await listFilesInFolder(folderId);
 
-        return NextResponse.json({
-            files: files.map(f => ({
+        // Load indexed metadata from storage
+        const kbData = await loadKnowledgeBase();
+        const indexedMeta = kbData?.fileMetadata || {};
+
+        const driveFileIds = new Set(driveFiles.map(f => f.id));
+
+        const indexed = driveFiles
+            .filter(f => indexedMeta[f.id])
+            .map(f => ({
                 id: f.id,
                 name: f.name,
-                webViewLink: f.webViewLink
-            }))
+                webViewLink: f.webViewLink,
+                modifiedTime: f.modifiedTime,
+                indexedAt: indexedMeta[f.id].indexedAt || kbData?.indexedAt,
+                chunkCount: indexedMeta[f.id].chunkCount,
+                isStale: f.modifiedTime !== indexedMeta[f.id].modifiedTime
+            }));
+
+        const pending = driveFiles
+            .filter(f => !indexedMeta[f.id])
+            .map(f => ({
+                id: f.id,
+                name: f.name,
+                webViewLink: f.webViewLink,
+                modifiedTime: f.modifiedTime
+            }));
+
+        // Find files that are in KB but no longer in Drive
+        const removed = Object.entries(indexedMeta)
+            .filter(([id]) => !driveFileIds.has(id))
+            .map(([id, meta]) => ({
+                id,
+                name: (meta as any).name || "Unknown File",
+                chunkCount: meta.chunkCount,
+                modifiedTime: meta.modifiedTime
+            }));
+
+        return NextResponse.json({
+            indexed,
+            pending,
+            removed,
+            stats: {
+                totalDriveFiles: driveFiles.length,
+                totalIndexedFiles: Object.keys(indexedMeta).length
+            }
         });
 
     } catch (error) {
@@ -47,7 +87,8 @@ export async function POST() {
         const existingFileMetadata = existingKB?.fileMetadata || {};
 
         let allChunks: Array<{ text: string; embedding: number[]; source?: string }> = [];
-        let fileMetadata: Record<string, { modifiedTime: string; chunkCount: number }> = {};
+        let fileMetadata: Record<string, { modifiedTime: string; chunkCount: number; name: string; indexedAt?: string }> = {};
+        const timestamp = new Date().toISOString();
         let totalStats = {
             processedDocs: 0,
             skippedDocs: 0,
@@ -124,8 +165,10 @@ export async function POST() {
 
                 // Track this file's metadata
                 fileMetadata[file.id] = {
+                    name: file.name,
                     modifiedTime: file.modifiedTime,
-                    chunkCount: fileChunks.length
+                    chunkCount: fileChunks.length,
+                    indexedAt: timestamp
                 };
 
                 totalStats.processedDocs++;

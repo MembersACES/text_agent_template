@@ -23,7 +23,8 @@ export async function POST(request: Request) {
 
         const config: PromptConfig = {
             systemPrompt: data.systemPrompt,
-            welcomeMessage: data.welcomeMessage, // Allow empty string
+            welcomeMessage: data.welcomeMessage,
+            agentName: data.agentName,
             config: data.config
         };
 
