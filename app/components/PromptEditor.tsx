@@ -3,12 +3,19 @@
 
 import { useState, useEffect } from 'react';
 
+type AgentConfig = {
+    model?: string;
+    language?: string;
+    kbFolderId?: string;
+    allowFileUploads?: boolean;
+};
+
 export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess?: () => void; agentId?: string }) {
     // State for Config
     const [systemPrompt, setSystemPrompt] = useState('');
     const [welcomeMessage, setWelcomeMessage] = useState('');
     const [agentName, setAgentName] = useState('');
-    const [config, setConfig] = useState<{ model?: string; language?: string; kbFolderId?: string }>({
+    const [config, setConfig] = useState<AgentConfig>({
         model: 'Gemini 3.0 Flash',
         language: 'Multilingual',
     });
@@ -384,21 +391,48 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                                     placeholder="Enter custom welcome message..."
                                 />
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-                                    Google Drive Folder ID (Knowledge Base)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={config.kbFolderId || ''}
-                                    onChange={(e) => setConfig(prev => ({ ...prev, kbFolderId: e.target.value || undefined }))}
-                                    className="w-full p-3 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
-                                    placeholder="Override default GOOGLE_DRIVE_FOLDER_ID for this agent"
-                                />
-                                <p className="mt-1 text-[11px] text-gray-500">
-                                    If set, this agent will index and query documents from the specified Drive folder ID.
-                                    If left blank, it falls back to the global <code className="font-mono">GOOGLE_DRIVE_FOLDER_ID</code>.
-                                </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                        Google Drive Folder ID (Knowledge Base)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={config.kbFolderId || ''}
+                                        onChange={(e) => setConfig(prev => ({ ...prev, kbFolderId: e.target.value || undefined }))}
+                                        className="w-full p-3 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
+                                        placeholder="Override default GOOGLE_DRIVE_FOLDER_ID for this agent"
+                                    />
+                                    <p className="mt-1 text-[11px] text-gray-500">
+                                        If set, this agent will index and query documents from the specified Drive folder ID.
+                                        If left blank, it falls back to the global <code className="font-mono">GOOGLE_DRIVE_FOLDER_ID</code>.
+                                    </p>
+                                </div>
+
+                                <div className="flex flex-col gap-2">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                        File Uploads
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfig(prev => ({ ...prev, allowFileUploads: !prev.allowFileUploads }))}
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${config.allowFileUploads ? 'bg-green-500' : 'bg-gray-300'
+                                                }`}
+                                        >
+                                            <span
+                                                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${config.allowFileUploads ? 'translate-x-4' : 'translate-x-1'
+                                                    }`}
+                                            />
+                                        </button>
+                                        <span className="text-xs text-gray-600">
+                                            {config.allowFileUploads ? 'Enabled: this agent can accept file uploads.' : 'Disabled: this agent cannot accept file uploads.'}
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500">
+                                        When enabled, the chat window will show a file upload control and uploaded files will be available for this agent to analyse during the current conversation only (they are not stored in the long-term knowledge base).
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>

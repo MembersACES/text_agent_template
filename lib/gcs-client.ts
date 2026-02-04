@@ -56,6 +56,8 @@ export interface PromptConfig {
         language?: string;
         // Optional: per-agent knowledge base Drive folder
         kbFolderId?: string;
+        // Optional: allow this agent to accept file uploads
+        allowFileUploads?: boolean;
     };
 }
 

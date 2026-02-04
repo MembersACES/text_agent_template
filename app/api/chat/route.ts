@@ -24,7 +24,7 @@ const generateAIResponse = traceable(async ({ model, prompt }: { model: any, pro
 
 export async function POST(request: Request) {
     try {
-        const { message, useKnowledgeBase, agentId } = await request.json();
+        const { message, useKnowledgeBase, agentId, uploadedFiles } = await request.json();
 
         if (!message) {
             return NextResponse.json(
@@ -50,34 +50,68 @@ export async function POST(request: Request) {
         let finalMessage = message;
         let sources = null;
 
+        // Build optional file context from uploaded files (per-conversation)
+        let fileContext = '';
+        if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
+            fileContext = uploadedFiles
+                .map((f: any, i: number) => {
+                    const name = typeof f.name === 'string' ? f.name : `File ${i + 1}`;
+                    const content = typeof f.content === 'string' ? f.content : '';
+                    return `Uploaded File ${i + 1}: ${name}\n${content}`;
+                })
+                .join('\n\n---\n\n');
+        }
+
         // If knowledge base mode is enabled, retrieve relevant context
         if (useKnowledgeBase) {
             const similarChunks = await retrieveContext(message, agentId);
 
-            if (similarChunks) {
-                // Build context from chunks
-                const context = similarChunks
-                    .map((chunk: any, i: number) => {
-                        const sourceInfo = chunk.source ? ` (File: ${chunk.source})` : '';
-                        return `[Source ${i + 1}${sourceInfo}]:\n${chunk.text}`;
-                    })
-                    .join('\n\n---\n\n');
+            if (similarChunks || fileContext) {
+                // Build context from KB chunks
+                const kbContext = similarChunks
+                    ? similarChunks
+                        .map((chunk: any, i: number) => {
+                            const sourceInfo = chunk.source ? ` (File: ${chunk.source})` : '';
+                            return `[Source ${i + 1}${sourceInfo}]:\n${chunk.text}`;
+                        })
+                        .join('\n\n---\n\n')
+                    : '';
+
+                // Combine KB context and uploaded file context
+                const combinedContextParts = [];
+                if (kbContext) combinedContextParts.push(kbContext);
+                if (fileContext) combinedContextParts.push(`Uploaded Files:\n${fileContext}`);
+                const combinedContext = combinedContextParts.join('\n\n---\n\n');
 
                 // Retrieve dynamic prompt template for the specific agent
                 let template = await getPromptTemplate(agentId);
 
                 // Replace placeholders with actual content
                 finalMessage = template
-                    .replace('{{context}}', context)
+                    .replace('{{context}}', combinedContext || '')
                     .replace('{{message}}', message);
 
-                sources = similarChunks.map((chunk: any, i: number) => ({
-                    id: i + 1,
-                    text: chunk.text,
-                    similarity: chunk.score,
-                    source: chunk.source // Pass source metadata to client
-                }));
+                if (similarChunks) {
+                    sources = similarChunks.map((chunk: any, i: number) => ({
+                        id: i + 1,
+                        text: chunk.text,
+                        similarity: chunk.score,
+                        source: chunk.source // Pass source metadata to client
+                    }));
+                }
+            } else if (fileContext) {
+                // No KB, but we have uploaded files: still use template with file context
+                let template = await getPromptTemplate(agentId);
+                finalMessage = template
+                    .replace('{{context}}', `Uploaded Files:\n${fileContext}`)
+                    .replace('{{message}}', message);
             }
+        } else if (fileContext) {
+            // Knowledge base disabled but we still have uploaded files: build a simple context
+            let template = await getPromptTemplate(agentId);
+            finalMessage = template
+                .replace('{{context}}', `Uploaded Files:\n${fileContext}`)
+                .replace('{{message}}', message);
         }
 
         // Generate response using the traceable function

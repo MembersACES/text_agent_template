@@ -22,6 +22,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     ]);
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
     const [agentName, setAgentName] = useState("Text Agent");
+    const [allowFileUploads, setAllowFileUploads] = useState(false);
+    const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string }[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
@@ -47,6 +49,11 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 }
                 if (data.agentName) {
                     setAgentName(data.agentName);
+                }
+                if (data.config && data.config.allowFileUploads) {
+                    setAllowFileUploads(true);
+                } else {
+                    setAllowFileUploads(false);
                 }
             } catch (error) {
                 console.error("Failed to load welcome message", error);
@@ -80,10 +87,11 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    message: userMessage, 
+                body: JSON.stringify({
+                    message: userMessage,
                     useKnowledgeBase: true,
-                    agentId: agentId 
+                    agentId: agentId,
+                    uploadedFiles,
                 }),
             });
 
@@ -203,8 +211,68 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
-            <div className="p-5 bg-white border-t border-gray-100 shrink-0">
+            {/* Input + optional file upload */}
+            <div className="p-5 bg-white border-t border-gray-100 shrink-0 space-y-3">
+                {allowFileUploads && agentId && (
+                    <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2 text-xs text-gray-600">
+                            <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-semibold text-[10px] uppercase tracking-wide">
+                                File Uploads Enabled
+                            </span>
+                            <span className="hidden sm:inline">
+                                Attach one or more files (invoices, reports, etc.) for this agent to analyse in this chat.
+                            </span>
+                        </label>
+                        <input
+                            type="file"
+                            multiple
+                            accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,image/*"
+                            className="text-xs text-gray-600"
+                            onChange={async (e) => {
+                                const files = e.target.files;
+                                if (!files || files.length === 0 || !agentId) return;
+
+                                try {
+                                    setIsLoading(true);
+                                    for (const file of Array.from(files)) {
+                                        const formData = new FormData();
+                                        formData.append('file', file);
+                                        formData.append('agentId', agentId);
+
+                                        const res = await fetch('/api/uploads', {
+                                            method: 'POST',
+                                            body: formData,
+                                        });
+                                        const data = await res.json();
+                                        if (!res.ok) {
+                                            console.error('Upload failed', data);
+                                            setMessages(prev => [...prev, {
+                                                role: 'assistant',
+                                                content: data.error || `File upload failed for "${file.name}". Please try again.`,
+                                            }]);
+                                        } else {
+                                            setUploadedFiles(prev => [...prev, { name: data.fileName || file.name, content: data.content }]);
+                                            setMessages(prev => [...prev, {
+                                                role: 'assistant',
+                                                content: `File "${file.name}" has been uploaded for this conversation.`,
+                                            }]);
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.error('Upload error:', err);
+                                    setMessages(prev => [...prev, {
+                                        role: 'assistant',
+                                        content: 'An error occurred while uploading files.',
+                                    }]);
+                                } finally {
+                                    setIsLoading(false);
+                                    e.target.value = '';
+                                }
+                            }}
+                        />
+                    </div>
+                )}
+
                 <div className="flex items-center gap-3 bg-white rounded-full px-5 py-2.5 border border-gray-200">
                     <input
                         type="text"

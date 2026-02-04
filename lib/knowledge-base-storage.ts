@@ -31,6 +31,10 @@ export async function saveKnowledgeBase(data: KnowledgeBaseData, agentId?: strin
             cacheControl: 'no-cache',
         },
     });
+
+    // Update in-memory cache immediately so new data is visible without waiting for TTL
+    const cacheKey = agentId || 'default';
+    cache.set(cacheKey, { data, time: Date.now() });
 }
 
 // Load knowledge base data from Cloud Storage
