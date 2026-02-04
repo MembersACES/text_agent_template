@@ -1,7 +1,9 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
 import ChatWindow from './components/ChatWindow';
+import PromptEditor from './components/PromptEditor';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -75,7 +77,6 @@ function LockScreen({ onUnlock }: LockScreenProps) {
 }
 
 export default function Home() {
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
 
@@ -92,16 +93,16 @@ export default function Home() {
   if (!isAuthorized) {
     return (
       <>
-        <header className="top-status-bar">
-          <div className="agent-version">ACES TEXT AGENT v1.0</div>
-          <div className="header-logo">
-            <img src="/Logo3.png" alt="ACES Logo" />
+        <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 z-50 flex items-center justify-between px-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
+            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">TEXT AGENT v1.1</div>
           </div>
-          <div className="status-indicators">
-            <div className="indicator">
-              <span className="dot" style={{ background: '#888' }}></span>
-              <span>LOCKED</span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-100 uppercase tracking-wide">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+              Locked
+            </span>
           </div>
         </header>
 
@@ -112,7 +113,7 @@ export default function Home() {
           }} />
         </main>
 
-        <footer>
+        <footer className="fixed bottom-0 left-0 right-0 h-8 bg-white border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400">
           © Prograde IP Holdings 2026
         </footer>
       </>
@@ -120,61 +121,38 @@ export default function Home() {
   }
 
   return (
-    <>
-      <header className="top-status-bar">
-        <div className="agent-version">ACES TEXT AGENT v1.0</div>
-        <div className="header-logo">
-          <img src="/Logo3.png" alt="ACES Logo" />
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+      {/* Header */}
+      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 sticky top-0 shrink-0">
+        <div className="flex items-center gap-2">
+          <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
+          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+          <div className="text-gray-900 font-bold tracking-tight">ACES</div>
         </div>
-        <div className="status-indicators"></div>
       </header>
 
-      <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        {/* Chat Button */}
-        <button
-          onClick={() => setIsChatOpen(true)}
-          className="fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110 flex items-center justify-center group"
-          aria-label="Open chat"
-        >
-          <svg
-            className="w-8 h-8 text-white"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-            />
-          </svg>
-        </button>
+      {/* Main Split View */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* Left Panel: Prompt Editor - scrollable */}
+        <div className="w-1/2 min-w-[400px] h-full overflow-y-auto">
+          <PromptEditor />
+        </div>
 
-        {/* Chat Window */}
-        {isChatOpen && (
-          <ChatWindow onClose={() => setIsChatOpen(false)} />
-        )}
-
-        {/* Main Content */}
-        <div className="text-center max-w-2xl">
-          <h1 className="text-5xl font-bold text-gray-900 mb-5 leading-tight">
-            Welcome to <span className="text-gradient">ACES TEXT AGENT</span>
-          </h1>
-          <p className="text-gray-600 text-lg mb-8 leading-relaxed">
-            Experience the next generation of conversational AI. Click the chat button in the bottom right to start an intelligent conversation.
-          </p>
-          <div className="flex items-center justify-center gap-2 text-sm text-gray-400">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span>Model used: Gemini Flash</span>
-          </div>
+        {/* Right Panel: Chat - fixed */}
+        <div className="flex-1 h-full bg-white relative border-l border-gray-200">
+          <ChatWindow />
         </div>
       </main>
 
-      <footer>
+      {/* Footer - optional in split screen, maybe sticky bottom? Check functionality. 
+          Step 152 didn't have footer. User asked for it "Readd the copyright at the bottom like before".
+          If I put it at the bottom of the screen, it consumes vertical space.
+          The split view takes "flex-1".
+          I can put footer below main.
+      */}
+      <footer className="h-8 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white shrink-0">
         © Prograde IP Holdings 2026
       </footer>
-    </>
+    </div>
   );
 }
-

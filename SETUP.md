@@ -5,7 +5,7 @@ This guide walks you through setting up Google Cloud Platform (GCP) for the know
 ## Prerequisites
 
 - A Google Cloud Project
-- A Google Doc you want to use as your knowledge base
+- A Google Drive Folder containing your knowledge base documents
 - Access to Google Cloud Console
 
 ---
@@ -61,16 +61,16 @@ The bucket stores pre-computed document chunks and embeddings:
    - **Access control:** Uniform
 4. Click **"CREATE"**
 
-### Step 5: Share Your Google Doc with Service Account ⚠️ CRITICAL
+### Step 5: Share Your Google Drive Folder with Service Account ⚠️ CRITICAL
 
 **This step is REQUIRED or you'll get "The caller does not have permission" errors!**
 
-Give the service account access to your knowledge base document:
+Give the service account access to your knowledge base folder:
 
-1. **Open your Google Doc** that you want to use as knowledge base
-   - Direct URL format: `https://docs.google.com/document/d/YOUR_DOC_ID/edit`
+1. **Open your Google Drive Folder** that you want to use as knowledge base
+   - Folder URL: `https://drive.google.com/drive/folders/YOUR_FOLDER_ID`
    
-2. **Click the "Share" button** (top right corner of the Google Doc)
+2. **Click the folder name** (top left) and select **"Share"**
 
 3. **Find your service account email**:
    - Open the JSON file you downloaded in Step 3
@@ -91,17 +91,17 @@ Give the service account access to your knowledge base document:
 
 **✅ You're done when the service account email appears in your document's "Who has access" section**
 
-### Step 6: Get Your Google Doc ID
+### Step 6: Get Your Google Drive Folder ID
 
-Extract the document ID from your Google Doc URL:
+Extract the ID from your URL:
 
 ```
-https://docs.google.com/document/d/1ABC-XYZ-123456/edit
-                                  ^^^^^^^^^^^^^^^^
-                                  This is your Document ID
+https://drive.google.com/drive/folders/1ABC-XYZ-123456
+                                       ^^^^^^^^^^^^^^^^
+                                       This is your Folder ID
 ```
 
-Copy the document ID - you'll need it for the environment configuration.
+Copy the ID - you'll need it for the environment configuration.
 
 ---
 
@@ -125,7 +125,7 @@ GCP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 GCS_BUCKET_NAME=your-project-id-knowledge-base
 
 # Knowledge Base Configuration
-GOOGLE_DOC_ID=1ABC-XYZ-123456
+GOOGLE_DRIVE_FOLDER_ID=1ABC-XYZ-123456
 ```
 
 ### How to Fill in Service Account Credentials:
@@ -154,7 +154,7 @@ GCP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nyour_private_key_here\n-----END PR
 GCS_BUCKET_NAME=your-bucket-name
 
 # Knowledge Base
-GOOGLE_DOC_ID=your_google_doc_id
+GOOGLE_DRIVE_FOLDER_ID=your_drive_folder_id
 ```
 
 ---

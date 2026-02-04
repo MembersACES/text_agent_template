@@ -1,11 +1,12 @@
 import { getStorageClient } from './google-auth';
 
 export interface KnowledgeBaseData {
-    chunks: Array<{ text: string; embedding: number[] }>;
+    chunks: Array<{ text: string; embedding: number[]; source?: string }>;
     documentId: string;
     documentName: string;
     lastModified: string;
     indexedAt: string;
+    fileMetadata?: Record<string, { modifiedTime: string; chunkCount: number }>;
 }
 
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
