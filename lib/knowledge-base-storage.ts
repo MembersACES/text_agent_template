@@ -6,7 +6,7 @@ export interface KnowledgeBaseData {
     documentName: string;
     lastModified: string;
     indexedAt: string;
-    fileMetadata?: Record<string, { modifiedTime: string; chunkCount: number }>;
+    fileMetadata?: Record<string, { modifiedTime: string; chunkCount: number; name: string; indexedAt?: string }>;
 }
 
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;

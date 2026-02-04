@@ -18,7 +18,21 @@ export default function PromptEditor() {
     const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'welcome' | null>('prompt');
 
     // KB Data
-    const [kbFiles, setKbFiles] = useState<{ name: string, webViewLink?: string }[]>([]);
+    interface KBFile {
+        id: string;
+        name: string;
+        webViewLink?: string;
+        modifiedTime: string;
+        indexedAt?: string;
+        chunkCount?: number;
+        isStale?: boolean;
+    }
+    const [kbData, setKbData] = useState<{
+        indexed: KBFile[],
+        pending: KBFile[],
+        removed: KBFile[]
+    }>({ indexed: [], pending: [], removed: [] });
+    const [updatingKB, setUpdatingKB] = useState(false);
 
     useEffect(() => {
         fetchConfig();
@@ -29,13 +43,42 @@ export default function PromptEditor() {
         try {
             const res = await fetch('/api/knowledge-base/index');
             const data = await res.json();
-            if (data.files) {
-                setKbFiles(data.files);
+            if (data.indexed) {
+                setKbData({
+                    indexed: data.indexed,
+                    pending: data.pending,
+                    removed: data.removed
+                });
             }
         } catch (error) {
             console.error('Failed to load KB files', error);
         }
     }
+
+    const handleUpdateKB = async (e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent accordion toggle
+        setUpdatingKB(true);
+        setMessage(null);
+        try {
+            const res = await fetch('/api/knowledge-base/index', {
+                method: 'POST'
+            });
+            const data = await res.json();
+
+            if (res.ok) {
+                setMessage({ type: 'success', text: 'Knowledge base updated!' });
+                fetchKB(); // Refresh list
+                setTimeout(() => setMessage(null), 3000);
+            } else {
+                setMessage({ type: 'error', text: data.error || 'Update failed' });
+            }
+        } catch (error) {
+            console.error('Failed to update KB', error);
+            setMessage({ type: 'error', text: 'Update failed' });
+        } finally {
+            setUpdatingKB(false);
+        }
+    };
 
     const fetchConfig = async () => {
         try {
@@ -154,7 +197,7 @@ export default function PromptEditor() {
                     className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
                     onClick={() => setExpandedSection(expandedSection === 'kb' ? null : 'kb')}
                 >
-                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2 flex-1">
                         <svg
                             className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'kb' ? 'rotate-90' : ''}`}
                             fill="none"
@@ -165,48 +208,122 @@ export default function PromptEditor() {
                         </svg>
                         Knowledge Base
                     </h3>
+                    <button
+                        onClick={handleUpdateKB}
+                        disabled={updatingKB}
+                        className="px-3 py-1 bg-blue-600 text-white text-xs font-bold rounded-md shadow-sm hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                        {updatingKB ? (
+                            <>
+                                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                Updating...
+                            </>
+                        ) : (
+                            <>
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Update
+                            </>
+                        )}
+                    </button>
                 </div>
 
                 {expandedSection === 'kb' && (
-                    <div className="p-6 bg-gray-50/30 animate-slide-down">
-                        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                            {kbFiles.length === 0 ? (
-                                <div className="p-8 text-center text-gray-500 text-sm">
-                                    No documents indexed.
-                                </div>
-                            ) : (
-                                <ul className="divide-y divide-gray-100">
-                                    {kbFiles.map((file, idx) => (
-                                        <li key={idx} className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 group">
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                    </svg>
-                                                </div>
-                                                <span className="text-sm text-gray-700 font-medium truncate max-w-[200px] sm:max-w-xs">{file.name}</span>
-                                            </div>
+                    <div className="p-6 bg-gray-50/30 animate-slide-down flex flex-col gap-4">
 
-                                            {file.webViewLink ? (
-                                                <a
-                                                    href={file.webViewLink}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                    title="Open in Google Drive"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                                    </svg>
-                                                </a>
-                                            ) : (
-                                                <span className="text-xs text-gray-300 italic">Link unavailable</span>
-                                            )}
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
+                        {(kbData.pending.length > 0 || kbData.indexed.some(f => f.isStale)) && (
+                            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-center gap-3">
+                                <div className="p-1.5 bg-orange-100 text-orange-600 rounded-full">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
+                                </div>
+                                <div className="flex-1">
+                                    <p className="text-xs font-semibold text-orange-800">Knowledge base is out of sync</p>
+                                    <p className="text-[10px] text-orange-600">Click <b>Update</b> above to refresh with the latest Drive changes.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                            <ul className="divide-y divide-gray-100">
+                                {[...kbData.indexed, ...kbData.pending]
+                                    .sort((a, b) => {
+                                        // Status priority: Not Indexed / Outdated > Indexed
+                                        const getStatusScore = (f: KBFile) => {
+                                            const isPending = kbData.pending.some(p => p.id === f.id);
+                                            const isStale = kbData.indexed.find(i => i.id === f.id)?.isStale;
+                                            if (isPending) return 0;
+                                            if (isStale) return 1;
+                                            return 2;
+                                        };
+                                        const scoreA = getStatusScore(a);
+                                        const scoreB = getStatusScore(b);
+                                        if (scoreA !== scoreB) return scoreA - scoreB;
+                                        return a.name.localeCompare(b.name);
+                                    })
+                                    .map((file, idx) => {
+                                        const isIndexed = kbData.indexed.some(f => f.id === file.id && !f.isStale);
+                                        const isOutdated = kbData.indexed.some(f => f.id === file.id && f.isStale);
+                                        const isNotIndexed = kbData.pending.some(f => f.id === file.id);
+
+                                        return (
+                                            <li key={file.id || idx} className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 group transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`p-2 rounded-lg ${isIndexed ? 'bg-green-50 text-green-600' :
+                                                        isOutdated ? 'bg-orange-50 text-orange-600' :
+                                                            'bg-red-50 text-red-600'
+                                                        }`}>
+                                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                        </svg>
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-sm text-gray-900 font-semibold">{file.name}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 mt-0.5 whitespace-nowrap overflow-hidden">
+                                                            <span className="text-[10px] text-gray-400">
+                                                                {file.indexedAt ? `Indexed: ${new Date(file.indexedAt).toLocaleString()}` : 'Not Indexed'}
+                                                                {` • `}
+                                                                Last Modified: {new Date(file.modifiedTime).toLocaleString()}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-3">
+                                                    {/* Status Badge */}
+                                                    {isIndexed && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded uppercase tracking-wider">Indexed</span>}
+                                                    {isOutdated && <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded uppercase tracking-wider">Outdated</span>}
+                                                    {isNotIndexed && <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded uppercase tracking-wider">Not Indexed</span>}
+
+                                                    {file.webViewLink && (
+                                                        <a
+                                                            href={file.webViewLink}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="p-2 text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                                            title="Open in Google Drive"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                            </svg>
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            </li>
+                                        );
+                                    })}
+                            </ul>
                         </div>
+
+                        {kbData.removed.length > 0 && (
+                            <div className="px-1 text-[10px] text-gray-400 flex items-center justify-between italic">
+                                <span>Note: {kbData.removed.length} documents in memory are no longer in Drive. Update to sync.</span>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
