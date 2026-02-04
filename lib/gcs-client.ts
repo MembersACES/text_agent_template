@@ -15,6 +15,7 @@ const storage = new Storage({
 });
 
 const SETTINGS_FILENAME = 'settings.json';
+const AGENTS_DIR = 'agents';
 
 // Default prompt fallback if GCS fails or file doesn't exist
 const DEFAULT_PROMPT = `You are a friendly, conversational AI assistant helping users with step-by-step guidance.
@@ -53,10 +54,12 @@ export interface PromptConfig {
     config?: {
         model?: string;
         language?: string;
+        // Optional: per-agent knowledge base Drive folder
+        kbFolderId?: string;
     };
 }
 
-export async function getPromptConfig(): Promise<PromptConfig> {
+export async function getPromptConfig(agentId?: string): Promise<PromptConfig> {
     const defaultData: PromptConfig = {
         systemPrompt: DEFAULT_PROMPT,
         welcomeMessage: DEFAULT_WELCOME_MESSAGE,
@@ -71,24 +74,41 @@ export async function getPromptConfig(): Promise<PromptConfig> {
 
     try {
         const bucket = storage.bucket(BUCKET_NAME);
+        
+        // Determine file path based on agentId
+        let filePath: string;
+        if (agentId) {
+            // Agent-specific config: agents/{agentId}/settings.json
+            filePath = `${AGENTS_DIR}/${agentId}/settings.json`;
+        } else {
+            // Default/legacy config: settings.json
+            filePath = SETTINGS_FILENAME;
+        }
 
-        // Try settings.json first
-        let file = bucket.file(SETTINGS_FILENAME);
+        let file = bucket.file(filePath);
         let [exists] = await file.exists();
 
+        // If agent-specific file doesn't exist and we're looking for an agent, try default
+        if (!exists && agentId) {
+            file = bucket.file(SETTINGS_FILENAME);
+            [exists] = await file.exists();
+        }
+
         if (!exists) {
-            // Fallback to prompt.json for migration
-            const oldFile = bucket.file('prompt.json');
-            const [oldExists] = await oldFile.exists();
-            if (oldExists) {
-                console.log('Found legacy prompt.json, migrating to settings.json');
-                file = oldFile;
-                exists = true;
+            // Fallback to prompt.json for migration (only for default)
+            if (!agentId) {
+                const oldFile = bucket.file('prompt.json');
+                const [oldExists] = await oldFile.exists();
+                if (oldExists) {
+                    console.log('Found legacy prompt.json, migrating to settings.json');
+                    file = oldFile;
+                    exists = true;
+                }
             }
         }
 
         if (!exists) {
-            console.log('Settings file not found in GCS, returning default.');
+            console.log(`Settings file not found for ${agentId || 'default'}, returning default.`);
             return defaultData;
         }
 
@@ -110,20 +130,26 @@ export async function getPromptConfig(): Promise<PromptConfig> {
 }
 
 // Keeping original export for backward compatibility relative to imports (will deprecate/refactor usage)
-export async function getPromptTemplate(): Promise<string> {
-    const config = await getPromptConfig();
+export async function getPromptTemplate(agentId?: string): Promise<string> {
+    const config = await getPromptConfig(agentId);
     return config.systemPrompt;
 }
 
-export async function savePromptConfig(data: PromptConfig): Promise<void> {
+export async function savePromptConfig(data: PromptConfig, agentId?: string): Promise<void> {
     if (!BUCKET_NAME) {
         throw new Error('GCS_BUCKET_NAME not configured');
     }
 
     const bucket = storage.bucket(BUCKET_NAME);
-    const file = bucket.file(SETTINGS_FILENAME);
+    
+    // Determine file path based on agentId
+    const filePath = agentId 
+        ? `${AGENTS_DIR}/${agentId}/settings.json`
+        : SETTINGS_FILENAME;
+    
+    const file = bucket.file(filePath);
 
-    await file.save(JSON.stringify(data), {
+    await file.save(JSON.stringify(data, null, 2), {
         contentType: 'application/json',
         metadata: {
             cacheControl: 'no-cache',
@@ -132,14 +158,40 @@ export async function savePromptConfig(data: PromptConfig): Promise<void> {
 }
 
 // Wrapper for existing single-template save (migration helper if needed, or just update callers)
-export async function savePromptTemplate(template: string): Promise<void> {
+export async function savePromptTemplate(template: string, agentId?: string): Promise<void> {
     // We shouldn't drop other fields if we can help it, but for now this legacy call
     // implies we only care about the template. A better approach is to read-modify-write 
     // or just update all callers to use savePromptConfig. 
     // For safety, let's fetch first.
-    const current = await getPromptConfig();
+    const current = await getPromptConfig(agentId);
     await savePromptConfig({
         ...current,
         systemPrompt: template
-    });
+    }, agentId);
+}
+
+// List all agents from GCS
+export async function listAgents(): Promise<string[]> {
+    if (!BUCKET_NAME) {
+        return [];
+    }
+
+    try {
+        const bucket = storage.bucket(BUCKET_NAME);
+        const [files] = await bucket.getFiles({ prefix: `${AGENTS_DIR}/` });
+        
+        // Extract unique agent IDs from file paths
+        const agentIds = new Set<string>();
+        files.forEach(file => {
+            const match = file.name.match(new RegExp(`^${AGENTS_DIR}/([^/]+)/`));
+            if (match) {
+                agentIds.add(match[1]);
+            }
+        });
+        
+        return Array.from(agentIds).sort();
+    } catch (error) {
+        console.error('Error listing agents:', error);
+        return [];
+    }
 }

@@ -10,9 +10,10 @@ interface Message {
 
 interface ChatWindowProps {
     refreshTrigger?: number;
+    agentId?: string;
 }
 
-export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
+export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
@@ -29,7 +30,8 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
     useEffect(() => {
         const fetchConfig = async () => {
             try {
-                const res = await fetch('/api/prompt');
+                const url = agentId ? `/api/prompt?agentId=${agentId}` : '/api/prompt';
+                const res = await fetch(url);
                 const data = await res.json();
                 if (data.welcomeMessage) {
                     setWelcomeMessage(data.welcomeMessage);
@@ -55,7 +57,7 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
             }
         };
         fetchConfig();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, agentId]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,7 +80,11 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: userMessage, useKnowledgeBase: true }),
+                body: JSON.stringify({ 
+                    message: userMessage, 
+                    useKnowledgeBase: true,
+                    agentId: agentId 
+                }),
             });
 
             const data = await response.json();

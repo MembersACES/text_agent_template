@@ -1,10 +1,9 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
-import ChatWindow from './components/ChatWindow';
-import PromptEditor from './components/PromptEditor';
-import AgentSelector from './components/AgentSelector';
+import { useParams, useRouter } from 'next/navigation';
+import ChatWindow from '../../components/ChatWindow';
+import PromptEditor from '../../components/PromptEditor';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -77,9 +76,13 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   );
 }
 
-export default function Home() {
+export default function AgentPage() {
+  const params = useParams();
+  const router = useRouter();
+  const agentId = params.agentId as string;
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     const auth = sessionStorage.getItem('app-auth');
@@ -88,8 +91,6 @@ export default function Home() {
     }
     setChecking(false);
   }, []);
-
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   if (checking) return null;
 
@@ -126,30 +127,36 @@ export default function Home() {
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 bg-white border-b border-gray-200 flex flex-col shadow-sm z-20 shrink-0">
-        <div className="h-14 flex items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
-            <div className="w-px h-4 bg-gray-200 mx-1"></div>
-            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
-            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">
-              Default Agent
-            </div>
+      <header className="sticky top-0 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 shrink-0">
+        <div className="flex items-center gap-2 py-3">
+          <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
+          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+          <div className="text-gray-900 font-bold tracking-tight">ACES</div>
+          <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">
+            Agent: {agentId}
           </div>
         </div>
-        <AgentSelector />
+        <button
+          onClick={() => router.push('/')}
+          className="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
+        >
+          ← Back to Default
+        </button>
       </header>
 
       {/* Main Split View */}
-      <main className="flex-1 flex overflow-hidden min-h-0 pt-0">
+      <main className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Panel: Prompt Editor - scrollable */}
         <div className="w-1/2 min-w-[400px] h-full overflow-y-auto border-r border-gray-200">
-          <PromptEditor onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
+          <PromptEditor
+            agentId={agentId}
+            onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)}
+          />
         </div>
 
         {/* Right Panel: Chat - fixed */}
         <div className="flex-1 h-full bg-white relative overflow-hidden flex flex-col min-h-0">
-          <ChatWindow refreshTrigger={refreshTrigger} />
+          <ChatWindow agentId={agentId} refreshTrigger={refreshTrigger} />
         </div>
       </main>
 
@@ -159,3 +166,4 @@ export default function Home() {
     </div>
   );
 }
+

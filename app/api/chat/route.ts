@@ -6,8 +6,8 @@ import { findSimilarChunks } from '@/lib/document-chunker';
 import { traceable } from 'langsmith/traceable';
 import { getPromptTemplate } from '@/lib/gcs-client';
 
-const retrieveContext = traceable(async (query: string) => {
-    const kb = await getCachedKnowledgeBase();
+const retrieveContext = traceable(async (query: string, agentId?: string) => {
+    const kb = await getCachedKnowledgeBase(agentId);
     if (!kb) return null;
 
     const queryEmbedding = await generateEmbedding(query);
@@ -24,7 +24,7 @@ const generateAIResponse = traceable(async ({ model, prompt }: { model: any, pro
 
 export async function POST(request: Request) {
     try {
-        const { message, useKnowledgeBase } = await request.json();
+        const { message, useKnowledgeBase, agentId } = await request.json();
 
         if (!message) {
             return NextResponse.json(
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
         // If knowledge base mode is enabled, retrieve relevant context
         if (useKnowledgeBase) {
-            const similarChunks = await retrieveContext(message);
+            const similarChunks = await retrieveContext(message, agentId);
 
             if (similarChunks) {
                 // Build context from chunks
@@ -63,8 +63,8 @@ export async function POST(request: Request) {
                     })
                     .join('\n\n---\n\n');
 
-                // Retrieve dynamic prompt template
-                let template = await getPromptTemplate();
+                // Retrieve dynamic prompt template for the specific agent
+                let template = await getPromptTemplate(agentId);
 
                 // Replace placeholders with actual content
                 finalMessage = template

@@ -3,12 +3,15 @@
 
 import { useState, useEffect } from 'react';
 
-export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => void }) {
+export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess?: () => void; agentId?: string }) {
     // State for Config
     const [systemPrompt, setSystemPrompt] = useState('');
     const [welcomeMessage, setWelcomeMessage] = useState('');
     const [agentName, setAgentName] = useState('');
-    const [config, setConfig] = useState({ model: 'Gemini 3.0 Flash', language: 'Multilingual' });
+    const [config, setConfig] = useState<{ model?: string; language?: string; kbFolderId?: string }>({
+        model: 'Gemini 3.0 Flash',
+        language: 'Multilingual',
+    });
 
     // State for UI
     const [loading, setLoading] = useState(true);
@@ -38,11 +41,12 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
     useEffect(() => {
         fetchConfig();
         fetchKB();
-    }, []);
+    }, [agentId]);
 
     const fetchKB = async () => {
         try {
-            const res = await fetch('/api/knowledge-base/index');
+            const url = agentId ? `/api/knowledge-base/index?agentId=${agentId}` : '/api/knowledge-base/index';
+            const res = await fetch(url);
             const data = await res.json();
             if (data.indexed) {
                 setKbData({
@@ -62,7 +66,12 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
         setMessage(null);
         try {
             const res = await fetch('/api/knowledge-base/index', {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    agentId: agentId || undefined,
+                    kbFolderId: config.kbFolderId || undefined,
+                })
             });
             const data = await res.json();
 
@@ -83,7 +92,8 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
 
     const fetchConfig = async () => {
         try {
-            const res = await fetch('/api/prompt');
+            const url = agentId ? `/api/prompt?agentId=${agentId}` : '/api/prompt';
+            const res = await fetch(url);
             const data = await res.json();
             if (data.systemPrompt !== undefined) {
                 setSystemPrompt(data.systemPrompt);
@@ -114,7 +124,9 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                     systemPrompt,
                     welcomeMessage,
                     agentName,
-                    config
+                    config,
+                    // Ensure we save config for the correct agent, not always the default
+                    agentId: agentId || undefined,
                 }),
             });
 
@@ -235,7 +247,6 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
 
                 {expandedSection === 'kb' && (
                     <div className="p-6 bg-gray-50/30 animate-slide-down flex flex-col gap-4">
-
                         {(kbData.pending.length > 0 || kbData.indexed.some(f => f.isStale)) && (
                             <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-center gap-3">
                                 <div className="p-1.5 bg-orange-100 text-orange-600 rounded-full">
@@ -372,6 +383,22 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                                     className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none min-h-[120px] shadow-sm transition-all"
                                     placeholder="Enter custom welcome message..."
                                 />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                    Google Drive Folder ID (Knowledge Base)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={config.kbFolderId || ''}
+                                    onChange={(e) => setConfig(prev => ({ ...prev, kbFolderId: e.target.value || undefined }))}
+                                    className="w-full p-3 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
+                                    placeholder="Override default GOOGLE_DRIVE_FOLDER_ID for this agent"
+                                />
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                    If set, this agent will index and query documents from the specified Drive folder ID.
+                                    If left blank, it falls back to the global <code className="font-mono">GOOGLE_DRIVE_FOLDER_ID</code>.
+                                </p>
                             </div>
                         </div>
                     </div>

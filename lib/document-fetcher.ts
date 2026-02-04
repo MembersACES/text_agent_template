@@ -43,14 +43,52 @@ export async function getDocumentMetadata(documentId: string) {
     };
 }
 
-// List files in a Google Drive folder
-export async function listFilesInFolder(folderId: string): Promise<Array<{ id: string; name: string; modifiedTime: string; webViewLink: string }>> {
+// Fetch spreadsheet content from Google Sheets
+export async function fetchGoogleSheet(spreadsheetId: string): Promise<string> {
+    const auth = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // Get metadata to discover sheet names
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetTitles =
+        meta.data.sheets?.map(s => s.properties?.title).filter((t): t is string => !!t) || [];
+
+    if (sheetTitles.length === 0) return '';
+
+    let result = '';
+
+    for (const title of sheetTitles) {
+        // Read a reasonable range; adjust if needed
+        const range = `${title}!A1:Z200`;
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range,
+        });
+        const rows = res.data.values || [];
+
+        if (rows.length === 0) continue;
+
+        result += `Sheet: ${title}\n`;
+        for (const row of rows) {
+            const line = (row as string[]).join('\t');
+            if (line.trim().length > 0) {
+                result += `${line}\n`;
+            }
+        }
+        result += '\n';
+    }
+
+    return result.trim();
+}
+
+// List files in a Google Drive folder (Docs + Sheets)
+export async function listFilesInFolder(folderId: string): Promise<Array<{ id: string; name: string; modifiedTime: string; webViewLink: string; mimeType: string }>> {
     const auth = getGoogleAuth();
     const drive = google.drive({ version: 'v3', auth });
 
     const response = await drive.files.list({
-        q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false`,
-        fields: 'files(id, name, modifiedTime, webViewLink)',
+        q: `'${folderId}' in parents and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.spreadsheet') and trashed = false`,
+        fields: 'files(id, name, modifiedTime, webViewLink, mimeType)',
         pageSize: 100, // Limit to 100 files to avoid overwhelming
     });
 
@@ -59,6 +97,7 @@ export async function listFilesInFolder(folderId: string): Promise<Array<{ id: s
         name: f.name || '',
         modifiedTime: f.modifiedTime || '',
         webViewLink: f.webViewLink || '',
+        mimeType: f.mimeType || '',
     }));
 }
 

@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(request: Request) {
     try {
-        const { query } = await request.json();
+        const { query, agentId } = await request.json();
 
         if (!query) {
             return NextResponse.json(
@@ -17,8 +17,8 @@ export async function POST(request: Request) {
             );
         }
 
-        // 1. Load knowledge base
-        const kb = await getCachedKnowledgeBase();
+        // 1. Load knowledge base (agent-specific or default)
+        const kb = await getCachedKnowledgeBase(agentId);
 
         if (!kb) {
             return NextResponse.json(
