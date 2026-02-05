@@ -26,7 +26,8 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
     // Accordion state - only one open at a time
-    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>('prompt');
+    // Default: all sections collapsed when the agent page first loads
+    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>(null);
 
     // KB Data
     interface KBFile {
