@@ -316,9 +316,16 @@ export async function POST(request: Request) {
 
         console.log(`[Chat API] JSON blocks found: ${jsonBlockMatches.length}, extractedData: ${extractedData ? (Array.isArray(extractedData) ? extractedData.length + ' invoices' : '1 invoice') : 'none'}`);
 
-        // Check if user requested report generation
+        // Check if user requested report generation OR if AI response contains [GENERATE_REPORT]
         if (message.toLowerCase().includes('generate') && message.toLowerCase().includes('report')) {
             generateReport = true;
+        }
+        
+        // Also check if AI response contains [GENERATE_REPORT] marker
+        if (cleanedResponse.includes('[GENERATE_REPORT]')) {
+            generateReport = true;
+            // Remove the marker from the response
+            cleanedResponse = cleanedResponse.replace(/\[GENERATE_REPORT\]/g, '').trim();
         }
 
         return NextResponse.json({

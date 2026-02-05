@@ -40,6 +40,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const reportGenerationTriggered = useRef(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -156,33 +157,58 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             // Check if report generation is requested
             // Only trigger on explicit flag from API (not from checking user message, as that could trigger twice)
             if (data.generateReport) {
-                // Use functional update to get the latest invoices state, then trigger report generation
-                setExtractedInvoices(currentInvoices => {
-                    if (currentInvoices.length > 0) {
-                        // Trigger report generation with current invoices (only once)
-                        setTimeout(() => {
-                            handleGenerateReportWithInvoices(currentInvoices);
-                        }, 100);
-                    } else {
-                        setMessages(prev => [...prev, {
-                            role: 'assistant',
-                            content: 'No invoice data available to generate a report. Please provide invoices first.',
-                        }]);
-                    }
-                    return currentInvoices; // Return unchanged state
-                });
+                // Clean the response to remove [GENERATE_REPORT] marker if present
+                const cleanedResponse = data.response.replace(/\[GENERATE_REPORT\]/g, '').trim();
+                
+                // Use a ref to prevent duplicate report generation calls (React Strict Mode can cause double renders)
+                if (!reportGenerationTriggered.current) {
+                    reportGenerationTriggered.current = true;
+                    
+                    // Use functional update to get the latest invoices state, then trigger report generation
+                    setExtractedInvoices(currentInvoices => {
+                        if (currentInvoices.length > 0) {
+                            // Trigger report generation with current invoices (only once)
+                            setTimeout(() => {
+                                handleGenerateReportWithInvoices(currentInvoices);
+                                // Reset the flag after a delay to allow for future report generations
+                                setTimeout(() => {
+                                    reportGenerationTriggered.current = false;
+                                }, 2000);
+                            }, 100);
+                        } else {
+                            setMessages(prev => [...prev, {
+                                role: 'assistant',
+                                content: 'No invoice data available to generate a report. Please provide invoices first.',
+                            }]);
+                            reportGenerationTriggered.current = false;
+                        }
+                        return currentInvoices; // Return unchanged state
+                    });
+                }
+                // Skip adding the assistant's response message here - handleGenerateReportWithInvoices will add its own message
+                // This prevents duplicate messages when report generation is triggered
+                // Only add the cleaned response if it has meaningful content (not just the marker)
+                if (cleanedResponse && cleanedResponse.length > 0 && !cleanedResponse.match(/^\s*$/)) {
+                    setMessages(prev => [...prev, { 
+                        role: 'assistant', 
+                        content: cleanedResponse,
+                    }]);
+                }
+            } else {
+                // Reset the flag when report generation is not requested
+                reportGenerationTriggered.current = false;
+                // Only add assistant's response if report generation is NOT being triggered
+                // Create message with actions if report was just generated
+                const messageActions = data.downloadUrl ? [
+                    { type: 'download' as const, label: 'Download .xlsx', url: data.downloadUrl },
+                ] : undefined;
+
+                setMessages(prev => [...prev, { 
+                    role: 'assistant', 
+                    content: data.response,
+                    actions: messageActions,
+                }]);
             }
-
-            // Create message with actions if report was just generated
-            const messageActions = data.downloadUrl ? [
-                { type: 'download' as const, label: 'Download .xlsx', url: data.downloadUrl },
-            ] : undefined;
-
-            setMessages(prev => [...prev, { 
-                role: 'assistant', 
-                content: data.response,
-                actions: messageActions,
-            }]);
         } catch (error) {
             console.error('Error:', error);
             setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
@@ -270,11 +296,20 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 content += `\n\n${data.note}`;
             }
 
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                content,
-                actions,
-            }]);
+            // Check if this message already exists to prevent duplicates
+            setMessages(prev => {
+                // Check if the last message is already the report generation message
+                const lastMessage = prev[prev.length - 1];
+                if (lastMessage && lastMessage.content === content && lastMessage.actions?.length === actions.length) {
+                    console.log('[ChatWindow] Report generation message already exists, skipping duplicate');
+                    return prev;
+                }
+                return [...prev, {
+                    role: 'assistant',
+                    content,
+                    actions,
+                }];
+            });
         } catch (error) {
             console.error('Error generating report:', error);
             setMessages(prev => [...prev, {
