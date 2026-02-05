@@ -35,7 +35,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
     const [agentName, setAgentName] = useState("Text Agent");
     const [allowFileUploads, setAllowFileUploads] = useState(false);
-    const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string }[]>([]);
+    const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string; mimeType?: string; fileBufferBase64?: string }[]>([]);
     const [extractedInvoices, setExtractedInvoices] = useState<ExtractedInvoice[]>([]);
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [input, setInput] = useState('');
@@ -232,6 +232,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     invoices,
                     businessInfo,
                     agentId,
+                    uploadedFiles: uploadedFiles, // Include uploaded invoice files for Drive upload
                 }),
             });
 
@@ -239,13 +240,33 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
 
             if (!response.ok) throw new Error(data.error || 'Failed to generate report');
 
-            // Add message with download button
+            // Add message with download button and Drive links
             const actions: Array<{ type: 'download' | 'sheets-link'; label: string; url: string }> = [
                 { type: 'download', label: 'Download .xlsx', url: data.downloadUrl },
             ];
 
+            // Add Drive links if files were uploaded
+            if (data.driveUploads && data.driveUploads.length > 0) {
+                data.driveUploads.forEach((upload: { url: string; fileName: string }) => {
+                    actions.push({
+                        type: 'sheets-link',
+                        label: `Open ${upload.fileName} in Drive`,
+                        url: upload.url,
+                    });
+                });
+            }
+
             let content = 'Report generated successfully! You can download the Excel file.';
-            if (data.note) {
+            if (data.driveUploads && data.driveUploads.length > 0) {
+                content += `\n\n✅ ${data.driveUploads.length} file(s) uploaded to Google Drive:`;
+                data.driveUploads.forEach((upload: { fileName: string }) => {
+                    content += `\n  • ${upload.fileName}`;
+                });
+            }
+            if (data.driveUploadError) {
+                content += `\n\n⚠️ Drive upload warning: ${data.driveUploadError}`;
+            }
+            if (data.note && !data.driveUploads) {
                 content += `\n\n${data.note}`;
             }
 
@@ -474,7 +495,12 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                                     if (!res.ok) {
                                         throw new Error(data.error || `Failed to upload "${file.name}"`);
                                     }
-                                    return { name: data.fileName || file.name, content: data.content };
+                                    return { 
+                                        name: data.fileName || file.name, 
+                                        content: data.content,
+                                        mimeType: data.mimeType,
+                                        fileBufferBase64: data.fileBufferBase64, // Store original file buffer for Drive upload
+                                    };
                                 });
 
                                 const uploaded = await Promise.all(uploadPromises);

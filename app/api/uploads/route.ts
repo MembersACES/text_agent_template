@@ -102,12 +102,17 @@ Return ONLY the extracted text, no commentary.`
             return NextResponse.json({ error: 'File is empty or could not be read' }, { status: 400 });
         }
 
+        // Also return the original file buffer as base64 for Drive upload
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const fileBufferBase64 = fileBuffer.toString('base64');
+
         return NextResponse.json({
             success: true,
             message: 'File uploaded successfully',
             fileName,
             content,
             mimeType,
+            fileBufferBase64, // Original file buffer for Drive upload
         });
     } catch (error) {
         console.error('Error handling file upload:', error);

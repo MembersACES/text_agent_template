@@ -75,7 +75,13 @@ export async function POST(request: Request) {
 
         // Initialize Gemini AI
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: {
+                maxOutputTokens: 65536,
+                temperature: 0.1,
+            },
+        });
 
         let finalMessage = message;
         let sources = null;
@@ -85,7 +91,12 @@ export async function POST(request: Request) {
         let fileContext = '';
         if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
             // More aggressive truncation when we have many files
-            const maxLengthPerFile = uploadedFiles.length > 5 ? 2000 : uploadedFiles.length > 3 ? 4000 : 8000;
+            const TOTAL_FILE_BUDGET = 200000; // 200K chars for all uploaded files combined
+            const maxLengthPerFile = Math.max(
+                4000, // minimum per file
+                Math.floor(TOTAL_FILE_BUDGET / uploadedFiles.length)
+            );
+            ``
             
             fileContext = uploadedFiles
                 .map((f: any, i: number) => {
@@ -221,7 +232,8 @@ export async function POST(request: Request) {
         let generateReport = false;
 
         // Check for JSON code blocks in the response - extract ALL blocks, not just the first
-        const jsonBlockRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;
+        // Use ([\s\S]*?) instead of (\{[\s\S]*?\}) to capture all content, including nested JSON
+        const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
         const jsonBlockMatches = [...text.matchAll(jsonBlockRegex)];
         
         if (jsonBlockMatches.length > 0) {
@@ -230,7 +242,56 @@ export async function POST(request: Request) {
                 const parsedBlocks = jsonBlockMatches
                     .map(match => {
                         try {
-                            return JSON.parse(match[1]);
+                            let jsonContent = match[1].trim();
+                            
+                            // If content doesn't start with { or [, try to find JSON within the content
+                            if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
+                                // Try to find a JSON object or array within the content
+                                const jsonObjectMatch = jsonContent.match(/\{[\s\S]*\}/);
+                                const jsonArrayMatch = jsonContent.match(/\[[\s\S]*\]/);
+                                
+                                if (jsonObjectMatch) {
+                                    jsonContent = jsonObjectMatch[0];
+                                } else if (jsonArrayMatch) {
+                                    jsonContent = jsonArrayMatch[0];
+                                } else {
+                                    return null; // No JSON found
+                                }
+                            }
+                            
+                            // Try to parse, but if it fails, try to extract just the JSON part
+                            try {
+                                return JSON.parse(jsonContent);
+                            } catch (parseError) {
+                                // If parsing fails, try to find the actual JSON boundaries
+                                // Look for the first { or [ and find its matching closing brace/bracket
+                                const startChar = jsonContent[0];
+                                const endChar = startChar === '{' ? '}' : ']';
+                                
+                                let depth = 0;
+                                let jsonStart = -1;
+                                let jsonEnd = -1;
+                                
+                                for (let i = 0; i < jsonContent.length; i++) {
+                                    if (jsonContent[i] === startChar) {
+                                        if (jsonStart === -1) jsonStart = i;
+                                        depth++;
+                                    } else if (jsonContent[i] === endChar) {
+                                        depth--;
+                                        if (depth === 0 && jsonStart !== -1) {
+                                            jsonEnd = i;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if (jsonStart !== -1 && jsonEnd !== -1) {
+                                    const extractedJson = jsonContent.substring(jsonStart, jsonEnd + 1);
+                                    return JSON.parse(extractedJson);
+                                }
+                                
+                                throw parseError; // Re-throw if we couldn't extract valid JSON
+                            }
                         } catch (e) {
                             console.error('Failed to parse JSON block:', e);
                             return null;
@@ -244,7 +305,7 @@ export async function POST(request: Request) {
                     extractedData = parsedBlocks.length === 1 ? parsedBlocks[0] : parsedBlocks;
                     
                     // Remove all JSON blocks from the response text
-                    cleanedResponse = text.replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, '').trim();
+                    cleanedResponse = text.replace(/```(?:json)?\s*[\s\S]*?\s*```/g, '').trim();
                     
                     console.log(`[Chat API] Extracted ${parsedBlocks.length} JSON block(s) from response`);
                 }
@@ -252,6 +313,8 @@ export async function POST(request: Request) {
                 console.error('Failed to parse extracted JSON:', e);
             }
         }
+
+        console.log(`[Chat API] JSON blocks found: ${jsonBlockMatches.length}, extractedData: ${extractedData ? (Array.isArray(extractedData) ? extractedData.length + ' invoices' : '1 invoice') : 'none'}`);
 
         // Check if user requested report generation
         if (message.toLowerCase().includes('generate') && message.toLowerCase().includes('report')) {

@@ -250,39 +250,92 @@ async function populateElectricitySheet(sheets: any, spreadsheetId: string, shee
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)', 
-                    'Off-Peak Usage (kWh)', 'Peak Rate (c/kWh)', 'Off-Peak Rate (c/kWh)',
-                    'Daily Supply ($)', 'Total (inc GST)'];
+    // Check if any invoice has shoulder data (optional - some states don't have shoulder)
+    const hasShoulder = invoices.some(inv => 
+        (inv.shoulder_usage_kwh !== null && inv.shoulder_usage_kwh !== undefined) ||
+        (inv.shoulder_rate_c_per_kwh !== null && inv.shoulder_rate_c_per_kwh !== undefined)
+    );
+
+    // Headers - conditionally include shoulder columns
+    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)'];
+    if (hasShoulder) {
+        headers.push('Shoulder Usage (kWh)');
+    }
+    headers.push('Off-Peak Usage (kWh)', 'Peak Rate (c/kWh)');
+    if (hasShoulder) {
+        headers.push('Shoulder Rate (c/kWh)');
+    }
+    headers.push('Off-Peak Rate (c/kWh)', 'Daily Supply ($)', 'Total (inc GST)', 
+                 'Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)');
     
     const values = [headers];
     invoices.forEach(inv => {
-        values.push([
+        const row: any[] = [
             inv.invoice_date || '',
             inv.supplier || '',
             inv.nmi || '',
             inv.site_address || '',
             (inv.peak_usage_kwh || 0).toString(),
+        ];
+        
+        if (hasShoulder) {
+            row.push((inv.shoulder_usage_kwh || 0).toString());
+        }
+        
+        row.push(
             (inv.off_peak_usage_kwh || 0).toString(),
-            (inv.peak_rate_c_per_kwh || 0).toString(),
-            (inv.off_peak_rate_c_per_kwh || 0).toString(),
-            (inv.daily_supply_charge || 0).toString(),
+            (inv.peak_rate_c_per_kwh ?? '').toString(),
+        );
+        
+        if (hasShoulder) {
+            row.push((inv.shoulder_rate_c_per_kwh ?? '').toString());
+        }
+        
+        row.push(
+            (inv.off_peak_rate_c_per_kwh ?? '').toString(),
+            (inv.daily_supply_charge ?? '').toString(),
             (inv.total_inc_gst || 0).toString(),
-        ]);
+            (inv.demand_kw ?? '').toString(),
+            (inv.demand_charges ?? '').toString(),
+            (inv.meter_charges ?? '').toString(),
+            (inv.total_usage_kwh || 0).toString(),
+        );
+        
+        values.push(row);
     });
 
     // Add totals row
-    values.push([
+    const totalRow: any[] = [
         'TOTAL', '', '', '',
         invoices.reduce((sum, inv) => sum + (inv.peak_usage_kwh || 0), 0).toString(),
+    ];
+    
+    if (hasShoulder) {
+        totalRow.push(invoices.reduce((sum, inv) => sum + (inv.shoulder_usage_kwh || 0), 0).toString());
+    }
+    
+    totalRow.push(
         invoices.reduce((sum, inv) => sum + (inv.off_peak_usage_kwh || 0), 0).toString(),
-        '', '',
+        '', // Peak rate column
+    );
+    
+    if (hasShoulder) {
+        totalRow.push(''); // Shoulder rate column
+    }
+    
+    totalRow.push(
+        '', // Off-peak rate column
         invoices.reduce((sum, inv) => sum + (inv.daily_supply_charge || 0), 0).toString(),
         invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toString(),
-    ]);
+    );
+    
+    values.push(totalRow);
 
+    // Determine range based on whether shoulder is present
+    const lastCol = hasShoulder ? 'L' : 'J';
     await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `Electricity Data!A1:J${values.length}`,
+        range: `Electricity Data!A1:${lastCol}${values.length}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values },
     });
@@ -307,15 +360,14 @@ async function populateGasSheet(sheets: any, spreadsheetId: string, sheetId: num
     
     const values = [headers];
     invoices.forEach(inv => {
-        const rate = inv.total_usage_gj ? (inv.usage_charges_ex_gst || 0) / (inv.total_usage_gj || 1) : 0;
         values.push([
             inv.invoice_date || '',
             inv.supplier || '',
             inv.mrin || '',
             inv.site_address || '',
             (inv.total_usage_gj || 0).toString(),
-            rate.toFixed(2),
-            (inv.daily_supply_charge || 0).toString(),
+            (inv.gas_rate_per_gj ?? '').toString(),
+            (inv.daily_supply_charge ?? '').toString(),
             (inv.total_inc_gst || 0).toString(),
         ]);
     });
@@ -348,27 +400,97 @@ async function populateWasteSheet(sheets: any, spreadsheetId: string, sheetId: n
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Total (inc GST)'];
+    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Frequency', 
+                    'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+    
     const values = [headers];
     
+    // Check if any invoice has waste_services array
+    const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
+
+    if (hasServiceBreakdown) {
+        // Output one row per service
+        invoices.forEach(inv => {
+            if (inv.waste_services && inv.waste_services.length > 0) {
+                inv.waste_services.forEach((service, index) => {
+                    const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                    const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+                    
+                    values.push([
+                        index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
+                        index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
+                        index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
+                        service.service_type || '',
+                        (service.frequency ?? '').toString(),
+                        (service.unit_cost ?? '').toString(),
+                        (service.total_cost ?? '').toString(),
+                        (gstAmount ?? '').toString(),
+                        (totalIncGst ?? '').toString(),
+                    ]);
+                });
+            } else {
+                // Fallback: single row if no service breakdown
+                values.push([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '',
+                    '',
+                    (inv.total_charges_ex_gst ?? '').toString(),
+                    (inv.gst_amount ?? '').toString(),
+                    (inv.total_inc_gst || 0).toString(),
+                ]);
+            }
+        });
+    } else {
+        // Fallback: single row per invoice if no service breakdown
+        invoices.forEach(inv => {
+            values.push([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.site_address || '',
+                inv.tariff_type || '',
+                '',
+                '',
+                (inv.total_charges_ex_gst ?? '').toString(),
+                (inv.gst_amount ?? '').toString(),
+                (inv.total_inc_gst || 0).toString(),
+            ]);
+        });
+    }
+
+    // Calculate totals
+    let totalExGst = 0;
+    let totalGst = 0;
+    let totalIncGst = 0;
+
     invoices.forEach(inv => {
-        values.push([
-            inv.invoice_date || '',
-            inv.supplier || '',
-            inv.site_address || '',
-            inv.tariff_type || '',
-            (inv.total_inc_gst || 0).toString(),
-        ]);
+        if (inv.waste_services && inv.waste_services.length > 0) {
+            inv.waste_services.forEach(service => {
+                if (service.total_cost) {
+                    totalExGst += service.total_cost;
+                    totalGst += service.total_cost * 0.1;
+                    totalIncGst += service.total_cost * 1.1;
+                }
+            });
+        } else {
+            totalExGst += inv.total_charges_ex_gst || 0;
+            totalGst += inv.gst_amount || 0;
+            totalIncGst += inv.total_inc_gst || 0;
+        }
     });
 
     values.push([
-        'TOTAL', '', '', '',
-        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toString(),
+        'TOTAL', '', '', '', '', '',
+        totalExGst.toString(),
+        totalGst.toString(),
+        totalIncGst.toString(),
     ]);
 
     await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `Waste Data!A1:E${values.length}`,
+        range: `Waste Data!A1:I${values.length}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values },
     });

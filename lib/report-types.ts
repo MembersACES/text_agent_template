@@ -34,6 +34,23 @@ export interface ExtractedInvoice {
     total_usage_mj: number | null;
     total_usage_gj: number | null;
     volume_m3: number | null;
+    gas_rate_per_gj: number | null;  // $/GJ rate from invoice
+    
+    // Waste Specific
+    waste_services?: Array<{
+        service_type: string;      // e.g., "3M3 Frontlift General"
+        frequency: number | null;  // collections per period
+        unit_cost: number | null;  // cost per collection
+        total_cost: number | null;
+    }>;
+    
+    // Oil Specific
+    oil_services?: Array<{
+        service_type: string;      // e.g., "Waste Oil Collection"
+        quantity: number | null;
+        unit_cost: number | null;
+        total_cost: number | null;
+    }>;
     
     // Costs
     usage_charges_ex_gst: number | null;

@@ -72,10 +72,24 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
         return;
     }
 
-    // Headers
-    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)', 
-                    'Off-Peak Usage (kWh)', 'Peak Rate (c/kWh)', 'Off-Peak Rate (c/kWh)',
-                    'Daily Supply ($)', 'Total (inc GST)'];
+    // Check if any invoice has shoulder data (optional - some states don't have shoulder)
+    const hasShoulder = invoices.some(inv => 
+        (inv.shoulder_usage_kwh !== null && inv.shoulder_usage_kwh !== undefined) ||
+        (inv.shoulder_rate_c_per_kwh !== null && inv.shoulder_rate_c_per_kwh !== undefined)
+    );
+
+    // Headers - conditionally include shoulder columns
+    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)'];
+    if (hasShoulder) {
+        headers.push('Shoulder Usage (kWh)');
+    }
+    headers.push('Off-Peak Usage (kWh)', 'Peak Rate (c/kWh)');
+    if (hasShoulder) {
+        headers.push('Shoulder Rate (c/kWh)');
+    }
+    headers.push('Off-Peak Rate (c/kWh)', 'Daily Supply ($)', 'Total (inc GST)', 
+                 'Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)');
+    
     sheet.addRow(headers);
     
     // Style header row
@@ -90,39 +104,87 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
 
     // Data rows
     invoices.forEach(inv => {
-        sheet.addRow([
+        const row: any[] = [
             inv.invoice_date || '',
             inv.supplier || '',
             inv.nmi || '',
             inv.site_address || '',
             inv.peak_usage_kwh || 0,
+        ];
+        
+        if (hasShoulder) {
+            row.push(inv.shoulder_usage_kwh || 0);
+        }
+        
+        row.push(
             inv.off_peak_usage_kwh || 0,
-            inv.peak_rate_c_per_kwh || 0,
-            inv.off_peak_rate_c_per_kwh || 0,
-            inv.daily_supply_charge || 0,
-            inv.total_inc_gst || 0
-        ]);
+            inv.peak_rate_c_per_kwh ?? '',
+        );
+        
+        if (hasShoulder) {
+            row.push(inv.shoulder_rate_c_per_kwh ?? '');
+        }
+        
+        row.push(
+            inv.off_peak_rate_c_per_kwh ?? '',
+            inv.daily_supply_charge ?? '',
+            inv.total_inc_gst || 0,
+            inv.demand_kw ?? '',
+            inv.demand_charges ?? '',
+            inv.meter_charges ?? '',
+            inv.total_usage_kwh || 0
+        );
+        
+        sheet.addRow(row);
     });
 
     // Totals row
-    const totalRow = sheet.addRow([
+    const totalRow: any[] = [
         'TOTAL', '', '', '',
         invoices.reduce((sum, inv) => sum + (inv.peak_usage_kwh || 0), 0),
+    ];
+    
+    if (hasShoulder) {
+        totalRow.push(invoices.reduce((sum, inv) => sum + (inv.shoulder_usage_kwh || 0), 0));
+    }
+    
+    totalRow.push(
         invoices.reduce((sum, inv) => sum + (inv.off_peak_usage_kwh || 0), 0),
-        '', '',
+        '', // Peak rate column
+    );
+    
+    if (hasShoulder) {
+        totalRow.push(''); // Shoulder rate column
+    }
+    
+    totalRow.push(
+        '', // Off-peak rate column
         invoices.reduce((sum, inv) => sum + (inv.daily_supply_charge || 0), 0),
-        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0)
-    ]);
-    totalRow.fill = {
+        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0),
+        '', // Demand column (no total)
+        invoices.reduce((sum, inv) => sum + (inv.demand_charges || 0), 0),
+        invoices.reduce((sum, inv) => sum + (inv.meter_charges || 0), 0),
+        invoices.reduce((sum, inv) => sum + (inv.total_usage_kwh || 0), 0)
+    );
+    
+    sheet.addRow(totalRow);
+    const totalsRowObj = sheet.getRow(sheet.rowCount);
+    totalsRowObj.fill = {
         type: 'pattern',
         pattern: 'solid',
         fgColor: { argb: TOTALS_BG_COLOR }
     };
-    totalRow.font = { bold: true };
+    totalsRowObj.font = { bold: true };
 
-    // Format currency columns
-    sheet.getColumn(9).numFmt = '$#,##0.00';
-    sheet.getColumn(10).numFmt = '$#,##0.00';
+    // Format currency columns (adjust column indices based on whether shoulder is present)
+    const dailySupplyCol = hasShoulder ? 11 : 10;
+    const totalCol = hasShoulder ? 12 : 11;
+    const demandChargesCol = hasShoulder ? 14 : 13;
+    const meterChargesCol = hasShoulder ? 15 : 14;
+    sheet.getColumn(dailySupplyCol).numFmt = '$#,##0.00';
+    sheet.getColumn(totalCol).numFmt = '$#,##0.00';
+    sheet.getColumn(demandChargesCol).numFmt = '$#,##0.00';
+    sheet.getColumn(meterChargesCol).numFmt = '$#,##0.00';
 }
 
 function buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -147,8 +209,8 @@ function buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
             inv.mrin || '',
             inv.site_address || '',
             inv.total_usage_gj || 0,
-            inv.total_usage_gj ? (inv.usage_charges_ex_gst || 0) / (inv.total_usage_gj || 1) : 0,
-            inv.daily_supply_charge || 0,
+            inv.gas_rate_per_gj ?? '',
+            inv.daily_supply_charge ?? '',
             inv.total_inc_gst || 0
         ]);
     });
@@ -173,31 +235,105 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Total (inc GST)'];
+    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Frequency', 
+                    'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
     sheet.addRow(headers);
     
     const headerRow = sheet.getRow(1);
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
     headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+    headerRow.alignment = { horizontal: 'center' };
+
+    // Check if any invoice has waste_services array
+    const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
+
+    if (hasServiceBreakdown) {
+        // Output one row per service
+        invoices.forEach(inv => {
+            if (inv.waste_services && inv.waste_services.length > 0) {
+                inv.waste_services.forEach((service, index) => {
+                    const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                    const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+                    
+                    sheet.addRow([
+                        index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
+                        index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
+                        index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
+                        service.service_type || '',
+                        service.frequency ?? '',
+                        service.unit_cost ?? '',
+                        service.total_cost ?? '',
+                        gstAmount ?? '',
+                        totalIncGst ?? ''
+                    ]);
+                });
+            } else {
+                // Fallback: single row if no service breakdown
+                sheet.addRow([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '',
+                    '',
+                    inv.total_charges_ex_gst ?? '',
+                    inv.gst_amount ?? '',
+                    inv.total_inc_gst || 0
+                ]);
+            }
+        });
+    } else {
+        // Fallback: single row per invoice if no service breakdown
+        invoices.forEach(inv => {
+            sheet.addRow([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.site_address || '',
+                inv.tariff_type || '',
+                '',
+                '',
+                inv.total_charges_ex_gst ?? '',
+                inv.gst_amount ?? '',
+                inv.total_inc_gst || 0
+            ]);
+        });
+    }
+
+    // Calculate totals
+    let totalExGst = 0;
+    let totalGst = 0;
+    let totalIncGst = 0;
 
     invoices.forEach(inv => {
-        sheet.addRow([
-            inv.invoice_date || '',
-            inv.supplier || '',
-            inv.site_address || '',
-            inv.tariff_type || '',
-            inv.total_inc_gst || 0
-        ]);
+        if (inv.waste_services && inv.waste_services.length > 0) {
+            inv.waste_services.forEach(service => {
+                if (service.total_cost) {
+                    totalExGst += service.total_cost;
+                    totalGst += service.total_cost * 0.1;
+                    totalIncGst += service.total_cost * 1.1;
+                }
+            });
+        } else {
+            totalExGst += inv.total_charges_ex_gst || 0;
+            totalGst += inv.gst_amount || 0;
+            totalIncGst += inv.total_inc_gst || 0;
+        }
     });
 
     const totalRow = sheet.addRow([
-        'TOTAL', '', '', '',
-        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0)
+        'TOTAL', '', '', '', '', '',
+        totalExGst,
+        totalGst,
+        totalIncGst
     ]);
     totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOTALS_BG_COLOR } };
     totalRow.font = { bold: true };
 
-    sheet.getColumn(5).numFmt = '$#,##0.00';
+    // Format currency columns
+    sheet.getColumn(6).numFmt = '$#,##0.00'; // Unit Cost
+    sheet.getColumn(7).numFmt = '$#,##0.00'; // Total (ex GST)
+    sheet.getColumn(8).numFmt = '$#,##0.00'; // GST
+    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total (inc GST)
 }
 
 function buildWaterSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
