@@ -82,7 +82,7 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
     );
 
     // Headers - conditionally include shoulder columns
-    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)'];
+    const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Billing Days', 'Peak Usage (kWh)'];
     if (hasShoulder) {
         headers.push('Shoulder Usage (kWh)');
     }
@@ -91,7 +91,8 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
         headers.push('Shoulder Rate (c/kWh)');
     }
     headers.push('Off-Peak Rate (c/kWh)', 'Daily Supply ($)', 'Total (inc GST)', 
-                 'Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)');
+                 'Max Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)',
+                 'Estimated Monthly Usage (kWh)', 'Estimated Annual Usage (kWh)');
     
     sheet.addRow(headers);
     
@@ -107,11 +108,19 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
 
     // Data rows
     invoices.forEach(inv => {
+        const billingDays = inv.billing_days || 0;
+        const totalUsage = inv.total_usage_kwh || 0;
+        // Calculate monthly usage: (total usage / billing days) * 30
+        const monthlyUsage = billingDays > 0 ? (totalUsage / billingDays) * 30 : null;
+        // Calculate annual usage: (total usage / billing days) * 365
+        const annualUsage = billingDays > 0 ? (totalUsage / billingDays) * 365 : null;
+        
         const row: any[] = [
             inv.invoice_date || '',
             inv.supplier || '',
             inv.nmi || '',
             inv.site_address || '',
+            billingDays || '',
             inv.peak_usage_kwh || 0,
         ];
         
@@ -135,7 +144,9 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
             inv.demand_kw ?? '',
             inv.demand_charges ?? '',
             inv.meter_charges ?? '',
-            inv.total_usage_kwh || 0
+            totalUsage,
+            monthlyUsage ?? '',
+            annualUsage ?? ''
         );
         
         sheet.addRow(row);
@@ -143,7 +154,7 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
 
     // Totals row
     const totalRow: any[] = [
-        'TOTAL', '', '', '',
+        'TOTAL', '', '', '', '', // Invoice Date, Supplier, NMI, Site Address, Billing Days
         invoices.reduce((sum, inv) => sum + (inv.peak_usage_kwh || 0), 0),
     ];
     
@@ -160,14 +171,36 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
         totalRow.push(''); // Shoulder rate column
     }
     
+    // Calculate totals for monthly and annual usage
+    // Sum the individual monthly/annual calculations to match what's displayed in rows
+    const totalUsage = invoices.reduce((sum, inv) => sum + (inv.total_usage_kwh || 0), 0);
+    const totalMonthlyUsage = invoices.reduce((sum, inv) => {
+        const billingDays = inv.billing_days || 0;
+        const usage = inv.total_usage_kwh || 0;
+        return sum + (billingDays > 0 ? (usage / billingDays) * 30 : 0);
+    }, 0);
+    const totalAnnualUsage = invoices.reduce((sum, inv) => {
+        const billingDays = inv.billing_days || 0;
+        const usage = inv.total_usage_kwh || 0;
+        return sum + (billingDays > 0 ? (usage / billingDays) * 365 : 0);
+    }, 0);
+    
+    // Find maximum demand across all invoices
+    const maxDemand = invoices.reduce((max, inv) => {
+        const demand = inv.demand_kw || 0;
+        return demand > max ? demand : max;
+    }, 0);
+    
     totalRow.push(
         '', // Off-peak rate column
         invoices.reduce((sum, inv) => sum + (inv.daily_supply_charge || 0), 0),
         invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0),
-        '', // Demand column (no total)
+        maxDemand || '', // Maximum demand across all invoices
         invoices.reduce((sum, inv) => sum + (inv.demand_charges || 0), 0),
         invoices.reduce((sum, inv) => sum + (inv.meter_charges || 0), 0),
-        invoices.reduce((sum, inv) => sum + (inv.total_usage_kwh || 0), 0)
+        totalUsage,
+        totalMonthlyUsage ?? '',
+        totalAnnualUsage ?? ''
     );
     
     sheet.addRow(totalRow);
@@ -180,14 +213,18 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
     totalsRowObj.font = { bold: true };
 
     // Format currency columns (adjust column indices based on whether shoulder is present)
-    const dailySupplyCol = hasShoulder ? 11 : 10;
-    const totalCol = hasShoulder ? 12 : 11;
-    const demandChargesCol = hasShoulder ? 14 : 13;
-    const meterChargesCol = hasShoulder ? 15 : 14;
+    const dailySupplyCol = hasShoulder ? 12 : 11;
+    const totalCol = hasShoulder ? 13 : 12;
+    const demandChargesCol = hasShoulder ? 15 : 14;
+    const meterChargesCol = hasShoulder ? 16 : 15;
+    const monthlyUsageCol = hasShoulder ? 18 : 17;
+    const annualUsageCol = hasShoulder ? 19 : 18;
     sheet.getColumn(dailySupplyCol).numFmt = '$#,##0.00';
     sheet.getColumn(totalCol).numFmt = '$#,##0.00';
     sheet.getColumn(demandChargesCol).numFmt = '$#,##0.00';
     sheet.getColumn(meterChargesCol).numFmt = '$#,##0.00';
+    sheet.getColumn(monthlyUsageCol).numFmt = '#,##0.00';
+    sheet.getColumn(annualUsageCol).numFmt = '#,##0.00';
 }
 
 function buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -196,8 +233,9 @@ function buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'MRIN', 'Site Address', 'Usage (GJ)', 
-                    'Rate ($/GJ)', 'Daily Supply ($)', 'Total (inc GST)'];
+    const headers = ['Invoice Date', 'Supplier', 'MRIN', 'Site Address', 'Billing Days', 'Usage (GJ)', 
+                    'Rate ($/GJ)', 'Daily Supply ($)', 'Total (inc GST)', 
+                    'Estimated Monthly Usage (GJ)', 'Estimated Annual Usage (GJ)'];
     sheet.addRow(headers);
     
     const headerRow = sheet.getRow(1);
@@ -206,30 +244,53 @@ function buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
     headerRow.alignment = { horizontal: 'center' };
 
     invoices.forEach(inv => {
+        const billingDays = inv.billing_days || 0;
+        const totalUsage = inv.total_usage_gj || 0;
+        // Calculate monthly usage: (total usage / billing days) * 30
+        const monthlyUsage = billingDays > 0 ? (totalUsage / billingDays) * 30 : null;
+        // Calculate annual usage: (total usage / billing days) * 365
+        const annualUsage = billingDays > 0 ? (totalUsage / billingDays) * 365 : null;
+        
         sheet.addRow([
             inv.invoice_date || '',
             inv.supplier || '',
             inv.mrin || '',
             inv.site_address || '',
-            inv.total_usage_gj || 0,
+            billingDays || '',
+            totalUsage,
             inv.gas_rate_per_gj ?? '',
             inv.daily_supply_charge ?? '',
-            inv.total_inc_gst || 0
+            inv.total_inc_gst || 0,
+            monthlyUsage ?? '',
+            annualUsage ?? ''
         ]);
     });
 
+    // Calculate totals for monthly and annual usage from total usage (not sum of individual monthly calculations)
+    const totalUsage = invoices.reduce((sum, inv) => sum + (inv.total_usage_gj || 0), 0);
+    // Use average billing days for total calculation, or default to 30 if no billing days
+    const avgBillingDays = invoices.length > 0 
+        ? invoices.reduce((sum, inv) => sum + (inv.billing_days || 0), 0) / invoices.length 
+        : 30;
+    const totalMonthlyUsage = avgBillingDays > 0 ? (totalUsage / avgBillingDays) * 30 : null;
+    const totalAnnualUsage = avgBillingDays > 0 ? (totalUsage / avgBillingDays) * 365 : null;
+
     const totalRow = sheet.addRow([
-        'TOTAL', '', '', '',
-        invoices.reduce((sum, inv) => sum + (inv.total_usage_gj || 0), 0),
-        '', '',
-        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0)
+        'TOTAL', '', '', '', '', // Invoice Date, Supplier, MRIN, Site Address, Billing Days
+        totalUsage,
+        '', '', // Rate, Daily Supply
+        invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0),
+        totalMonthlyUsage,
+        totalAnnualUsage
     ]);
     totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOTALS_BG_COLOR } };
     totalRow.font = { bold: true };
 
-    sheet.getColumn(6).numFmt = '$#,##0.00';
-    sheet.getColumn(7).numFmt = '$#,##0.00';
-    sheet.getColumn(8).numFmt = '$#,##0.00';
+    sheet.getColumn(7).numFmt = '$#,##0.00'; // Rate
+    sheet.getColumn(8).numFmt = '$#,##0.00'; // Daily Supply
+    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total
+    sheet.getColumn(10).numFmt = '#,##0.00'; // Monthly Usage
+    sheet.getColumn(11).numFmt = '#,##0.00'; // Annual Usage
 }
 
 function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -238,8 +299,8 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Frequency', 
-                    'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+    const headers = ['Invoice Date', 'Invoice Number', 'Supplier', 'Site Address', 'Service Type', 'Frequency', 
+                    'Pickup Date', 'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
     sheet.addRow(headers);
     
     const headerRow = sheet.getRow(1);
@@ -251,33 +312,67 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
     const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
 
     if (hasServiceBreakdown) {
-        // Output one row per service
+        // Output one row per pickup (if pickup_dates exist) or one row per service
         invoices.forEach(inv => {
             if (inv.waste_services && inv.waste_services.length > 0) {
-                inv.waste_services.forEach((service, index) => {
+                let isFirstRowForInvoice = true;
+                inv.waste_services.forEach((service, serviceIndex) => {
                     const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
                     const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
                     
-                    sheet.addRow([
-                        index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
-                        index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
-                        index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
-                        service.service_type || '',
-                        service.frequency ?? '',
-                        service.unit_cost ?? '',
-                        service.total_cost ?? '',
-                        gstAmount ?? '',
-                        totalIncGst ?? ''
-                    ]);
+                    // If pickup_dates exist, create one row per pickup date
+                    if (service.pickup_dates && service.pickup_dates.length > 0) {
+                        service.pickup_dates.forEach((pickupDate, pickupIndex) => {
+                            const isFirstRow = isFirstRowForInvoice && pickupIndex === 0;
+                            const unitCost = service.unit_cost ?? null;
+                            const costPerPickup = service.total_cost && service.frequency 
+                                ? service.total_cost / service.frequency 
+                                : null;
+                            
+                            sheet.addRow([
+                                isFirstRow ? (inv.invoice_date || '') : '', // Only show date on first row
+                                isFirstRow ? (inv.invoice_number || '') : '', // Only show invoice number on first row
+                                isFirstRow ? (inv.supplier || '') : '',     // Only show supplier on first row
+                                isFirstRow ? (inv.site_address || '') : '', // Only show address on first row
+                                service.service_type || '',
+                                '1', // Frequency is 1 per pickup
+                                pickupDate, // Pickup date
+                                unitCost ?? '',
+                                costPerPickup ?? '',
+                                costPerPickup ? costPerPickup * 0.1 : '', // GST per pickup
+                                costPerPickup ? costPerPickup * 1.1 : '' // Total inc GST per pickup
+                            ]);
+                            isFirstRowForInvoice = false;
+                        });
+                    } else {
+                        // Fallback: one row per service if no pickup dates
+                        const isFirstRow = isFirstRowForInvoice;
+                        sheet.addRow([
+                            isFirstRow ? (inv.invoice_date || '') : '', // Only show date on first service row
+                            isFirstRow ? (inv.invoice_number || '') : '', // Only show invoice number on first service row
+                            isFirstRow ? (inv.supplier || '') : '',     // Only show supplier on first service row
+                            isFirstRow ? (inv.site_address || '') : '', // Only show address on first service row
+                            service.service_type || '',
+                            service.frequency ?? '',
+                            '', // Pickup date (not available)
+                            service.unit_cost ?? '',
+                            service.total_cost ?? '',
+                            gstAmount ?? '',
+                            totalIncGst ?? ''
+                        ]);
+                        isFirstRowForInvoice = false;
+                    }
                 });
             } else {
                 // Fallback: single row if no service breakdown
                 sheet.addRow([
                     inv.invoice_date || '',
+                    inv.invoice_number || '',
                     inv.supplier || '',
                     inv.site_address || '',
                     inv.tariff_type || '',
                     '',
+                    '', // Pickup date
                     '',
                     inv.total_charges_ex_gst ?? '',
                     inv.gst_amount ?? '',
@@ -290,10 +385,12 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
         invoices.forEach(inv => {
             sheet.addRow([
                 inv.invoice_date || '',
+                inv.invoice_number || '',
                 inv.supplier || '',
                 inv.site_address || '',
                 inv.tariff_type || '',
                 '',
+                '', // Pickup date
                 '',
                 inv.total_charges_ex_gst ?? '',
                 inv.gst_amount ?? '',
@@ -322,9 +419,49 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
             totalIncGst += inv.total_inc_gst || 0;
         }
     });
+    
+    // Recalculate totals from actual rows if we have pickup dates (since we split rows)
+    // This ensures totals match the displayed rows
+    if (hasServiceBreakdown) {
+        let recalcExGst = 0;
+        let recalcGst = 0;
+        let recalcIncGst = 0;
+        
+        invoices.forEach(inv => {
+            if (inv.waste_services && inv.waste_services.length > 0) {
+                inv.waste_services.forEach(service => {
+                    if (service.pickup_dates && service.pickup_dates.length > 0) {
+                        // Calculate per pickup
+                        const costPerPickup = service.total_cost && service.frequency 
+                            ? service.total_cost / service.frequency 
+                            : 0;
+                        const gstPerPickup = costPerPickup * 0.1;
+                        const totalPerPickup = costPerPickup * 1.1;
+                        
+                        recalcExGst += costPerPickup * service.pickup_dates.length;
+                        recalcGst += gstPerPickup * service.pickup_dates.length;
+                        recalcIncGst += totalPerPickup * service.pickup_dates.length;
+                    } else if (service.total_cost) {
+                        // Use original totals if no pickup dates
+                        recalcExGst += service.total_cost;
+                        recalcGst += service.total_cost * 0.1;
+                        recalcIncGst += service.total_cost * 1.1;
+                    }
+                });
+            }
+        });
+        
+        // Use recalculated totals if they differ (meaning we have pickup dates)
+        if (recalcExGst > 0 || recalcGst > 0 || recalcIncGst > 0) {
+            totalExGst = recalcExGst;
+            totalGst = recalcGst;
+            totalIncGst = recalcIncGst;
+        }
+    }
 
     const totalRow = sheet.addRow([
-        'TOTAL', '', '', '', '', '',
+        'TOTAL', '', '', '', '', '', '', // Invoice Date, Invoice Number, Supplier, Site Address, Service Type, Frequency, Pickup Date
+        '', // Unit Cost
         totalExGst,
         totalGst,
         totalIncGst
@@ -333,10 +470,10 @@ function buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
     totalRow.font = { bold: true };
 
     // Format currency columns
-    sheet.getColumn(6).numFmt = '$#,##0.00'; // Unit Cost
-    sheet.getColumn(7).numFmt = '$#,##0.00'; // Total (ex GST)
-    sheet.getColumn(8).numFmt = '$#,##0.00'; // GST
-    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total (inc GST)
+    sheet.getColumn(8).numFmt = '$#,##0.00'; // Unit Cost
+    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total (ex GST)
+    sheet.getColumn(10).numFmt = '$#,##0.00'; // GST
+    sheet.getColumn(11).numFmt = '$#,##0.00'; // Total (inc GST)
 }
 
 function buildWaterSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -378,7 +515,7 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
         return;
     }
 
-    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Quantity', 
+    const headers = ['Invoice Date', 'Invoice Number', 'Supplier', 'Site Address', 'Service Type', 'Quantity', 
                     'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
     sheet.addRow(headers);
     
@@ -400,6 +537,7 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
                     
                     sheet.addRow([
                         index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
+                        index === 0 ? (inv.invoice_number || '') : '', // Only show invoice number on first service row
                         index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
                         index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
                         service.service_type || '',
@@ -414,6 +552,7 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
                 // Fallback: single row if no service breakdown
                 sheet.addRow([
                     inv.invoice_date || '',
+                    inv.invoice_number || '',
                     inv.supplier || '',
                     inv.site_address || '',
                     inv.tariff_type || '',
@@ -430,6 +569,7 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
         invoices.forEach(inv => {
             sheet.addRow([
                 inv.invoice_date || '',
+                inv.invoice_number || '',
                 inv.supplier || '',
                 inv.site_address || '',
                 inv.tariff_type || '',
@@ -464,7 +604,8 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
     });
 
     const totalRow = sheet.addRow([
-        'TOTAL', '', '', '', '', '',
+        'TOTAL', '', '', '', '', '', '', // Invoice Date, Invoice Number, Supplier, Site Address, Service Type, Quantity
+        '', // Unit Cost
         totalExGst,
         totalGst,
         totalIncGst
@@ -473,10 +614,10 @@ function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
     totalRow.font = { bold: true };
 
     // Format currency columns
-    sheet.getColumn(6).numFmt = '$#,##0.00'; // Unit Cost
-    sheet.getColumn(7).numFmt = '$#,##0.00'; // Total (ex GST)
-    sheet.getColumn(8).numFmt = '$#,##0.00'; // GST
-    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total (inc GST)
+    sheet.getColumn(7).numFmt = '$#,##0.00'; // Unit Cost
+    sheet.getColumn(8).numFmt = '$#,##0.00'; // Total (ex GST)
+    sheet.getColumn(9).numFmt = '$#,##0.00'; // GST
+    sheet.getColumn(10).numFmt = '$#,##0.00'; // Total (inc GST)
 }
 
 function buildCostSummarySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -518,7 +659,24 @@ function buildMeterDetailsSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInv
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
     headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
 
-    invoices.forEach(inv => {
+    // Sort invoices by utility type
+    const sortedInvoices = [...invoices].sort((a, b) => {
+        const typeOrder: Record<string, number> = {
+            'Electricity': 1,
+            'Gas': 2,
+            'Water': 3,
+            'Waste': 4,
+            'Oil': 5,
+            'Cleaning': 6
+        };
+        const orderA = typeOrder[a.utility_type] || 99;
+        const orderB = typeOrder[b.utility_type] || 99;
+        if (orderA !== orderB) return orderA - orderB;
+        // If same type, sort by site address
+        return (a.site_address || '').localeCompare(b.site_address || '');
+    });
+
+    sortedInvoices.forEach(inv => {
         sheet.addRow([
             inv.utility_type,
             inv.meter_number || '',

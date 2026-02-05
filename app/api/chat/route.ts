@@ -306,18 +306,24 @@ export async function POST(request: Request) {
                     extractedData = parsedBlocks.length === 1 ? parsedBlocks[0] : parsedBlocks;
                     
                     // Remove all JSON blocks from the response text (more aggressive pattern)
-                    // This removes: ```json ... ```, ``` ... ```, and any standalone JSON blocks
+                    // This removes: ```json ... ```, ``` ... ```, and any JSON-like content
                     cleanedResponse = text
                         .replace(/```json\s*[\s\S]*?```/gi, '') // Remove ```json ... ```
                         .replace(/```\s*\{[\s\S]*?\}\s*```/g, '') // Remove ``` {...} ```
                         .replace(/```\s*\[[\s\S]*?\]\s*```/g, '') // Remove ``` [...] ```
                         .replace(/```\s*[\s\S]*?```/g, '') // Remove any remaining ``` ... ```
+                        .replace(/^json\s*$/gmi, '') // Remove standalone "json" lines
+                        .replace(/^json\s*\{[\s\S]*?\}$/gmi, '') // Remove "json {...}" blocks without backticks
+                        .replace(/^json\s*\{[\s\S]*?\}\s*$/gmi, '') // Remove "json {...}" with whitespace
                         .trim();
                     
                     // Also remove any standalone JSON objects/arrays that might be in the text
+                    // Match JSON objects that might be on multiple lines
                     cleanedResponse = cleanedResponse
-                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects
+                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects (single line or multiline)
                         .replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '') // Remove [{...}] JSON arrays
+                        .replace(/^json\s*$/gmi, '') // Remove any remaining "json" lines
+                        .replace(/\n\s*json\s*\n/g, '\n') // Remove "json" on its own line with newlines
                         .trim();
                     
                     console.log(`[Chat API] Extracted ${parsedBlocks.length} JSON block(s) from response`);

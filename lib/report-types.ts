@@ -42,6 +42,7 @@ export interface ExtractedInvoice {
         frequency: number | null;  // collections per period
         unit_cost: number | null;  // cost per collection
         total_cost: number | null;
+        pickup_dates?: string[];    // Array of pickup dates (DD/MM/YYYY format)
     }>;
     
     // Oil Specific
