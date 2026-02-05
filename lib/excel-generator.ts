@@ -7,12 +7,13 @@ const TOTALS_BG_COLOR = 'FFD966'; // Yellow
 export async function generateBase1Workbook(data: ReportData): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
     
-    // Create all 8 sheets
+    // Create all 9 sheets
     const overviewSheet = workbook.addWorksheet('Overview');
     const electricitySheet = workbook.addWorksheet('Electricity Data');
     const gasSheet = workbook.addWorksheet('Gas Data');
     const wasteSheet = workbook.addWorksheet('Waste Data');
     const waterSheet = workbook.addWorksheet('Water Data');
+    const oilSheet = workbook.addWorksheet('Oil Data');
     const costSummarySheet = workbook.addWorksheet('Cost Summary');
     const meterDetailsSheet = workbook.addWorksheet('Meter Details');
     const base1AnalysisSheet = workbook.addWorksheet('Base 1 Analysis');
@@ -25,11 +26,13 @@ export async function generateBase1Workbook(data: ReportData): Promise<Buffer> {
     const gasInvoices = data.invoices.filter(i => i.utility_type === 'Gas');
     const wasteInvoices = data.invoices.filter(i => i.utility_type === 'Waste');
     const waterInvoices = data.invoices.filter(i => i.utility_type === 'Water');
+    const oilInvoices = data.invoices.filter(i => i.utility_type === 'Oil');
 
     buildElectricitySheet(electricitySheet, electricityInvoices);
     buildGasSheet(gasSheet, gasInvoices);
     buildWasteSheet(wasteSheet, wasteInvoices);
     buildWaterSheet(waterSheet, waterInvoices);
+    buildOilSheet(oilSheet, oilInvoices);
     buildCostSummarySheet(costSummarySheet, data.invoices);
     buildMeterDetailsSheet(meterDetailsSheet, data.invoices);
     buildBase1AnalysisSheet(base1AnalysisSheet, data);
@@ -367,6 +370,113 @@ function buildWaterSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
     totalRow.font = { bold: true };
 
     sheet.getColumn(5).numFmt = '$#,##0.00';
+}
+
+function buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
+    if (invoices.length === 0) {
+        sheet.addRow(['No oil invoices']);
+        return;
+    }
+
+    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Quantity', 
+                    'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+    sheet.addRow(headers);
+    
+    const headerRow = sheet.getRow(1);
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+    headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+    headerRow.alignment = { horizontal: 'center' };
+
+    // Check if any invoice has oil_services array
+    const hasServiceBreakdown = invoices.some(inv => inv.oil_services && inv.oil_services.length > 0);
+
+    if (hasServiceBreakdown) {
+        // Output one row per service
+        invoices.forEach(inv => {
+            if (inv.oil_services && inv.oil_services.length > 0) {
+                inv.oil_services.forEach((service, index) => {
+                    const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                    const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+                    
+                    sheet.addRow([
+                        index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
+                        index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
+                        index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
+                        service.service_type || '',
+                        service.quantity ?? '',
+                        service.unit_cost ?? '',
+                        service.total_cost ?? '',
+                        gstAmount ?? '',
+                        totalIncGst ?? ''
+                    ]);
+                });
+            } else {
+                // Fallback: single row if no service breakdown
+                sheet.addRow([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '',
+                    '',
+                    inv.total_charges_ex_gst ?? '',
+                    inv.gst_amount ?? '',
+                    inv.total_inc_gst || 0
+                ]);
+            }
+        });
+    } else {
+        // Fallback: single row per invoice if no service breakdown
+        invoices.forEach(inv => {
+            sheet.addRow([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.site_address || '',
+                inv.tariff_type || '',
+                '',
+                '',
+                inv.total_charges_ex_gst ?? '',
+                inv.gst_amount ?? '',
+                inv.total_inc_gst || 0
+            ]);
+        });
+    }
+
+    // Calculate totals
+    let totalExGst = 0;
+    let totalGst = 0;
+    let totalIncGst = 0;
+
+    invoices.forEach(inv => {
+        if (inv.oil_services && inv.oil_services.length > 0) {
+            inv.oil_services.forEach(service => {
+                if (service.total_cost) {
+                    totalExGst += service.total_cost;
+                    totalGst += service.total_cost * 0.1;
+                    totalIncGst += service.total_cost * 1.1;
+                }
+            });
+        } else {
+            totalExGst += inv.total_charges_ex_gst || 0;
+            totalGst += inv.gst_amount || 0;
+            totalIncGst += inv.total_inc_gst || 0;
+        }
+    });
+
+    const totalRow = sheet.addRow([
+        'TOTAL', '', '', '', '', '',
+        totalExGst,
+        totalGst,
+        totalIncGst
+    ]);
+    totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOTALS_BG_COLOR } };
+    totalRow.font = { bold: true };
+
+    // Format currency columns
+    sheet.getColumn(6).numFmt = '$#,##0.00'; // Unit Cost
+    sheet.getColumn(7).numFmt = '$#,##0.00'; // Total (ex GST)
+    sheet.getColumn(8).numFmt = '$#,##0.00'; // GST
+    sheet.getColumn(9).numFmt = '$#,##0.00'; // Total (inc GST)
 }
 
 function buildCostSummarySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {

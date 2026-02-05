@@ -154,6 +154,7 @@ export async function createBase1GoogleSheet(data: ReportData, folderId?: string
         { title: 'Gas Data' },
         { title: 'Waste Data' },
         { title: 'Water Data' },
+        { title: 'Oil Data' },
         { title: 'Cost Summary' },
         { title: 'Meter Details' },
         { title: 'Base 1 Analysis' },
@@ -179,14 +180,16 @@ export async function createBase1GoogleSheet(data: ReportData, folderId?: string
     const gasInvoices = data.invoices.filter(i => i.utility_type === 'Gas');
     const wasteInvoices = data.invoices.filter(i => i.utility_type === 'Waste');
     const waterInvoices = data.invoices.filter(i => i.utility_type === 'Water');
+    const oilInvoices = data.invoices.filter(i => i.utility_type === 'Oil');
 
     await populateElectricitySheet(sheets, spreadsheetId, sheetIds[1], electricityInvoices);
     await populateGasSheet(sheets, spreadsheetId, sheetIds[2], gasInvoices);
     await populateWasteSheet(sheets, spreadsheetId, sheetIds[3], wasteInvoices);
     await populateWaterSheet(sheets, spreadsheetId, sheetIds[4], waterInvoices);
-    await populateCostSummarySheet(sheets, spreadsheetId, sheetIds[5], data.invoices);
-    await populateMeterDetailsSheet(sheets, spreadsheetId, sheetIds[6], data.invoices);
-    await populateBase1AnalysisSheet(sheets, spreadsheetId, sheetIds[7], data);
+    await populateOilSheet(sheets, spreadsheetId, sheetIds[5], oilInvoices);
+    await populateCostSummarySheet(sheets, spreadsheetId, sheetIds[6], data.invoices);
+    await populateMeterDetailsSheet(sheets, spreadsheetId, sheetIds[7], data.invoices);
+    await populateBase1AnalysisSheet(sheets, spreadsheetId, sheetIds[8], data);
 
     const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
     return { spreadsheetId, url };
@@ -530,6 +533,115 @@ async function populateWaterSheet(sheets: any, spreadsheetId: string, sheetId: n
     await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `Water Data!A1:E${values.length}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values },
+    });
+
+    await formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+}
+
+async function populateOilSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+    if (invoices.length === 0) {
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Oil Data!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [['No oil invoices']] },
+        });
+        return;
+    }
+
+    const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Quantity', 
+                    'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+    
+    const values = [headers];
+    
+    // Check if any invoice has oil_services array
+    const hasServiceBreakdown = invoices.some(inv => inv.oil_services && inv.oil_services.length > 0);
+
+    if (hasServiceBreakdown) {
+        // Output one row per service
+        invoices.forEach(inv => {
+            if (inv.oil_services && inv.oil_services.length > 0) {
+                inv.oil_services.forEach((service, index) => {
+                    const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                    const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+                    
+                    values.push([
+                        index === 0 ? (inv.invoice_date || '') : '', // Only show date on first service row
+                        index === 0 ? (inv.supplier || '') : '',     // Only show supplier on first service row
+                        index === 0 ? (inv.site_address || '') : '', // Only show address on first service row
+                        service.service_type || '',
+                        (service.quantity ?? '').toString(),
+                        (service.unit_cost ?? '').toString(),
+                        (service.total_cost ?? '').toString(),
+                        (gstAmount ?? '').toString(),
+                        (totalIncGst ?? '').toString(),
+                    ]);
+                });
+            } else {
+                // Fallback: single row if no service breakdown
+                values.push([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '',
+                    '',
+                    (inv.total_charges_ex_gst ?? '').toString(),
+                    (inv.gst_amount ?? '').toString(),
+                    (inv.total_inc_gst || 0).toString(),
+                ]);
+            }
+        });
+    } else {
+        // Fallback: single row per invoice if no service breakdown
+        invoices.forEach(inv => {
+            values.push([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.site_address || '',
+                inv.tariff_type || '',
+                '',
+                '',
+                (inv.total_charges_ex_gst ?? '').toString(),
+                (inv.gst_amount ?? '').toString(),
+                (inv.total_inc_gst || 0).toString(),
+            ]);
+        });
+    }
+
+    // Calculate totals
+    let totalExGst = 0;
+    let totalGst = 0;
+    let totalIncGst = 0;
+
+    invoices.forEach(inv => {
+        if (inv.oil_services && inv.oil_services.length > 0) {
+            inv.oil_services.forEach(service => {
+                if (service.total_cost) {
+                    totalExGst += service.total_cost;
+                    totalGst += service.total_cost * 0.1;
+                    totalIncGst += service.total_cost * 1.1;
+                }
+            });
+        } else {
+            totalExGst += inv.total_charges_ex_gst || 0;
+            totalGst += inv.gst_amount || 0;
+            totalIncGst += inv.total_inc_gst || 0;
+        }
+    });
+
+    values.push([
+        'TOTAL', '', '', '', '', '',
+        totalExGst.toString(),
+        totalGst.toString(),
+        totalIncGst.toString(),
+    ]);
+
+    await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `Oil Data!A1:I${values.length}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values },
     });
