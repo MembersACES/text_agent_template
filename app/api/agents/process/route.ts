@@ -368,6 +368,16 @@ function calculateSavingsSummary(invoices: ExtractedInvoice[]) {
     };
 }
 
+// Add GET handler for testing/debugging
+export async function GET() {
+    return NextResponse.json({
+        message: 'Agent Process API is available',
+        endpoint: '/api/agents/process',
+        method: 'POST',
+        description: 'Upload invoice files and receive Excel report',
+    });
+}
+
 export async function POST(request: Request) {
     try {
         const formData = await request.formData();
