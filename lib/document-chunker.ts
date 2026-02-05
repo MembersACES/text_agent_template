@@ -44,12 +44,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 // Find most similar chunks to a query embedding
 export function findSimilarChunks(
     queryEmbedding: number[],
-    chunks: Array<{ text: string; embedding: number[] }>,
-    topK = 3
-): Array<{ text: string; score: number }> {
+    chunks: Array<{ text: string; embedding: number[]; source?: string }>,
+    topK = 5
+): Array<{ text: string; score: number; source?: string }> {
     const similarities = chunks.map(chunk => ({
         text: chunk.text,
         score: cosineSimilarity(queryEmbedding, chunk.embedding),
+        source: chunk.source,
     }));
 
     // Sort by similarity score (highest first)

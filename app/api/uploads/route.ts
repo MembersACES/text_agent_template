@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getPromptConfig } from '@/lib/gcs-client';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export async function POST(request: Request) {
     try {
@@ -38,11 +39,67 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: `Unsupported file type: ${mimeType}` }, { status: 400 });
         }
 
-        // Browser will try to decode as text; for binary formats this may not be perfect,
-        // but it still gives the model some content to work with.
-        const content = await file.text();
-        if (!content.trim()) {
-            return NextResponse.json({ error: 'File is empty or could not be read as text' }, { status: 400 });
+        let content: string;
+
+        // Check if file is text-based or binary
+        const isTextBased = mimeType.startsWith('text/') || 
+                           mimeType === 'application/json' ||
+                           mimeType === 'text/csv' ||
+                           fileName.endsWith('.md') ||
+                           fileName.endsWith('.txt') ||
+                           fileName.endsWith('.csv') ||
+                           fileName.endsWith('.json');
+
+        if (isTextBased) {
+            // Text-based files: read directly
+            content = await file.text();
+        } else {
+            // Binary files (PDF, images, Word, Excel): use Gemini Vision to extract text
+            const apiKey = process.env.GEMINI_API_KEY;
+            if (!apiKey) {
+                return NextResponse.json({ error: 'GEMINI_API_KEY not configured' }, { status: 500 });
+            }
+
+            try {
+                const buffer = Buffer.from(await file.arrayBuffer());
+                const base64Data = buffer.toString('base64');
+                
+                const genAI = new GoogleGenerativeAI(apiKey);
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                
+                const result = await model.generateContent([
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64Data,
+                        },
+                    },
+                    {
+                        text: `Extract ALL text from this document exactly as written. 
+Include every number, date, address, account number, rate, charge, and total.
+Preserve the structure (tables, sections, line items).
+If this is an invoice, make sure to capture:
+- Business name, supplier, account numbers
+- All usage figures and rates
+- All charges and totals
+- Dates, billing periods, meter numbers
+Return ONLY the extracted text, no commentary.`
+                    },
+                ]);
+                
+                const response = await result.response;
+                content = response.text();
+            } catch (visionError) {
+                console.error('Error processing file with Gemini Vision:', visionError);
+                return NextResponse.json({ 
+                    error: 'Failed to extract text from file. Please ensure the file is a valid PDF or image.',
+                    details: String(visionError)
+                }, { status: 500 });
+            }
+        }
+
+        if (!content || !content.trim()) {
+            return NextResponse.json({ error: 'File is empty or could not be read' }, { status: 400 });
         }
 
         return NextResponse.json({

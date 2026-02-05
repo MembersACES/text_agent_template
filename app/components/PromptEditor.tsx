@@ -188,7 +188,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                     className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
                     onClick={() => setExpandedSection(expandedSection === 'prompt' ? null : 'prompt')}
                 >
-                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                         <svg
                             className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'prompt' ? 'rotate-90' : ''}`}
                             fill="none"
@@ -197,8 +197,11 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        Prompt
-                    </h3>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900">Agent-Specific Prompt</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">This prompt is added below the global system prompt</p>
+                        </div>
+                    </div>
                 </div>
 
                 {expandedSection === 'prompt' && (

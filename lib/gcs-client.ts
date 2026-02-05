@@ -16,6 +16,7 @@ const storage = new Storage({
 
 const SETTINGS_FILENAME = 'settings.json';
 const AGENTS_DIR = 'agents';
+const SYSTEM_SETTINGS_FILENAME = 'system-settings.json';
 
 // Default prompt fallback if GCS fails or file doesn't exist
 const DEFAULT_PROMPT = `You are a friendly, conversational AI assistant helping users with step-by-step guidance.
@@ -196,4 +197,103 @@ export async function listAgents(): Promise<string[]> {
         console.error('Error listing agents:', error);
         return [];
     }
+}
+
+// System Settings (Global prompt that applies to all agents)
+export interface SystemSettings {
+    globalSystemPrompt: string;
+}
+
+// Default global system prompt - used as fallback when no saved settings exist in GCS
+// Once a user saves settings via the UI, the saved version takes precedence
+// This default ensures the system works even on first use before any settings are saved
+const DEFAULT_GLOBAL_SYSTEM_PROMPT = `GLOBAL RULES FOR ALL AGENTS:
+
+1. **Knowledge Base Awareness**: 
+   - When context is provided (knowledge base files or uploaded files), you MUST use it to answer questions
+   - If the user asks "what files do you have?" or "list files", reference the "KNOWLEDGE BASE FILES AVAILABLE" section in the context
+   - If the user asks about specific documents/files mentioned in the context, search and reference that content
+   - When answering questions, cite which file/document you're referencing (e.g., "According to BASE1_TEMPLATE_GUIDE...")
+   - If context is provided but you ignore it and give generic responses, you are not following instructions
+
+2. **Response Style**: 
+   - Be concise and conversational for simple questions
+   - Provide detailed, comprehensive answers when:
+     * User asks about knowledge base files or documents
+     * User asks for lists, data extraction, or analysis
+     * User asks "what files do you have?" or "list all files"
+     * Task requires comprehensive information
+     * Agent is performing specialized work (e.g., invoice analysis, report generation)
+
+3. **Acknowledgment Handling**: 
+   - When user sends short acknowledgments like "ok", "go", "yes", "👍", respond with ONE brief sentence and suggest the next action
+   - Do NOT restate your full instructions or configuration unless explicitly asked
+
+4. **Uncertainty Handling**: 
+   - If you don't know something or the data is incomplete, clearly state that
+   - Never fabricate information
+   - If asked about something not in your knowledge base, say so explicitly
+
+5. **Professional Tone**: 
+   - Be friendly, supportive, and professional
+   - Avoid overly casual language
+
+6. **Formatting**: 
+   - Use plain text, natural language
+   - Avoid excessive markdown unless formatting is needed
+
+7. **Context Usage**: 
+   - ALWAYS check the provided context before answering
+   - Use knowledge base and uploaded files to inform your responses
+   - Don't repeat the entire context back to the user unless asked
+   - When listing files, use the exact file names from the "KNOWLEDGE BASE FILES AVAILABLE" section
+
+Remember: If context is provided, USE IT. Generic "I'm ready to help" responses when context contains the answer are incorrect.`;
+
+export async function getSystemSettings(): Promise<SystemSettings> {
+    const defaultData: SystemSettings = {
+        globalSystemPrompt: DEFAULT_GLOBAL_SYSTEM_PROMPT
+    };
+
+    if (!BUCKET_NAME) {
+        console.warn('GCS_BUCKET_NAME not configured, using default system settings.');
+        return defaultData;
+    }
+
+    try {
+        const bucket = storage.bucket(BUCKET_NAME);
+        const file = bucket.file(SYSTEM_SETTINGS_FILENAME);
+        const [exists] = await file.exists();
+
+        if (!exists) {
+            console.log('System settings file not found, returning default.');
+            return defaultData;
+        }
+
+        const [content] = await file.download();
+        const rawData = JSON.parse(content.toString('utf-8'));
+
+        return {
+            globalSystemPrompt: rawData.globalSystemPrompt || DEFAULT_GLOBAL_SYSTEM_PROMPT
+        };
+    } catch (error) {
+        console.error('Error fetching system settings from GCS:', error);
+        return defaultData;
+    }
+}
+
+export async function saveSystemSettings(data: SystemSettings): Promise<void> {
+    if (!BUCKET_NAME) {
+        throw new Error('GCS_BUCKET_NAME not configured');
+    }
+
+    const bucket = storage.bucket(BUCKET_NAME);
+    const file = bucket.file(SYSTEM_SETTINGS_FILENAME);
+
+    await file.save(JSON.stringify(data, null, 2), {
+        contentType: 'application/json',
+        metadata: {
+            cacheControl: 'no-cache',
+        },
+    });
 }

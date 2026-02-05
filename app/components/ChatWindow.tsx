@@ -6,6 +6,18 @@ import { useState, useRef, useEffect } from 'react';
 interface Message {
     role: 'user' | 'assistant';
     content: string;
+    actions?: Array<{
+        type: 'download' | 'sheets-link';
+        label: string;
+        url: string;
+    }>;
+}
+
+interface ExtractedInvoice {
+    business_name: string | null;
+    supplier: string | null;
+    utility_type: "Electricity" | "Gas" | "Water" | "Waste" | "Oil" | "Cleaning";
+    [key: string]: any;
 }
 
 interface ChatWindowProps {
@@ -24,10 +36,14 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     const [agentName, setAgentName] = useState("Text Agent");
     const [allowFileUploads, setAllowFileUploads] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string }[]>([]);
+    const [extractedInvoices, setExtractedInvoices] = useState<ExtractedInvoice[]>([]);
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         const fetchConfig = async () => {
@@ -89,6 +105,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: userMessage,
+                    conversationHistory: messages, // Include full conversation history
                     useKnowledgeBase: true,
                     agentId: agentId,
                     uploadedFiles,
@@ -96,10 +113,76 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             });
 
             const data = await response.json();
+            console.log('Chat API response length:', data.response?.length);
+            console.log('Chat API response first 200:', data.response?.substring(0, 200));
+            console.log('Chat API response last 200:', data.response?.substring(data.response.length - 200));
+
 
             if (!response.ok) throw new Error(data.error || 'Failed to get response');
 
-            setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+            // Extract structured data if present (silent accumulation)
+            // Use functional setState to avoid stale closure issues
+            if (data.extractedData) {
+                setExtractedInvoices(prev => {
+                    // Handle both single object and array from extractedData
+                    const newInvoices = Array.isArray(data.extractedData) 
+                        ? data.extractedData 
+                        : [data.extractedData];
+                    
+                    // Merge with existing invoices, avoiding duplicates by invoice_number if available
+                    const merged = [...prev];
+                    newInvoices.forEach((newInvoice: ExtractedInvoice) => {
+                        // Check if invoice already exists (by invoice_number if available, or by content)
+                        const exists = merged.some(existing => {
+                            if (newInvoice.invoice_number && existing.invoice_number) {
+                                return existing.invoice_number === newInvoice.invoice_number;
+                            }
+                            // Fallback: compare key fields if no invoice_number
+                            return existing.invoice_date === newInvoice.invoice_date &&
+                                   existing.total_inc_gst === newInvoice.total_inc_gst &&
+                                   existing.supplier === newInvoice.supplier;
+                        });
+                        
+                        if (!exists) {
+                            merged.push(newInvoice);
+                        }
+                    });
+                    
+                    console.log(`[ChatWindow] Accumulated ${merged.length} invoice(s) (added ${newInvoices.length} new)`);
+                    return merged;
+                });
+            }
+
+            // Check if report generation is requested
+            // Only trigger on explicit flag from API (not from checking user message, as that could trigger twice)
+            if (data.generateReport) {
+                // Use functional update to get the latest invoices state, then trigger report generation
+                setExtractedInvoices(currentInvoices => {
+                    if (currentInvoices.length > 0) {
+                        // Trigger report generation with current invoices (only once)
+                        setTimeout(() => {
+                            handleGenerateReportWithInvoices(currentInvoices);
+                        }, 100);
+                    } else {
+                        setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: 'No invoice data available to generate a report. Please provide invoices first.',
+                        }]);
+                    }
+                    return currentInvoices; // Return unchanged state
+                });
+            }
+
+            // Create message with actions if report was just generated
+            const messageActions = data.downloadUrl ? [
+                { type: 'download' as const, label: 'Download .xlsx', url: data.downloadUrl },
+            ] : undefined;
+
+            setMessages(prev => [...prev, { 
+                role: 'assistant', 
+                content: data.response,
+                actions: messageActions,
+            }]);
         } catch (error) {
             console.error('Error:', error);
             setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
@@ -115,6 +198,73 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
         }
     };
 
+    const handleGenerateReport = async () => {
+        handleGenerateReportWithInvoices(extractedInvoices);
+    };
+
+    const handleGenerateReportWithInvoices = async (invoices: ExtractedInvoice[]) => {
+        // Prevent duplicate report generation
+        if (isGeneratingReport) {
+            console.log('[ChatWindow] Report generation already in progress, skipping duplicate request');
+            return;
+        }
+
+        if (invoices.length === 0) {
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: 'No invoice data available to generate a report. Please provide invoices first.',
+            }]);
+            return;
+        }
+
+        setIsGeneratingReport(true);
+        try {
+            // Extract business info from first invoice
+            const businessInfo = {
+                name: invoices[0].business_name || 'Unknown Business',
+                address: invoices[0].site_address || undefined,
+            };
+
+            const response = await fetch('/api/export/generate-report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    invoices,
+                    businessInfo,
+                    agentId,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error || 'Failed to generate report');
+
+            // Add message with download button
+            const actions: Array<{ type: 'download' | 'sheets-link'; label: string; url: string }> = [
+                { type: 'download', label: 'Download .xlsx', url: data.downloadUrl },
+            ];
+
+            let content = 'Report generated successfully! You can download the Excel file.';
+            if (data.note) {
+                content += `\n\n${data.note}`;
+            }
+
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content,
+                actions,
+            }]);
+        } catch (error) {
+            console.error('Error generating report:', error);
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: 'Sorry, I encountered an error while generating the report. Please try again.',
+            }]);
+        } finally {
+            setIsGeneratingReport(false);
+        }
+    };
+
     const confirmEndChat = async () => {
         try {
             await fetch('/api/end-of-chat-report', {
@@ -127,6 +277,9 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
         setShowEndChatPopup(false);
         setMessages([{ role: 'assistant', content: welcomeMessage }]);
         setInput('');
+        setExtractedInvoices([]); // Clear accumulated invoices
+        setUploadedFiles([]); // Clear uploaded files
+        setUploadError(null); // Clear any upload errors
     };
 
     return (
@@ -194,16 +347,53 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${message.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white text-gray-800 shadow-sm'}`}>
                             <p className="whitespace-pre-line text-sm">{message.content}</p>
+                            {message.actions && message.actions.length > 0 && (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    {message.actions.map((action, actionIndex) => (
+                                        action.type === 'download' ? (
+                                            <a
+                                                key={actionIndex}
+                                                href={action.url}
+                                                download
+                                                className="px-3 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-lg hover:bg-orange-600 transition-colors inline-flex items-center gap-1.5"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                </svg>
+                                                {action.label}
+                                            </a>
+                                        ) : (
+                                            <a
+                                                key={actionIndex}
+                                                href={action.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-lg hover:bg-orange-600 transition-colors inline-flex items-center gap-1.5"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                                {action.label}
+                                            </a>
+                                        )
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
-                {isLoading && (
+                {(isLoading || isGeneratingReport) && (
                     <div className="flex justify-start">
                         <div className="bg-white rounded-2xl px-4 py-3 shadow-sm">
-                            <div className="flex space-x-2">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                            <div className="flex items-center gap-2">
+                                <div className="flex space-x-2">
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                                </div>
+                                {isGeneratingReport && (
+                                    <span className="text-xs text-gray-500 ml-2">Generating report...</span>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -213,67 +403,109 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
 
             {/* Input + optional file upload */}
             <div className="p-5 bg-white border-t border-gray-100 shrink-0 space-y-3">
-                {allowFileUploads && agentId && (
-                    <div className="flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-xs text-gray-600">
-                            <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-semibold text-[10px] uppercase tracking-wide">
-                                File Uploads Enabled
-                            </span>
-                            <span className="hidden sm:inline">
-                                Attach one or more files (invoices, reports, etc.) for this agent to analyse in this chat.
-                            </span>
-                        </label>
-                        <input
-                            type="file"
-                            multiple
-                            accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,image/*"
-                            className="text-xs text-gray-600"
-                            onChange={async (e) => {
-                                const files = e.target.files;
-                                if (!files || files.length === 0 || !agentId) return;
-
-                                try {
-                                    setIsLoading(true);
-                                    for (const file of Array.from(files)) {
-                                        const formData = new FormData();
-                                        formData.append('file', file);
-                                        formData.append('agentId', agentId);
-
-                                        const res = await fetch('/api/uploads', {
-                                            method: 'POST',
-                                            body: formData,
-                                        });
-                                        const data = await res.json();
-                                        if (!res.ok) {
-                                            console.error('Upload failed', data);
-                                            setMessages(prev => [...prev, {
-                                                role: 'assistant',
-                                                content: data.error || `File upload failed for "${file.name}". Please try again.`,
-                                            }]);
-                                        } else {
-                                            setUploadedFiles(prev => [...prev, { name: data.fileName || file.name, content: data.content }]);
-                                            setMessages(prev => [...prev, {
-                                                role: 'assistant',
-                                                content: `File "${file.name}" has been uploaded for this conversation.`,
-                                            }]);
-                                        }
-                                    }
-                                } catch (err) {
-                                    console.error('Upload error:', err);
-                                    setMessages(prev => [...prev, {
-                                        role: 'assistant',
-                                        content: 'An error occurred while uploading files.',
-                                    }]);
-                                } finally {
-                                    setIsLoading(false);
-                                    e.target.value = '';
-                                }
-                            }}
-                        />
+                {/* File chips - show uploaded files as badges */}
+                {uploadedFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        {uploadedFiles.map((file, index) => (
+                            <div
+                                key={index}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700"
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span className="max-w-[150px] truncate">{file.name}</span>
+                                <button
+                                    onClick={() => {
+                                        setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+                                    }}
+                                    className="ml-1 text-orange-500 hover:text-orange-700 transition-colors"
+                                    aria-label={`Remove ${file.name}`}
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        ))}
                     </div>
                 )}
 
+                {/* Upload error message */}
+                {uploadError && (
+                    <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center justify-between">
+                        <span>{uploadError}</span>
+                        <button
+                            onClick={() => setUploadError(null)}
+                            className="text-red-500 hover:text-red-700"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                )}
+
+                {/* Hidden file input */}
+                {allowFileUploads && agentId && (
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                            const files = e.target.files;
+                            if (!files || files.length === 0 || !agentId) return;
+
+                            setUploadError(null);
+                            try {
+                                setIsLoading(true);
+                                const uploadPromises = Array.from(files).map(async (file) => {
+                                    const formData = new FormData();
+                                    formData.append('file', file);
+                                    formData.append('agentId', agentId);
+
+                                    const res = await fetch('/api/uploads', {
+                                        method: 'POST',
+                                        body: formData,
+                                    });
+                                    const data = await res.json();
+                                    if (!res.ok) {
+                                        throw new Error(data.error || `Failed to upload "${file.name}"`);
+                                    }
+                                    return { name: data.fileName || file.name, content: data.content };
+                                });
+
+                                const uploaded = await Promise.all(uploadPromises);
+                                setUploadedFiles(prev => [...prev, ...uploaded]);
+                            } catch (err: any) {
+                                console.error('Upload error:', err);
+                                setUploadError(err.message || 'An error occurred while uploading files.');
+                            } finally {
+                                setIsLoading(false);
+                                if (e.target) e.target.value = '';
+                            }
+                        }}
+                    />
+                )}
+
                 <div className="flex items-center gap-3 bg-white rounded-full px-5 py-2.5 border border-gray-200">
+                    {/* File attachment button */}
+                    {allowFileUploads && agentId && (
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isLoading}
+                            className="text-gray-400 hover:text-orange-500 disabled:text-gray-200 transition-colors"
+                            aria-label="Attach file"
+                            title="Attach files"
+                        >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                            </svg>
+                        </button>
+                    )}
                     <input
                         type="text"
                         value={input}
