@@ -92,7 +92,7 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
     }
     headers.push('Off-Peak Rate (c/kWh)', 'Daily Supply ($)', 'Total (inc GST)', 
                  'Max Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)',
-                 'Estimated Monthly Usage (kWh)', 'Estimated Annual Usage (kWh)');
+                 'Estimated Annual Usage (kWh)');
     
     sheet.addRow(headers);
     
@@ -110,8 +110,6 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
     invoices.forEach(inv => {
         const billingDays = inv.billing_days || 0;
         const totalUsage = inv.total_usage_kwh || 0;
-        // Calculate monthly usage: (total usage / billing days) * 30
-        const monthlyUsage = billingDays > 0 ? (totalUsage / billingDays) * 30 : null;
         // Calculate annual usage: (total usage / billing days) * 365
         const annualUsage = billingDays > 0 ? (totalUsage / billingDays) * 365 : null;
         
@@ -145,7 +143,6 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
             inv.demand_charges ?? '',
             inv.meter_charges ?? '',
             totalUsage,
-            monthlyUsage ?? '',
             annualUsage ?? ''
         );
         
@@ -171,14 +168,9 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
         totalRow.push(''); // Shoulder rate column
     }
     
-    // Calculate totals for monthly and annual usage
-    // Sum the individual monthly/annual calculations to match what's displayed in rows
+    // Calculate totals for annual usage
+    // Sum the individual annual calculations to match what's displayed in rows
     const totalUsage = invoices.reduce((sum, inv) => sum + (inv.total_usage_kwh || 0), 0);
-    const totalMonthlyUsage = invoices.reduce((sum, inv) => {
-        const billingDays = inv.billing_days || 0;
-        const usage = inv.total_usage_kwh || 0;
-        return sum + (billingDays > 0 ? (usage / billingDays) * 30 : 0);
-    }, 0);
     const totalAnnualUsage = invoices.reduce((sum, inv) => {
         const billingDays = inv.billing_days || 0;
         const usage = inv.total_usage_kwh || 0;
@@ -199,7 +191,6 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
         invoices.reduce((sum, inv) => sum + (inv.demand_charges || 0), 0),
         invoices.reduce((sum, inv) => sum + (inv.meter_charges || 0), 0),
         totalUsage,
-        totalMonthlyUsage ?? '',
         totalAnnualUsage ?? ''
     );
     
@@ -217,13 +208,11 @@ function buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvo
     const totalCol = hasShoulder ? 13 : 12;
     const demandChargesCol = hasShoulder ? 15 : 14;
     const meterChargesCol = hasShoulder ? 16 : 15;
-    const monthlyUsageCol = hasShoulder ? 18 : 17;
-    const annualUsageCol = hasShoulder ? 19 : 18;
+    const annualUsageCol = hasShoulder ? 18 : 17;
     sheet.getColumn(dailySupplyCol).numFmt = '$#,##0.00';
     sheet.getColumn(totalCol).numFmt = '$#,##0.00';
     sheet.getColumn(demandChargesCol).numFmt = '$#,##0.00';
     sheet.getColumn(meterChargesCol).numFmt = '$#,##0.00';
-    sheet.getColumn(monthlyUsageCol).numFmt = '#,##0.00';
     sheet.getColumn(annualUsageCol).numFmt = '#,##0.00';
 }
 
