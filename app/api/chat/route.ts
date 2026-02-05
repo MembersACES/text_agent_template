@@ -228,7 +228,8 @@ export async function POST(request: Request) {
 
         // Extract JSON from response if present (for invoice extraction)
         let extractedData = null;
-        let cleanedResponse = text;
+        // First, remove any [GENERATE_REPORT] markers from the response
+        let cleanedResponse = text.replace(/\[GENERATE_REPORT\]/gi, '').trim();
         let generateReport = false;
 
         // Check for JSON code blocks in the response - extract ALL blocks, not just the first
@@ -304,8 +305,20 @@ export async function POST(request: Request) {
                     // If multiple blocks, return as array
                     extractedData = parsedBlocks.length === 1 ? parsedBlocks[0] : parsedBlocks;
                     
-                    // Remove all JSON blocks from the response text
-                    cleanedResponse = text.replace(/```(?:json)?\s*[\s\S]*?\s*```/g, '').trim();
+                    // Remove all JSON blocks from the response text (more aggressive pattern)
+                    // This removes: ```json ... ```, ``` ... ```, and any standalone JSON blocks
+                    cleanedResponse = text
+                        .replace(/```json\s*[\s\S]*?```/gi, '') // Remove ```json ... ```
+                        .replace(/```\s*\{[\s\S]*?\}\s*```/g, '') // Remove ``` {...} ```
+                        .replace(/```\s*\[[\s\S]*?\]\s*```/g, '') // Remove ``` [...] ```
+                        .replace(/```\s*[\s\S]*?```/g, '') // Remove any remaining ``` ... ```
+                        .trim();
+                    
+                    // Also remove any standalone JSON objects/arrays that might be in the text
+                    cleanedResponse = cleanedResponse
+                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects
+                        .replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '') // Remove [{...}] JSON arrays
+                        .trim();
                     
                     console.log(`[Chat API] Extracted ${parsedBlocks.length} JSON block(s) from response`);
                 }
