@@ -305,25 +305,33 @@ export async function POST(request: Request) {
                     // If multiple blocks, return as array
                     extractedData = parsedBlocks.length === 1 ? parsedBlocks[0] : parsedBlocks;
                     
-                    // Remove all JSON blocks from the response text (more aggressive pattern)
-                    // This removes: ```json ... ```, ``` ... ```, and any JSON-like content
+                    // Remove all JSON blocks from the response text (very aggressive pattern)
+                    // First pass: Remove code blocks
                     cleanedResponse = text
                         .replace(/```json\s*[\s\S]*?```/gi, '') // Remove ```json ... ```
                         .replace(/```\s*\{[\s\S]*?\}\s*```/g, '') // Remove ``` {...} ```
                         .replace(/```\s*\[[\s\S]*?\]\s*```/g, '') // Remove ``` [...] ```
                         .replace(/```\s*[\s\S]*?```/g, '') // Remove any remaining ``` ... ```
-                        .replace(/^json\s*$/gmi, '') // Remove standalone "json" lines
-                        .replace(/^json\s*\{[\s\S]*?\}$/gmi, '') // Remove "json {...}" blocks without backticks
-                        .replace(/^json\s*\{[\s\S]*?\}\s*$/gmi, '') // Remove "json {...}" with whitespace
                         .trim();
                     
-                    // Also remove any standalone JSON objects/arrays that might be in the text
-                    // Match JSON objects that might be on multiple lines
+                    // Second pass: Remove complete JSON objects/arrays
                     cleanedResponse = cleanedResponse
-                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects (single line or multiline)
+                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects (multiline)
                         .replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '') // Remove [{...}] JSON arrays
-                        .replace(/^json\s*$/gmi, '') // Remove any remaining "json" lines
-                        .replace(/\n\s*json\s*\n/g, '\n') // Remove "json" on its own line with newlines
+                        .replace(/\{\s*[\s\S]*?\}/g, '') // More aggressive: any {...} blocks
+                        .trim();
+                    
+                    // Third pass: Remove JSON fragments and artifacts (like ",],\n"error": null\n}")
+                    cleanedResponse = cleanedResponse
+                        .replace(/,\s*\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove trailing JSON fragments
+                        .replace(/\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove ] ,"error": null}
+                        .replace(/"error"\s*:\s*null\s*\}/g, '') // Remove "error": null}
+                        .replace(/^\s*[,\[\{]\s*$/gm, '') // Remove lines with just brackets/commas
+                        .replace(/^\s*"[^"]*"\s*:\s*[^,}\]]+\s*[,}\]]\s*$/gm, '') // Remove JSON key-value lines
+                        .replace(/^\s*json\s*$/gmi, '') // Remove standalone "json" lines
+                        .replace(/\n\s*json\s*\n/g, '\n') // Remove "json" on its own line
+                        .replace(/\n\s*\n\s*\n/g, '\n\n') // Remove excessive blank lines
+                        .replace(/^\s*,\s*$/gm, '') // Remove lines with just commas
                         .trim();
                     
                     console.log(`[Chat API] Extracted ${parsedBlocks.length} JSON block(s) from response`);
@@ -333,7 +341,15 @@ export async function POST(request: Request) {
             }
         }
 
-        console.log(`[Chat API] JSON blocks found: ${jsonBlockMatches.length}, extractedData: ${extractedData ? (Array.isArray(extractedData) ? extractedData.length + ' invoices' : '1 invoice') : 'none'}`);
+        const extractedCount = extractedData 
+            ? (Array.isArray(extractedData) ? extractedData.length : 1)
+            : 0;
+        console.log(`[Chat API] JSON blocks found: ${jsonBlockMatches.length}, extractedData: ${extractedCount} invoice(s)`);
+        
+        // Log if we have uploaded files but extracted fewer invoices
+        if (uploadedFiles && Array.isArray(uploadedFiles) && uploadedFiles.length > extractedCount) {
+            console.warn(`[Chat API] Warning: ${uploadedFiles.length} files uploaded but only ${extractedCount} invoices extracted. Some files may not have contained invoice data or extraction failed.`);
+        }
 
         // Check if user requested report generation OR if AI response contains [GENERATE_REPORT]
         if (message.toLowerCase().includes('generate') && message.toLowerCase().includes('report')) {

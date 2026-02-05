@@ -40,11 +40,17 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('Running...');
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; fileName: string } | null>(null);
+    const [uploadLoadingMessage, setUploadLoadingMessage] = useState('Uploading...');
     const reportGenerationTriggered = useRef(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const loadingMessageIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const uploadLoadingMessageIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         const fetchConfig = async () => {
@@ -90,6 +96,87 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    // Auto-fill input when invoices are processed (Base 1 Review agent only)
+    useEffect(() => {
+        if (extractedInvoices.length > 0 && !input.trim() && agentId === 'base-1-review' && !isLoading) {
+            // Small delay to ensure state is settled
+            const timer = setTimeout(() => {
+                setInput('Run these invoices for a Base 1 Review');
+            }, 300);
+            return () => clearTimeout(timer);
+        }
+    }, [extractedInvoices.length, agentId, input, isLoading]); // Trigger when invoice count changes
+
+    // Rotating loading messages for chat/AI processing
+    useEffect(() => {
+        if (isLoading || isGeneratingReport) {
+            const messages = [
+                'Running...',
+                'Thinking...',
+                'Exploring...',
+                'Analyzing...',
+                'Processing...',
+                'Reviewing...',
+                'Calculating...',
+                'Crunching numbers...',
+                'Working on it...',
+                'Almost there...',
+            ];
+            let currentIndex = 0;
+            setLoadingMessage(messages[0]);
+            
+            loadingMessageIntervalRef.current = setInterval(() => {
+                currentIndex = (currentIndex + 1) % messages.length;
+                setLoadingMessage(messages[currentIndex]);
+            }, 2000);
+        } else {
+            if (loadingMessageIntervalRef.current) {
+                clearInterval(loadingMessageIntervalRef.current);
+                loadingMessageIntervalRef.current = null;
+            }
+        }
+        
+        return () => {
+            if (loadingMessageIntervalRef.current) {
+                clearInterval(loadingMessageIntervalRef.current);
+            }
+        };
+    }, [isLoading, isGeneratingReport]);
+
+    // Rotating loading messages for file uploads
+    useEffect(() => {
+        if (isUploading) {
+            const messages = [
+                'Uploading...',
+                'Processing file...',
+                'Extracting text...',
+                'Reading document...',
+                'Scanning invoice...',
+                'Analyzing content...',
+                'Almost done...',
+            ];
+            let currentIndex = 0;
+            setUploadLoadingMessage(messages[0]);
+            
+            uploadLoadingMessageIntervalRef.current = setInterval(() => {
+                currentIndex = (currentIndex + 1) % messages.length;
+                setUploadLoadingMessage(messages[currentIndex]);
+            }, 2000);
+        } else {
+            if (uploadLoadingMessageIntervalRef.current) {
+                clearInterval(uploadLoadingMessageIntervalRef.current);
+                uploadLoadingMessageIntervalRef.current = null;
+            }
+            setUploadProgress(null);
+        }
+        
+        return () => {
+            if (uploadLoadingMessageIntervalRef.current) {
+                clearInterval(uploadLoadingMessageIntervalRef.current);
+            }
+        };
+    }, [isUploading]);
 
     const handleSend = async () => {
         if (!input.trim() || isLoading) return;
@@ -438,18 +525,38 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                         </div>
                     </div>
                 ))}
-                {(isLoading || isGeneratingReport) && (
+                {/* File upload progress indicator */}
+                {isUploading && uploadProgress && (
+                    <div className="flex justify-start">
+                        <div className="bg-gradient-to-r from-orange-50 to-orange-100 rounded-2xl px-4 py-3 shadow-sm border border-orange-200">
+                            <div className="flex items-center gap-3">
+                                <div className="flex space-x-1.5">
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-sm text-gray-700 font-medium">{uploadLoadingMessage}</span>
+                                    <span className="text-xs text-gray-600 mt-0.5">
+                                        {uploadProgress.fileName}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Regular chat/AI processing indicator */}
+                {(isLoading || isGeneratingReport) && !isUploading && (
                     <div className="flex justify-start">
                         <div className="bg-white rounded-2xl px-4 py-3 shadow-sm">
-                            <div className="flex items-center gap-2">
-                                <div className="flex space-x-2">
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                            <div className="flex items-center gap-3">
+                                <div className="flex space-x-1.5">
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
                                 </div>
-                                {isGeneratingReport && (
-                                    <span className="text-xs text-gray-500 ml-2">Generating report...</span>
-                                )}
+                                <span className="text-sm text-gray-600 font-medium">{loadingMessage}</span>
                             </div>
                         </div>
                     </div>
@@ -458,24 +565,24 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             </div>
 
             {/* Input + optional file upload */}
-            <div className="p-5 bg-white border-t border-gray-100 shrink-0 space-y-3">
+            <div className="p-4 bg-white border-t border-gray-100 shrink-0 space-y-2.5">
                 {/* File chips - show uploaded files as badges */}
                 {uploadedFiles.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 pb-1">
                         {uploadedFiles.map((file, index) => (
                             <div
                                 key={index}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-orange-100 border border-orange-200 rounded-lg text-xs text-orange-800 shadow-sm hover:shadow transition-shadow"
                             >
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                 </svg>
-                                <span className="max-w-[150px] truncate">{file.name}</span>
+                                <span className="max-w-[180px] truncate font-medium">{file.name}</span>
                                 <button
                                     onClick={() => {
                                         setUploadedFiles(prev => prev.filter((_, i) => i !== index));
                                     }}
-                                    className="ml-1 text-orange-500 hover:text-orange-700 transition-colors"
+                                    className="ml-0.5 text-orange-600 hover:text-orange-800 hover:bg-orange-200 rounded p-0.5 transition-colors"
                                     aria-label={`Remove ${file.name}`}
                                 >
                                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -515,9 +622,13 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                             if (!files || files.length === 0 || !agentId) return;
 
                             setUploadError(null);
+                            setIsUploading(true);
+                            const fileArray = Array.from(files);
+                            setUploadProgress({ current: 0, total: fileArray.length, fileName: `Processing ${fileArray.length} file${fileArray.length > 1 ? 's' : ''}...` });
+
                             try {
-                                setIsLoading(true);
-                                const uploadPromises = Array.from(files).map(async (file) => {
+                                // Process all files in parallel for faster uploads
+                                const uploadPromises = fileArray.map(async (file, index) => {
                                     const formData = new FormData();
                                     formData.append('file', file);
                                     formData.append('agentId', agentId);
@@ -530,6 +641,14 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                                     if (!res.ok) {
                                         throw new Error(data.error || `Failed to upload "${file.name}"`);
                                     }
+                                    
+                                    // Update progress as each file completes
+                                    setUploadProgress(prev => prev ? {
+                                        current: prev.current + 1,
+                                        total: prev.total,
+                                        fileName: `${prev.current + 1} of ${prev.total} complete`
+                                    } : null);
+                                    
                                     return { 
                                         name: data.fileName || file.name, 
                                         content: data.content,
@@ -538,27 +657,29 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                                     };
                                 });
 
+                                // Wait for all uploads to complete
                                 const uploaded = await Promise.all(uploadPromises);
                                 setUploadedFiles(prev => [...prev, ...uploaded]);
                             } catch (err: any) {
                                 console.error('Upload error:', err);
                                 setUploadError(err.message || 'An error occurred while uploading files.');
                             } finally {
-                                setIsLoading(false);
+                                setIsUploading(false);
+                                setUploadProgress(null);
                                 if (e.target) e.target.value = '';
                             }
                         }}
                     />
                 )}
 
-                <div className="flex items-center gap-3 bg-white rounded-full px-5 py-2.5 border border-gray-200">
+                <div className="flex items-center gap-2.5 bg-gray-50 rounded-xl px-4 py-2.5 border border-gray-200 focus-within:border-orange-300 focus-within:ring-2 focus-within:ring-orange-100 transition-all">
                     {/* File attachment button */}
                     {allowFileUploads && agentId && (
                         <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             disabled={isLoading}
-                            className="text-gray-400 hover:text-orange-500 disabled:text-gray-200 transition-colors"
+                            className="p-1.5 text-gray-400 hover:text-orange-500 hover:bg-orange-50 disabled:text-gray-200 disabled:hover:bg-transparent rounded-lg transition-all"
                             aria-label="Attach file"
                             title="Attach files"
                         >
@@ -579,7 +700,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     <button
                         onClick={handleSend}
                         disabled={!input.trim() || isLoading}
-                        className="text-gray-300 hover:text-orange-500 disabled:text-gray-200 transition-colors"
+                        className="p-1.5 text-gray-300 hover:text-orange-500 hover:bg-orange-50 disabled:text-gray-200 disabled:hover:bg-transparent rounded-lg transition-all"
                         aria-label="Send message"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

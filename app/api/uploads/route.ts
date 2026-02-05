@@ -50,9 +50,15 @@ export async function POST(request: Request) {
                            fileName.endsWith('.csv') ||
                            fileName.endsWith('.json');
 
+        // Read file buffer once (we'll reuse it for both content extraction and base64 encoding)
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const fileSizeKB = (fileBuffer.length / 1024).toFixed(1);
+        console.log(`[Upload API] Processing ${fileName} (${fileSizeKB} KB, ${mimeType})`);
+
         if (isTextBased) {
             // Text-based files: read directly
-            content = await file.text();
+            content = fileBuffer.toString('utf-8');
+            console.log(`[Upload API] Text file processed in <1s`);
         } else {
             // Binary files (PDF, images, Word, Excel): use Gemini Vision to extract text
             const apiKey = process.env.GEMINI_API_KEY;
@@ -61,11 +67,15 @@ export async function POST(request: Request) {
             }
 
             try {
-                const buffer = Buffer.from(await file.arrayBuffer());
-                const base64Data = buffer.toString('base64');
+                const startTime = Date.now();
+                const base64Data = fileBuffer.toString('base64');
+                console.log(`[Upload API] Base64 encoding complete (${((Date.now() - startTime) / 1000).toFixed(2)}s)`);
                 
                 const genAI = new GoogleGenerativeAI(apiKey);
                 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                
+                const visionStartTime = Date.now();
+                console.log(`[Upload API] Sending to Gemini Vision API...`);
                 
                 const result = await model.generateContent([
                     {
@@ -89,8 +99,13 @@ Return ONLY the extracted text, no commentary.`
                 
                 const response = await result.response;
                 content = response.text();
+                
+                const visionTime = ((Date.now() - visionStartTime) / 1000).toFixed(2);
+                const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                console.log(`[Upload API] Gemini Vision processing complete (${visionTime}s, total: ${totalTime}s)`);
+                console.log(`[Upload API] Extracted ${content.length} characters from ${fileName}`);
             } catch (visionError) {
-                console.error('Error processing file with Gemini Vision:', visionError);
+                console.error('[Upload API] Error processing file with Gemini Vision:', visionError);
                 return NextResponse.json({ 
                     error: 'Failed to extract text from file. Please ensure the file is a valid PDF or image.',
                     details: String(visionError)
@@ -102,8 +117,7 @@ Return ONLY the extracted text, no commentary.`
             return NextResponse.json({ error: 'File is empty or could not be read' }, { status: 400 });
         }
 
-        // Also return the original file buffer as base64 for Drive upload
-        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        // Convert file buffer to base64 for Drive upload (reuse the buffer we already have)
         const fileBufferBase64 = fileBuffer.toString('base64');
 
         return NextResponse.json({
