@@ -4,24 +4,48 @@
  * This endpoint processes multiple invoice files and returns an Excel report.
  * It combines file upload, invoice extraction, and report generation into a single API call.
  * 
+ * Supports TWO formats:
+ * 1. Multipart form-data (standard file upload)
+ * 2. JSON with base64-encoded files (n8n-friendly)
+ * 
  * Usage:
  * POST /api/agents/process
  * 
- * FormData:
+ * Format 1 - Multipart Form-Data:
+ * Content-Type: multipart/form-data
  * - files: File[] (multiple files can be uploaded)
  * - agentId: string (optional, e.g., 'base-1-review')
+ * 
+ * Format 2 - JSON with Base64:
+ * Content-Type: application/json
+ * {
+ *   "files": [
+ *     {
+ *       "fileName": "invoice1.pdf",
+ *       "mimeType": "application/pdf",
+ *       "dataBase64": "base64-encoded-file-content"
+ *     }
+ *   ],
+ *   "agentId": "base-1-review" // optional
+ * }
  * 
  * Returns:
  * - Excel file (.xlsx) as binary response with Content-Disposition header
  * 
- * Example (curl):
+ * Example (curl - multipart):
  * curl -X POST http://localhost:3000/api/agents/process \
  *   -F "files=@invoice1.pdf" \
  *   -F "files=@invoice2.pdf" \
  *   -F "agentId=base-1-review" \
  *   --output report.xlsx
  * 
- * Example (JavaScript):
+ * Example (curl - JSON):
+ * curl -X POST http://localhost:3000/api/agents/process \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"files":[{"fileName":"invoice1.pdf","mimeType":"application/pdf","dataBase64":"..."}],"agentId":"base-1-review"}' \
+ *   --output report.xlsx
+ * 
+ * Example (JavaScript - multipart):
  * const formData = new FormData();
  * formData.append('files', file1);
  * formData.append('files', file2);
@@ -32,12 +56,17 @@
  *   body: formData
  * });
  * 
- * const blob = await response.blob();
- * const url = window.URL.createObjectURL(blob);
- * const a = document.createElement('a');
- * a.href = url;
- * a.download = 'report.xlsx';
- * a.click();
+ * Example (JavaScript - JSON):
+ * const response = await fetch('/api/agents/process', {
+ *   method: 'POST',
+ *   headers: { 'Content-Type': 'application/json' },
+ *   body: JSON.stringify({
+ *     files: [
+ *       { fileName: 'invoice1.pdf', mimeType: 'application/pdf', dataBase64: base64String }
+ *     ],
+ *     agentId: 'base-1-review'
+ *   })
+ * });
  */
 
 import { NextResponse } from 'next/server';
@@ -186,10 +215,23 @@ async function processInvoicesWithChat(
         const kb = await getCachedKnowledgeBase(agentId);
         if (kb) {
             const message = 'Run these invoices for a Base 1 Review';
-            const queryEmbedding = await generateEmbedding(message);
-            const similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
-
-            if (similarChunks && similarChunks.length > 0) {
+            let similarChunks: any[] = [];
+            let useKBContext = false;
+            
+            // Try to get embeddings, but don't fail if embedding model is unavailable
+            try {
+                const queryEmbedding = await generateEmbedding(message);
+                similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
+                useKBContext = true;
+            } catch (embeddingError: any) {
+                // Embedding model not available - skip KB context entirely
+                console.warn(`[Agent Process API] Embedding generation failed (${embeddingError.message}), skipping KB context and using only uploaded files`);
+                useKBContext = false;
+                similarChunks = [];
+            }
+            
+            // Only use KB context if embeddings worked
+            if (useKBContext && similarChunks && similarChunks.length > 0) {
                 kbContext = similarChunks
                     .map((chunk: any, i: number) => {
                         const sourceInfo = chunk.source ? ` (File: ${chunk.source})` : '';
@@ -198,26 +240,31 @@ async function processInvoicesWithChat(
                     .join('\n\n---\n\n');
             }
 
-            // Build file list metadata
-            let fileListContext = '';
-            if (kb.fileMetadata && Object.keys(kb.fileMetadata).length > 0) {
-                const fileList = Object.entries(kb.fileMetadata)
-                    .map(([id, meta]: [string, any]) => {
-                        const fileName = meta.name || 'Unknown File';
-                        const chunkCount = meta.chunkCount || 0;
-                        return `- ${fileName} (${chunkCount} chunks)`;
-                    })
-                    .join('\n');
-                fileListContext = `KNOWLEDGE BASE FILES AVAILABLE:\n${fileList}\n\n`;
-            }
-
+            // Build context - only include KB if embeddings worked
             const combinedContextParts = [];
-            if (fileListContext) {
-                combinedContextParts.push(fileListContext);
+            
+            if (useKBContext) {
+                // Build file list metadata only if KB is working
+                let fileListContext = '';
+                if (kb.fileMetadata && Object.keys(kb.fileMetadata).length > 0) {
+                    const fileList = Object.entries(kb.fileMetadata)
+                        .map(([id, meta]: [string, any]) => {
+                            const fileName = meta.name || 'Unknown File';
+                            const chunkCount = meta.chunkCount || 0;
+                            return `- ${fileName} (${chunkCount} chunks)`;
+                        })
+                        .join('\n');
+                    fileListContext = `KNOWLEDGE BASE FILES AVAILABLE:\n${fileList}\n\n`;
+                }
+                
+                if (fileListContext) {
+                    combinedContextParts.push(fileListContext);
+                }
+                if (kbContext) {
+                    combinedContextParts.push(`RELEVANT CONTENT FROM KNOWLEDGE BASE:\n${kbContext}`);
+                }
             }
-            if (kbContext) {
-                combinedContextParts.push(`RELEVANT CONTENT FROM KNOWLEDGE BASE:\n${kbContext}`);
-            }
+            
             combinedContextParts.push(`UPLOADED FILES FOR THIS CONVERSATION:\n${fileContext}`);
 
             const combinedContext = combinedContextParts.join('\n\n---\n\n');
@@ -378,10 +425,134 @@ export async function GET() {
     });
 }
 
+/**
+ * Convert base64 string to File object (Node.js compatible)
+ */
+function base64ToFile(base64Data: string, fileName: string, mimeType: string): File {
+    // Remove data URL prefix if present (e.g., "data:image/png;base64,")
+    const base64Content = base64Data.includes(',') 
+        ? base64Data.split(',')[1] 
+        : base64Data;
+    
+    // Convert base64 to Uint8Array
+    const buffer = Buffer.from(base64Content, 'base64');
+    const uint8Array = new Uint8Array(buffer);
+    
+    // Create File object (File constructor is available in Next.js runtime)
+    return new File([uint8Array], fileName, { type: mimeType });
+}
+
 export async function POST(request: Request) {
     try {
-        const formData = await request.formData();
-        const agentId = (formData.get('agentId') as string) || undefined;
+        const contentType = request.headers.get('content-type') || '';
+        let files: File[] = [];
+        let agentId: string | undefined;
+
+        // Check if request is JSON (base64 files) or multipart form-data
+        if (contentType.includes('application/json')) {
+            // JSON payload with base64 files (n8n-friendly)
+            const body = await request.json();
+            agentId = body.agentId || body.agentid || undefined; // Support both camelCase and lowercase
+
+            if (!body.files || !Array.isArray(body.files) || body.files.length === 0) {
+                return NextResponse.json(
+                    { error: 'At least one file is required in the files array' },
+                    { status: 400 }
+                );
+            }
+
+            // Convert base64 files to File objects with validation
+            files = body.files.map((fileData: any, index: number) => {
+                if (!fileData.dataBase64 || !fileData.fileName) {
+                    throw new Error(`File at index ${index}: Each file must have dataBase64 and fileName properties`);
+                }
+
+                // Validate that dataBase64 is actual base64 content, not a reference
+                const base64Str = String(fileData.dataBase64).trim();
+                
+                // Check for filesystem references
+                if (base64Str === 'filesystem-v2' || base64Str.startsWith('filesystem-') || base64Str.length < 100) {
+                    throw new Error(
+                        `File at index ${index} (${fileData.fileName}): dataBase64 appears to be a filesystem reference, not actual base64 content. ` +
+                        `Length: ${base64Str.length}, First 50 chars: ${base64Str.substring(0, 50)}`
+                    );
+                }
+
+                // Remove data URL prefix if present (e.g., "data:image/png;base64,")
+                let cleanBase64 = base64Str;
+                if (base64Str.includes(',')) {
+                    cleanBase64 = base64Str.split(',')[1];
+                }
+
+                // Basic base64 validation (should be alphanumeric + / + = padding, and whitespace)
+                const base64Regex = /^[A-Za-z0-9+/=\s]*$/;
+                if (!base64Regex.test(cleanBase64)) {
+                    throw new Error(
+                        `File at index ${index} (${fileData.fileName}): dataBase64 contains invalid characters. ` +
+                        `First 100 chars: ${cleanBase64.substring(0, 100)}... (total length: ${cleanBase64.length})`
+                    );
+                }
+
+                // Remove whitespace from base64
+                cleanBase64 = cleanBase64.replace(/\s/g, '');
+
+                // Validate minimum length (even a tiny file should be > 50 chars base64)
+                if (cleanBase64.length < 50) {
+                    throw new Error(
+                        `File at index ${index} (${fileData.fileName}): dataBase64 is too short (${cleanBase64.length} chars). ` +
+                        `This suggests the file content is empty or not properly encoded.`
+                    );
+                }
+
+                const mimeType = fileData.mimeType || 'application/octet-stream';
+                
+                try {
+                    // Try to decode base64 to verify it's valid
+                    const testBuffer = Buffer.from(cleanBase64, 'base64');
+                    if (testBuffer.length === 0) {
+                        throw new Error('Decoded buffer is empty - base64 may be invalid or file is empty');
+                    }
+                    
+                    console.log(`[Agent Process API] File ${index}: ${fileData.fileName}, size: ${testBuffer.length} bytes, mimeType: ${mimeType}`);
+                    
+                    return base64ToFile(cleanBase64, fileData.fileName, mimeType);
+                } catch (error: any) {
+                    throw new Error(
+                        `File at index ${index} (${fileData.fileName}): Failed to convert base64 to file. ` +
+                        `Error: ${error.message}. Base64 length: ${cleanBase64.length}, First 20 chars: ${cleanBase64.substring(0, 20)}`
+                    );
+                }
+            });
+
+        } else {
+            // Multipart form-data (original implementation)
+            const formData = await request.formData();
+            agentId = (formData.get('agentId') as string) || undefined;
+
+            // Get all files from form data
+            // FormData can have multiple files with the same key name
+            const filesField = formData.getAll('files');
+            for (const file of filesField) {
+                if (file instanceof File) {
+                    files.push(file);
+                }
+            }
+            
+            // Also check for 'file' (singular) - for single file uploads
+            const fileField = formData.getAll('file');
+            for (const file of fileField) {
+                if (file instanceof File) {
+                    files.push(file);
+                }
+            }
+            
+            // Also check for any field that starts with 'file' (e.g., 'file0', 'file1', etc.)
+            for (const [key, value] of formData.entries()) {
+                if (key.startsWith('file') && value instanceof File && !files.includes(value)) {
+                    files.push(value);
+                }
+            }
+        }
 
         // Check agent configuration for upload permission
         if (agentId) {
@@ -393,33 +564,6 @@ export async function POST(request: Request) {
                     { error: 'File uploads are disabled for this agent' },
                     { status: 403 }
                 );
-            }
-        }
-
-        // Get all files from form data
-        // FormData can have multiple files with the same key name
-        const files: File[] = [];
-        
-        // Check for 'files' (plural) - typically used for multiple file uploads
-        const filesField = formData.getAll('files');
-        for (const file of filesField) {
-            if (file instanceof File) {
-                files.push(file);
-            }
-        }
-        
-        // Also check for 'file' (singular) - for single file uploads
-        const fileField = formData.getAll('file');
-        for (const file of fileField) {
-            if (file instanceof File) {
-                files.push(file);
-            }
-        }
-        
-        // Also check for any field that starts with 'file' (e.g., 'file0', 'file1', etc.)
-        for (const [key, value] of formData.entries()) {
-            if (key.startsWith('file') && value instanceof File && !files.includes(value)) {
-                files.push(value);
             }
         }
 
