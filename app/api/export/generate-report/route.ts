@@ -42,10 +42,13 @@ export async function POST(request: Request) {
         const fileName = `base1-review-${businessInfo.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.xlsx`;
         const file = bucket.file(`reports/${fileName}`);
 
+        // Save file with metadata including creation timestamp for cleanup
         await file.save(excelBuffer, {
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             metadata: {
                 cacheControl: 'public, max-age=3600',
+                created: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // 2 days from now
             },
         });
 

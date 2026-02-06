@@ -4,6 +4,7 @@ import { chunkDocument } from '@/lib/document-chunker';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { saveKnowledgeBase, loadKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { getPromptConfig } from '@/lib/gcs-client';
+import { cleanupOldReports } from '@/lib/report-cleanup';
 
 export async function GET(request: Request) {
     try {
@@ -58,6 +59,15 @@ export async function GET(request: Request) {
                 modifiedTime: meta.modifiedTime
             }));
 
+        // Clean up old reports (non-blocking - don't fail if cleanup fails)
+        let cleanupStats = null;
+        try {
+            console.log('[KB Index GET] Running report cleanup...');
+            cleanupStats = await cleanupOldReports();
+        } catch (cleanupError) {
+            console.warn('[KB Index GET] Report cleanup failed (non-critical):', cleanupError);
+        }
+
         return NextResponse.json({
             indexed,
             pending,
@@ -65,7 +75,8 @@ export async function GET(request: Request) {
             stats: {
                 totalDriveFiles: driveFiles.length,
                 totalIndexedFiles: Object.keys(indexedMeta).length
-            }
+            },
+            ...(cleanupStats && { cleanup: cleanupStats }),
         });
 
     } catch (error) {
@@ -236,6 +247,15 @@ export async function POST(request: Request) {
 
         console.log('Indexing complete!');
 
+        // Clean up old reports (non-blocking - don't fail if cleanup fails)
+        let cleanupStats = null;
+        try {
+            console.log('[KB Index] Running report cleanup...');
+            cleanupStats = await cleanupOldReports();
+        } catch (cleanupError) {
+            console.warn('[KB Index] Report cleanup failed (non-critical):', cleanupError);
+        }
+
         return NextResponse.json({
             success: true,
             message: 'Knowledge base indexed successfully',
@@ -248,6 +268,7 @@ export async function POST(request: Request) {
                 newChunks: totalStats.totalChunks,
                 totalCharacters: totalStats.totalOriginalChars,
             },
+            ...(cleanupStats && { cleanup: cleanupStats }),
         });
 
     } catch (error) {

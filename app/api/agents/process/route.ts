@@ -284,62 +284,81 @@ async function processInvoicesWithChat(
 
 ${combinedContext}
 
-EXTRACTION RULES:
-1. Extract data from EVERY uploaded file above
-2. All numeric fields MUST be numbers (never strings)
-3. Use null for missing data — NEVER use 0 as placeholder
-4. Dates must be DD/MM/YYYY format
-5. NMI must be 10-11 characters (electricity)
-6. MRIN must be 8-12 characters (gas)
-7. shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
-8. daily_supply_charge in $/day (convert from monthly if needed)
-9. ALWAYS calculate rates if not shown: rate = charges / usage
-10. For waste: populate waste_services array with ALL line items and pickup dates
-11. For oil: populate oil_services array with ALL line items
+CRITICAL INSTRUCTIONS:
 
-CLASSIFICATION (Electricity):
-- C&I vs SME: Check usage patterns and account type
-- Bundled vs Unbundled: Check if network charges are separate
-- TOU Structure: 
-  * 3-period (NSW/VIC/ACT): Peak/Shoulder/Off-Peak
-  * 2-period (QLD/SA/WA/NT): Peak/Off-Peak only (shoulder_usage_kwh = null)
+1. **USE KNOWLEDGE BASE DOCUMENTS**: 
+   - The context above includes knowledge base documents (ELECTRICITY_GUIDE, GAS_GUIDE, WATER_GUIDE, WASTE_GUIDE, OIL_GUIDE, etc.)
+   - You MUST follow the classification frameworks, extraction requirements, benchmarks, and savings calculation methods from these guides
+   - For electricity invoices: Use ELECTRICITY_GUIDE for classification (C&I vs SME), billing structure (bundled vs unbundled), TOU structure (2-period vs 3-period), benchmarks, and rate calculations
+   - For gas invoices: Use GAS_GUIDE for classification, benchmarks, and extraction requirements
+   - For other utilities: Use the corresponding guide document
 
-BENCHMARKING & SAVINGS:
-Apply these benchmarks to identify savings opportunities:
+2. **EXTRACTION REQUIREMENTS**:
+   - Extract data from EVERY uploaded file above
+   - All numeric fields MUST be numbers (never strings)
+   - Use null for missing data — NEVER use 0 as placeholder
+   - Dates must be DD/MM/YYYY format
+   - NMI must be 10-11 characters (electricity) - validate length
+   - MRIN must be 8-12 characters (gas) - validate length
+   - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
+   - daily_supply_charge in $/day (convert from monthly if needed)
+   - ALWAYS calculate rates if not shown: rate = charges / usage (follow rate calculation methods from the guides)
+   - For waste: populate waste_services array with ALL line items and pickup dates
+   - For oil: populate oil_services array with ALL line items
 
-**Electricity C&I Bundled (3-Period TOU):**
-- Peak Rate: 🟡 >32 c/kWh, 🔴 >35 c/kWh
-- Shoulder Rate: 🟡 >28 c/kWh, 🔴 >30 c/kWh
-- Off-Peak Rate: 🟡 >24 c/kWh, 🔴 >26 c/kWh
-- Daily Supply: 🟡 >$4.00/day, 🔴 >$5.00/day
-- Demand Charges: 🟡 >$15/kVA/month, 🔴 >$18/kVA/month
-- Metering: 🟡 >$1,000/year, 🔴 >$1,200/year
+3. **CLASSIFICATION** (follow the guide documents):
+   - For Electricity: Follow the CLASSIFICATION FRAMEWORK in ELECTRICITY_GUIDE
+     * Step 1: Identify Customer Type (C&I / SME / Residential)
+     * Step 2: Identify Billing Structure (Bundled / Unbundled)
+     * Step 3: Identify TOU Structure (2-period / 3-period) based on state
+   - For Gas: Follow classification rules in GAS_GUIDE
+   - For other utilities: Follow the corresponding guide
 
-**Electricity C&I Bundled (2-Period TOU):**
-- Peak Rate: 🟡 >32 c/kWh, 🔴 >35 c/kWh
-- Off-Peak Rate: 🟡 >24 c/kWh, 🔴 >26 c/kWh
-- Daily Supply: 🟡 >$4.00/day, 🔴 >$5.00/day
-
-**Electricity SME Bundled (3-Period TOU):**
-- Peak Rate: 🟡 >30 c/kWh, 🔴 >32 c/kWh
-- Shoulder Rate: 🟡 >26 c/kWh, 🔴 >28 c/kWh
-- Off-Peak Rate: 🟡 >22 c/kWh, 🔴 >24 c/kWh
-- Daily Supply: 🟡 >$1.60/day, 🔴 >$1.80/day
-
-**Gas C&I:**
-- Gas Rate: 🟡 >$18.00/GJ, 🔴 >$19.00/GJ
-- Daily Supply: 🟡 >$1.20/day, 🔴 >$1.50/day
-
-**Gas SME:**
-- Gas Rate: 🟡 >$19.50/GJ, 🔴 >$20.50/GJ
-- Daily Supply: 🟡 >$1.00/day, 🔴 >$1.20/day
-
-SAVINGS CALCULATION:
-- Use WARNING threshold (🟡) for conservative estimates
-- Annual usage = (period_usage / billing_days) × 365
-- Annual savings = (current_rate - warning_threshold) × annual_usage
-- Only flag if savings >$200/year
-- Format: "$X,XXX.XX/year"
+4. **BENCHMARKING & SAVINGS** (MANDATORY - use values from knowledge base):
+   - **YOU MUST CHECK EVERY BENCHMARK** from the MARKET BENCHMARKS section in the guide document
+   - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
+   - **FOR EACH INVOICE, CHECK ALL OF THESE:**
+     
+     a) **RATE BENCHMARKS** (from guide):
+        - Peak rate: Compare peak_rate_c_per_kwh to benchmark (e.g., C&I: 🟡 >32 c/kWh, 🔴 >35 c/kWh)
+        - Shoulder rate: Compare shoulder_rate_c_per_kwh (if 3-period TOU)
+        - Off-peak rate: Compare off_peak_rate_c_per_kwh
+        - Gas rate: Compare gas_rate_per_gj (for gas invoices)
+        - Calculate savings: (current_rate - warning_threshold) / 100 × annual_usage
+     
+     b) **DAILY SUPPLY CHARGE** (from guide):
+        - Compare daily_supply_charge directly to benchmark (e.g., C&I: 🟡 >$4.00/day, 🔴 >$5.00/day)
+        - Calculate savings: (current_daily_supply - warning_threshold) × 365
+     
+     c) **METER CHARGES** (CRITICAL - MUST CHECK):
+        - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
+        - Step 2: Compare annual meter charges to benchmark from guide:
+          * C&I: 🟡 >$1,000/year, 🔴 >$1,200/year
+          * SME: 🟡 >$800/year, 🔴 >$900/year
+        - Step 3: If exceeds threshold, calculate savings = annual_meter_charges - warning_threshold
+        - Step 4: Add to low_hanging_fruit with type: "High Meter Charges"
+        - Example: If meter_charges = $132.49, billing_days = 31:
+          * Annual = ($132.49 / 31) × 365 = $1,560/year
+          * Exceeds C&I 🔴 threshold of $700/year
+          * Savings = $1,560 - $700 = $860/year
+          * Add: { type: "High Meter Charges", severity: "high", message: "Annual meter charges $1,560/year exceed benchmark", potential_savings: "$560/year" }
+     
+     d) **DEMAND CHARGES** (C&I only, if present):
+        - Annualize: (demand_charges / billing_days) × 365
+        - Compare to benchmark (e.g., 🟡 >$15/kVA/month, 🔴 >$18/kVA/month)
+   
+   - **CALCULATION FORMULAS** (from guide):
+     * Annual usage = (period_usage / billing_days) × 365
+     * Annual savings for rates = (current_rate - warning_threshold) / 100 × annual_usage
+     * Annual meter charges = (meter_charges / billing_days) × 365
+     * Annual demand charges = (demand_charges / billing_days) × 365
+   
+   - **POPULATE low_hanging_fruit ARRAY**:
+     * For EVERY finding that exceeds benchmarks, add an entry
+     * Use severity: "high" for 🔴, "medium" for 🟡
+     * Include potential_savings in format "$X,XXX.XX/year"
+     * Only include if savings >$200/year
+     * Example types: "High Peak Rate", "High Meter Charges", "High Daily Supply", "High Demand Charges", "High Gas Rate"
 
 OUTPUT SCHEMA (return array of these objects):
 
@@ -419,7 +438,18 @@ CRITICAL: Return ONLY the JSON array in a code block. No explanations, no summar
 UPLOADED FILES FOR THIS CONVERSATION:
 ${fileContext}
 
-Extract all invoice data following the same rules as above. Return ONLY the JSON array in a code block, no other text.`;
+NOTE: Knowledge base guides are not available. Use standard extraction rules:
+- Extract data from EVERY uploaded file above
+- All numeric fields MUST be numbers (never strings)
+- Use null for missing data — NEVER use 0 as placeholder
+- Dates must be DD/MM/YYYY format
+- NMI must be 10-11 characters (electricity)
+- MRIN must be 8-12 characters (gas)
+- shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT)
+- daily_supply_charge in $/day (convert from monthly if needed)
+- ALWAYS calculate rates if not shown: rate = charges / usage
+
+Return ONLY the JSON array in a code block, no other text.`;
         }
     } else {
         finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
@@ -427,7 +457,18 @@ Extract all invoice data following the same rules as above. Return ONLY the JSON
 UPLOADED FILES FOR THIS CONVERSATION:
 ${fileContext}
 
-Extract all invoice data following the same rules as above. Return ONLY the JSON array in a code block, no other text.`;
+NOTE: Knowledge base guides are not available. Use standard extraction rules:
+- Extract data from EVERY uploaded file above
+- All numeric fields MUST be numbers (never strings)
+- Use null for missing data — NEVER use 0 as placeholder
+- Dates must be DD/MM/YYYY format
+- NMI must be 10-11 characters (electricity)
+- MRIN must be 8-12 characters (gas)
+- shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT)
+- daily_supply_charge in $/day (convert from monthly if needed)
+- ALWAYS calculate rates if not shown: rate = charges / usage
+
+Return ONLY the JSON array in a code block, no other text.`;
     }
 
     // Initialize Gemini AI
