@@ -79,6 +79,12 @@ import { generateEmbedding } from '@/lib/embeddings';
 import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { findSimilarChunks } from '@/lib/document-chunker';
 import { ExtractedInvoice, BusinessInfo, ReportData } from '@/lib/report-types';
+import {
+    listFilesInFolder,
+    downloadDriveFile,
+    fetchGoogleDoc,
+    fetchGoogleSheet
+} from '@/lib/document-fetcher';
 
 interface ProcessedFile {
     name: string;
@@ -156,11 +162,15 @@ Return ONLY the extracted text, no commentary.`
 
         const response = await result.response;
         content = response.text();
+        console.log(`[Agent Process API] Extracted ${content.length} chars from ${fileName} (${mimeType})`);
+        console.log(`[Agent Process API] Preview: ${content.substring(0, 200)}...`);
     }
 
     if (!content || !content.trim()) {
         throw new Error('File is empty or could not be read');
     }
+
+    console.log(`[Agent Process API] Successfully processed ${fileName}: ${content.length} characters`);
 
     return {
         name: fileName,
@@ -217,7 +227,7 @@ async function processInvoicesWithChat(
             const message = 'Run these invoices for a Base 1 Review';
             let similarChunks: any[] = [];
             let useKBContext = false;
-            
+
             // Try to get embeddings, but don't fail if embedding model is unavailable
             try {
                 const queryEmbedding = await generateEmbedding(message);
@@ -229,7 +239,7 @@ async function processInvoicesWithChat(
                 useKBContext = false;
                 similarChunks = [];
             }
-            
+
             // Only use KB context if embeddings worked
             if (useKBContext && similarChunks && similarChunks.length > 0) {
                 kbContext = similarChunks
@@ -242,7 +252,7 @@ async function processInvoicesWithChat(
 
             // Build context - only include KB if embeddings worked
             const combinedContextParts = [];
-            
+
             if (useKBContext) {
                 // Build file list metadata only if KB is working
                 let fileListContext = '';
@@ -256,7 +266,7 @@ async function processInvoicesWithChat(
                         .join('\n');
                     fileListContext = `KNOWLEDGE BASE FILES AVAILABLE:\n${fileList}\n\n`;
                 }
-                
+
                 if (fileListContext) {
                     combinedContextParts.push(fileListContext);
                 }
@@ -264,24 +274,160 @@ async function processInvoicesWithChat(
                     combinedContextParts.push(`RELEVANT CONTENT FROM KNOWLEDGE BASE:\n${kbContext}`);
                 }
             }
-            
+
             combinedContextParts.push(`UPLOADED FILES FOR THIS CONVERSATION:\n${fileContext}`);
 
             const combinedContext = combinedContextParts.join('\n\n---\n\n');
 
-            finalMessage = fullPrompt
-                .replace('{{context}}', combinedContext)
-                .replace('{{message}}', 'Run these invoices for a Base 1 Review');
+            // Dedicated extraction prompt for batch processing
+            finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
+
+${combinedContext}
+
+EXTRACTION RULES:
+1. Extract data from EVERY uploaded file above
+2. All numeric fields MUST be numbers (never strings)
+3. Use null for missing data — NEVER use 0 as placeholder
+4. Dates must be DD/MM/YYYY format
+5. NMI must be 10-11 characters (electricity)
+6. MRIN must be 8-12 characters (gas)
+7. shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
+8. daily_supply_charge in $/day (convert from monthly if needed)
+9. ALWAYS calculate rates if not shown: rate = charges / usage
+10. For waste: populate waste_services array with ALL line items and pickup dates
+11. For oil: populate oil_services array with ALL line items
+
+CLASSIFICATION (Electricity):
+- C&I vs SME: Check usage patterns and account type
+- Bundled vs Unbundled: Check if network charges are separate
+- TOU Structure: 
+  * 3-period (NSW/VIC/ACT): Peak/Shoulder/Off-Peak
+  * 2-period (QLD/SA/WA/NT): Peak/Off-Peak only (shoulder_usage_kwh = null)
+
+BENCHMARKING & SAVINGS:
+Apply these benchmarks to identify savings opportunities:
+
+**Electricity C&I Bundled (3-Period TOU):**
+- Peak Rate: 🟡 >32 c/kWh, 🔴 >35 c/kWh
+- Shoulder Rate: 🟡 >28 c/kWh, 🔴 >30 c/kWh
+- Off-Peak Rate: 🟡 >24 c/kWh, 🔴 >26 c/kWh
+- Daily Supply: 🟡 >$4.00/day, 🔴 >$5.00/day
+- Demand Charges: 🟡 >$15/kVA/month, 🔴 >$18/kVA/month
+- Metering: 🟡 >$1,000/year, 🔴 >$1,200/year
+
+**Electricity C&I Bundled (2-Period TOU):**
+- Peak Rate: 🟡 >32 c/kWh, 🔴 >35 c/kWh
+- Off-Peak Rate: 🟡 >24 c/kWh, 🔴 >26 c/kWh
+- Daily Supply: 🟡 >$4.00/day, 🔴 >$5.00/day
+
+**Electricity SME Bundled (3-Period TOU):**
+- Peak Rate: 🟡 >30 c/kWh, 🔴 >32 c/kWh
+- Shoulder Rate: 🟡 >26 c/kWh, 🔴 >28 c/kWh
+- Off-Peak Rate: 🟡 >22 c/kWh, 🔴 >24 c/kWh
+- Daily Supply: 🟡 >$1.60/day, 🔴 >$1.80/day
+
+**Gas C&I:**
+- Gas Rate: 🟡 >$18.00/GJ, 🔴 >$19.00/GJ
+- Daily Supply: 🟡 >$1.20/day, 🔴 >$1.50/day
+
+**Gas SME:**
+- Gas Rate: 🟡 >$19.50/GJ, 🔴 >$20.50/GJ
+- Daily Supply: 🟡 >$1.00/day, 🔴 >$1.20/day
+
+SAVINGS CALCULATION:
+- Use WARNING threshold (🟡) for conservative estimates
+- Annual usage = (period_usage / billing_days) × 365
+- Annual savings = (current_rate - warning_threshold) × annual_usage
+- Only flag if savings >$200/year
+- Format: "$X,XXX.XX/year"
+
+OUTPUT SCHEMA (return array of these objects):
+
+\`\`\`json
+[
+  {
+    "business_name": string | null,
+    "supplier": string | null,
+    "utility_type": "Electricity" | "Gas" | "Water" | "Waste" | "Oil" | "Cleaning",
+    "site_address": string | null,
+    "nmi": string | null,
+    "mrin": string | null,
+    "account_number": string | null,
+    "invoice_number": string | null,
+    "meter_number": string | null,
+    "invoice_date": string | null,
+    "billing_period_start": string | null,
+    "billing_period_end": string | null,
+    "billing_days": number | null,
+    "peak_usage_kwh": number | null,
+    "shoulder_usage_kwh": number | null,
+    "off_peak_usage_kwh": number | null,
+    "total_usage_kwh": number | null,
+    "peak_rate_c_per_kwh": number | null,
+    "shoulder_rate_c_per_kwh": number | null,
+    "off_peak_rate_c_per_kwh": number | null,
+    "daily_supply_charge": number | null,
+    "demand_kw": number | null,
+    "demand_charges": number | null,
+    "meter_charges": number | null,
+    "total_usage_mj": number | null,
+    "total_usage_gj": number | null,
+    "volume_m3": number | null,
+    "gas_rate_per_gj": number | null,
+    "usage_charges_ex_gst": number | null,
+    "supply_charges_ex_gst": number | null,
+    "network_charges_ex_gst": number | null,
+    "total_charges_ex_gst": number | null,
+    "gst_amount": number | null,
+    "total_inc_gst": number | null,
+    "tariff_type": string | null,
+    "waste_services": [
+      {
+        "service_type": string,
+        "frequency": number | null,
+        "unit_cost": number | null,
+        "total_cost": number | null,
+        "pickup_dates": string[] | null
+      }
+    ] | null,
+    "oil_services": [
+      {
+        "service_type": string,
+        "quantity": number | null,
+        "unit_cost": number | null,
+        "total_cost": number | null
+      }
+    ] | null,
+    "low_hanging_fruit": [
+      {
+        "type": string,
+        "severity": "high" | "medium" | "low",
+        "message": string,
+        "potential_savings": string | null
+      }
+    ],
+    "error": string | null
+  }
+]
+\`\`\`
+
+CRITICAL: Return ONLY the JSON array in a code block. No explanations, no summaries, no greetings — just the data.`;
         } else {
             // No KB, just use uploaded files
-            finalMessage = fullPrompt
-                .replace('{{context}}', `UPLOADED FILES FOR THIS CONVERSATION:\n${fileContext}`)
-                .replace('{{message}}', 'Run these invoices for a Base 1 Review');
+            finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
+
+UPLOADED FILES FOR THIS CONVERSATION:
+${fileContext}
+
+Extract all invoice data following the same rules as above. Return ONLY the JSON array in a code block, no other text.`;
         }
     } else {
-        finalMessage = fullPrompt
-            .replace('{{context}}', `UPLOADED FILES FOR THIS CONVERSATION:\n${fileContext}`)
-            .replace('{{message}}', 'Run these invoices for a Base 1 Review');
+        finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
+
+UPLOADED FILES FOR THIS CONVERSATION:
+${fileContext}
+
+Extract all invoice data following the same rules as above. Return ONLY the JSON array in a code block, no other text.`;
     }
 
     // Initialize Gemini AI
@@ -299,10 +445,15 @@ async function processInvoicesWithChat(
     const response = await result.response;
     const text = response.text();
 
+    console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
+    console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
+
     // Extract JSON from response
     let extractedData: ExtractedInvoice[] = [];
     const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
     const jsonBlockMatches = [...text.matchAll(jsonBlockRegex)];
+
+    console.log(`[Agent Process API] Found ${jsonBlockMatches.length} JSON blocks in response`);
 
     if (jsonBlockMatches.length > 0) {
         try {
@@ -430,14 +581,14 @@ export async function GET() {
  */
 function base64ToFile(base64Data: string, fileName: string, mimeType: string): File {
     // Remove data URL prefix if present (e.g., "data:image/png;base64,")
-    const base64Content = base64Data.includes(',') 
-        ? base64Data.split(',')[1] 
+    const base64Content = base64Data.includes(',')
+        ? base64Data.split(',')[1]
         : base64Data;
-    
+
     // Convert base64 to Uint8Array
     const buffer = Buffer.from(base64Content, 'base64');
     const uint8Array = new Uint8Array(buffer);
-    
+
     // Create File object (File constructor is available in Next.js runtime)
     return new File([uint8Array], fileName, { type: mimeType });
 }
@@ -448,86 +599,92 @@ export async function POST(request: Request) {
         let files: File[] = [];
         let agentId: string | undefined;
 
+        // Extract folder ID if provided
+        let googleDriveFolderId: string | undefined;
+
         // Check if request is JSON (base64 files) or multipart form-data
         if (contentType.includes('application/json')) {
             // JSON payload with base64 files (n8n-friendly)
             const body = await request.json();
             agentId = body.agentId || body.agentid || undefined; // Support both camelCase and lowercase
+            googleDriveFolderId = body.googleDriveFolderId || body.googledrivefolderid || undefined;
 
-            if (!body.files || !Array.isArray(body.files) || body.files.length === 0) {
+            if (!googleDriveFolderId && (!body.files || !Array.isArray(body.files) || body.files.length === 0)) {
                 return NextResponse.json(
-                    { error: 'At least one file is required in the files array' },
+                    { error: 'At least one file is required in the files array (or provide googleDriveFolderId)' },
                     { status: 400 }
                 );
             }
 
-            // Convert base64 files to File objects with validation
-            files = body.files.map((fileData: any, index: number) => {
-                if (!fileData.dataBase64 || !fileData.fileName) {
-                    throw new Error(`File at index ${index}: Each file must have dataBase64 and fileName properties`);
-                }
-
-                // Validate that dataBase64 is actual base64 content, not a reference
-                const base64Str = String(fileData.dataBase64).trim();
-                
-                // Check for filesystem references
-                if (base64Str === 'filesystem-v2' || base64Str.startsWith('filesystem-') || base64Str.length < 100) {
-                    throw new Error(
-                        `File at index ${index} (${fileData.fileName}): dataBase64 appears to be a filesystem reference, not actual base64 content. ` +
-                        `Length: ${base64Str.length}, First 50 chars: ${base64Str.substring(0, 50)}`
-                    );
-                }
-
-                // Remove data URL prefix if present (e.g., "data:image/png;base64,")
-                let cleanBase64 = base64Str;
-                if (base64Str.includes(',')) {
-                    cleanBase64 = base64Str.split(',')[1];
-                }
-
-                // Basic base64 validation (should be alphanumeric + / + = padding, and whitespace)
-                const base64Regex = /^[A-Za-z0-9+/=\s]*$/;
-                if (!base64Regex.test(cleanBase64)) {
-                    throw new Error(
-                        `File at index ${index} (${fileData.fileName}): dataBase64 contains invalid characters. ` +
-                        `First 100 chars: ${cleanBase64.substring(0, 100)}... (total length: ${cleanBase64.length})`
-                    );
-                }
-
-                // Remove whitespace from base64
-                cleanBase64 = cleanBase64.replace(/\s/g, '');
-
-                // Validate minimum length (even a tiny file should be > 50 chars base64)
-                if (cleanBase64.length < 50) {
-                    throw new Error(
-                        `File at index ${index} (${fileData.fileName}): dataBase64 is too short (${cleanBase64.length} chars). ` +
-                        `This suggests the file content is empty or not properly encoded.`
-                    );
-                }
-
-                const mimeType = fileData.mimeType || 'application/octet-stream';
-                
-                try {
-                    // Try to decode base64 to verify it's valid
-                    const testBuffer = Buffer.from(cleanBase64, 'base64');
-                    if (testBuffer.length === 0) {
-                        throw new Error('Decoded buffer is empty - base64 may be invalid or file is empty');
+            // Convert base64 files to File objects with validation (only if files exist)
+            if (body.files && Array.isArray(body.files)) {
+                files = body.files.map((fileData: any, index: number) => {
+                    if (!fileData.dataBase64 || !fileData.fileName) {
+                        throw new Error(`File at index ${index}: Each file must have dataBase64 and fileName properties`);
                     }
-                    
-                    console.log(`[Agent Process API] File ${index}: ${fileData.fileName}, size: ${testBuffer.length} bytes, mimeType: ${mimeType}`);
-                    
-                    return base64ToFile(cleanBase64, fileData.fileName, mimeType);
-                } catch (error: any) {
-                    throw new Error(
-                        `File at index ${index} (${fileData.fileName}): Failed to convert base64 to file. ` +
-                        `Error: ${error.message}. Base64 length: ${cleanBase64.length}, First 20 chars: ${cleanBase64.substring(0, 20)}`
-                    );
-                }
-            });
 
-        } else {
+                    // Validate that dataBase64 is actual base64 content, not a reference
+                    const base64Str = String(fileData.dataBase64).trim();
+
+                    // Check for filesystem references
+                    if (base64Str === 'filesystem-v2' || base64Str.startsWith('filesystem-') || base64Str.length < 100) {
+                        throw new Error(
+                            `File at index ${index} (${fileData.fileName}): dataBase64 appears to be a filesystem reference, not actual base64 content. ` +
+                            `Length: ${base64Str.length}, First 50 chars: ${base64Str.substring(0, 50)}`
+                        );
+                    }
+
+                    // Remove data URL prefix if present (e.g., "data:image/png;base64,")
+                    let cleanBase64 = base64Str;
+                    if (base64Str.includes(',')) {
+                        cleanBase64 = base64Str.split(',')[1];
+                    }
+
+                    // Basic base64 validation (should be alphanumeric + / + = padding, and whitespace)
+                    const base64Regex = /^[A-Za-z0-9+/=\s]*$/;
+                    if (!base64Regex.test(cleanBase64)) {
+                        throw new Error(
+                            `File at index ${index} (${fileData.fileName}): dataBase64 contains invalid characters. ` +
+                            `First 100 chars: ${cleanBase64.substring(0, 100)}... (total length: ${cleanBase64.length})`
+                        );
+                    }
+
+                    // Remove whitespace from base64
+                    cleanBase64 = cleanBase64.replace(/\s/g, '');
+
+                    // Validate minimum length (even a tiny file should be > 50 chars base64)
+                    if (cleanBase64.length < 50) {
+                        throw new Error(
+                            `File at index ${index} (${fileData.fileName}): dataBase64 is too short (${cleanBase64.length} chars). ` +
+                            `This suggests the file content is empty or not properly encoded.`
+                        );
+                    }
+
+                    const mimeType = fileData.mimeType || 'application/octet-stream';
+
+                    try {
+                        // Try to decode base64 to verify it's valid
+                        const testBuffer = Buffer.from(cleanBase64, 'base64');
+                        if (testBuffer.length === 0) {
+                            throw new Error('Decoded buffer is empty - base64 may be invalid or file is empty');
+                        }
+
+                        console.log(`[Agent Process API] File ${index}: ${fileData.fileName}, size: ${testBuffer.length} bytes, mimeType: ${mimeType}`);
+
+                        return base64ToFile(cleanBase64, fileData.fileName, mimeType);
+                    } catch (error: any) {
+                        throw new Error(
+                            `File at index ${index} (${fileData.fileName}): Failed to convert base64 to file. ` +
+                            `Error: ${error.message}. Base64 length: ${cleanBase64.length}, First 20 chars: ${cleanBase64.substring(0, 20)}`
+                        );
+                    }
+                });
+            }
+        } else if (contentType.includes('multipart/form-data')) {
             // Multipart form-data (original implementation)
             const formData = await request.formData();
             agentId = (formData.get('agentId') as string) || undefined;
+            googleDriveFolderId = (formData.get('googleDriveFolderId') as string) || (formData.get('googledrivefolderid') as string) || undefined;
 
             // Get all files from form data
             // FormData can have multiple files with the same key name
@@ -537,7 +694,7 @@ export async function POST(request: Request) {
                     files.push(file);
                 }
             }
-            
+
             // Also check for 'file' (singular) - for single file uploads
             const fileField = formData.getAll('file');
             for (const file of fileField) {
@@ -545,12 +702,51 @@ export async function POST(request: Request) {
                     files.push(file);
                 }
             }
-            
+
             // Also check for any field that starts with 'file' (e.g., 'file0', 'file1', etc.)
             for (const [key, value] of formData.entries()) {
                 if (key.startsWith('file') && value instanceof File && !files.includes(value)) {
                     files.push(value);
                 }
+            }
+        }
+
+        // If Google Drive folder ID is provided, fetch all files from that folder
+        if (googleDriveFolderId) {
+            console.log(`[Agent Process API] Fetching files from Google Drive folder: ${googleDriveFolderId}`);
+            try {
+                const driveFiles = await listFilesInFolder(googleDriveFolderId);
+                console.log(`[Agent Process API] Found ${driveFiles.length} files in folder`);
+
+                const fetchedFiles = await Promise.all(driveFiles.map(async (f) => {
+                    try {
+                        if (f.mimeType === 'application/vnd.google-apps.document') {
+                            const text = await fetchGoogleDoc(f.id);
+                            return new File([text], f.name, { type: 'text/plain' });
+                        } else if (f.mimeType === 'application/vnd.google-apps.spreadsheet') {
+                            const text = await fetchGoogleSheet(f.id);
+                            return new File([text], f.name, { type: 'text/plain' });
+                        } else {
+                            // Binary file (PDF, Image, etc.)
+                            const { buffer, mimeType } = await downloadDriveFile(f.id);
+                            return new File([new Uint8Array(buffer)], f.name, { type: mimeType });
+                        }
+                    } catch (err: any) {
+                        console.error(`[Agent Process API] Failed to fetch file ${f.name} (${f.id}):`, err);
+                        return null;
+                    }
+                }));
+
+                // Add successfully fetched files to the files array
+                for (const file of fetchedFiles) {
+                    if (file) files.push(file);
+                }
+            } catch (err: any) {
+                console.error(`[Agent Process API] Error listing files in folder ${googleDriveFolderId}:`, err);
+                return NextResponse.json(
+                    { error: `Failed to fetch files from Google Drive folder: ${err.message}` },
+                    { status: 500 }
+                );
             }
         }
 
@@ -567,9 +763,9 @@ export async function POST(request: Request) {
             }
         }
 
-        if (files.length === 0) {
+        if (files.length === 0 && !googleDriveFolderId) {
             return NextResponse.json(
-                { error: 'At least one file is required' },
+                { error: 'At least one file or a googleDriveFolderId is required' },
                 { status: 400 }
             );
         }
@@ -634,4 +830,5 @@ export async function POST(request: Request) {
         );
     }
 }
+
 

@@ -86,11 +86,37 @@ export async function listFilesInFolder(folderId: string): Promise<Array<{ id: s
     const auth = getGoogleAuth();
     const drive = google.drive({ version: 'v3', auth });
 
-    const response = await drive.files.list({
-        q: `'${folderId}' in parents and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.google-apps.spreadsheet') and trashed = false`,
-        fields: 'files(id, name, modifiedTime, webViewLink, mimeType)',
-        pageSize: 100, // Limit to 100 files to avoid overwhelming
+    // First, list ALL files to debug
+    const debugResponse = await drive.files.list({
+        q: `'${folderId}' in parents and trashed = false`,
+        fields: 'files(id, name, mimeType)',
+        pageSize: 100,
     });
+
+    console.log(`[Document Fetcher] Found ${debugResponse.data.files?.length || 0} total files in folder ${folderId}`);
+    if (debugResponse.data.files && debugResponse.data.files.length > 0) {
+        console.log('[Document Fetcher] File types:', debugResponse.data.files.map(f => `${f.name}: ${f.mimeType}`));
+    }
+
+    const response = await drive.files.list({
+        // Include common document and image types
+        q: `'${folderId}' in parents and (
+            mimeType = 'application/vnd.google-apps.document' or 
+            mimeType = 'application/vnd.google-apps.spreadsheet' or
+            mimeType = 'application/pdf' or
+            mimeType = 'image/jpeg' or
+            mimeType = 'image/png' or
+            mimeType = 'image/webp' or
+            mimeType = 'application/msword' or
+            mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or
+            mimeType = 'text/csv' or
+            mimeType = 'text/plain'
+        ) and trashed = false`,
+        fields: 'files(id, name, modifiedTime, webViewLink, mimeType)',
+        pageSize: 100,
+    });
+
+    console.log(`[Document Fetcher] Found ${response.data.files?.length || 0} supported files after filtering`);
 
     return (response.data.files || []).map(f => ({
         id: f.id || '',
@@ -113,5 +139,34 @@ export async function getFolderMetadata(folderId: string) {
 
     return {
         name: response.data.name || 'Knowledge Base',
+    };
+}
+
+/**
+ * Download a file from Google Drive as a Buffer
+ */
+export async function downloadDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string; name: string }> {
+    const auth = getGoogleAuth();
+    const drive = google.drive({ version: 'v3', auth });
+
+    // Get metadata first
+    const metadata = await drive.files.get({
+        fileId: fileId,
+        fields: 'name,mimeType',
+    });
+
+    const name = metadata.data.name || 'document';
+    const mimeType = metadata.data.mimeType || 'application/octet-stream';
+
+    // Download content
+    const response = await drive.files.get(
+        { fileId: fileId, alt: 'media' },
+        { responseType: 'arraybuffer' }
+    );
+
+    return {
+        buffer: Buffer.from(response.data as ArrayBuffer),
+        mimeType,
+        name,
     };
 }
