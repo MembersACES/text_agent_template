@@ -4,13 +4,13 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 // Generate embeddings for text using Gemini
 export async function generateEmbedding(text: string): Promise<number[]> {
-    // Try text-embedding-005
+    // Use text-embedding-004 (the latest available embedding model)
     try {
-        const model = genAI.getGenerativeModel({ model: 'text-embedding-005' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-embedding-001' });
         const result = await model.embedContent(text);
         return result.embedding.values;
     } catch (error: any) {
-        console.warn(`[Embeddings] text-embedding-005 failed: ${error.message}`);
+        console.warn(`[Embeddings] text-embedding-004 failed: ${error.message}`);
         throw new Error(`Embedding model not available: ${error.message}. Please check your Gemini API configuration.`);
     }
 }
