@@ -43,6 +43,9 @@ CRITICAL INSTRUCTIONS:
    - For other utilities: Follow the corresponding guide
 
 4. **BENCHMARKING & SAVINGS** (MANDATORY - use values from knowledge base):
+   - **CRITICAL: YOU MUST EXTRACT ALL BENCHMARK VALUES FROM THE KNOWLEDGE BASE**
+   - **DO NOT USE ANY HARDCODED VALUES** - Common values like $1,000, $1,200, $4.00, $15.00, $700, etc. are FORBIDDEN
+   - **IF THE KB DOES NOT CONTAIN A BENCHMARK VALUE, DO NOT CREATE AN ENTRY** - Only add low_hanging_fruit entries when you can extract actual benchmark values from the KB
    - **YOU MUST CHECK EVERY BENCHMARK** from the MARKET BENCHMARKS section in the guide document
    - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
    - **FOR EACH INVOICE, CHECK ALL OF THESE:**
@@ -56,34 +59,63 @@ CRITICAL INSTRUCTIONS:
         - Calculate savings: (current_rate - KB_benchmark_threshold) / 100 × annual_usage
      
      b) **DAILY SUPPLY CHARGE** (extract from KB guide):
-        - Find the daily supply charge benchmark in the KB
-        - Compare daily_supply_charge to the KB benchmark value
-        - Calculate savings: (current_daily_supply - KB_benchmark) × 365
+        - **FORBIDDEN VALUES: DO NOT USE $2.00, $3.00, $4.00, $5.00, or any other hardcoded dollar amounts**
+        - Search the KB for "Daily Supply Charge", "Supply Charge", or "Daily Supply" in MARKET BENCHMARKS
+        - The KB will show THREE different values:
+          * Base benchmark (e.g., "Daily Supply: $2.00-$5.00/day" - use the lower end of the range, e.g., $2.00/day, as the TARGET benchmark)
+          * 🟡 Warning threshold (e.g., "🟡 Medium severity if >$4.00/day") - for severity determination
+          * 🔴 Critical threshold (e.g., "🔴 High severity if >$5.00/day") - for severity determination
+        - The KB will specify different values for C&I vs SME customers - use the correct one based on customer type
+        - **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
+        - Compare daily_supply_charge to the KB benchmark thresholds (use the EXACT values from KB)
+        - Determine severity based on KB thresholds:
+          * If daily_supply > KB 🔴 threshold (from KB): severity = "high"
+          * If daily_supply > KB 🟡 threshold (from KB): severity = "medium"
+        - Calculate savings using the BASE BENCHMARK (not the warning threshold):
+          * Savings = (current_daily_supply - KB_base_benchmark) × 365
+          * Example: If KB says "Daily Supply: $2.00-$5.00/day" (use $2.00/day as base) and current = $20.80/day, then savings = ($20.80 - $2.00) × 365 = $6,862/year
+          * **CRITICAL: Use the BASE benchmark value (lower end of range, e.g., $2.00/day) for savings calculation, NOT the warning threshold ($4.00/day)**
+        - In the message field, include:
+          * The actual KB base benchmark value (e.g., "exceed KB benchmark of $2.00/day")
+          * The severity threshold that was exceeded (e.g., "exceeds KB critical threshold of $5.00/day")
+          * Example: "Daily supply charge $20.80/day exceeds KB benchmark of $2.00/day and critical threshold of $5.00/day"
+        - **VALIDATION: Before creating the entry, verify that ALL values (base benchmark, warning threshold, critical threshold) match values you can see in the KB context above**
      
      c) **METER CHARGES (DMA - Daily Metering Access)** (CRITICAL - extract from KB):
+        - **FORBIDDEN VALUES: DO NOT USE $1,000, $1,200, $800, $900, $700, or any other hardcoded dollar amounts**
         - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
         - Step 2: Find the DMA/Metering benchmark values in the knowledge base
-          * Look for "Metering" or "DMA" sections in the MARKET BENCHMARKS
-          * Extract the 🟡 (warning) and 🔴 (critical) threshold values from the KB
-          * The KB will specify different thresholds for C&I vs SME customers
-          * DO NOT use hardcoded values - you MUST extract these from the KB
-        - Step 3: Compare annual meter charges to the KB benchmark thresholds
+          * Search the KB context for "Metering", "DMA", "Daily Metering Access", or "meter charges" sections
+          * Look in MARKET BENCHMARKS tables - the KB will show THREE different values:
+            - Base benchmark (e.g., "Metering: $700/year") - this is the TARGET benchmark
+            - 🟡 Warning threshold (e.g., "🟡 Medium severity if >$1,000/year") - for severity determination
+            - 🔴 Critical threshold (e.g., "🔴 High severity if >$1,200/year") - for severity determination
+          * The KB will specify different values for C&I vs SME customers - use the correct one based on customer type
+          * **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
+        - Step 3: Compare annual meter charges to the KB benchmark thresholds (use the EXACT values from KB)
         - Step 4: Determine severity based on KB thresholds:
-          * If annual > KB 🔴 threshold: severity = "high"
-          * If annual > KB 🟡 threshold: severity = "medium"
-        - Step 5: If exceeds threshold, calculate savings = annual_meter_charges - KB_warning_threshold
+          * If annual > KB 🔴 threshold (from KB): severity = "high"
+          * If annual > KB 🟡 threshold (from KB): severity = "medium"
+        - Step 5: Calculate savings using the BASE BENCHMARK (not the warning threshold):
+          * Savings = annual_meter_charges - KB_base_benchmark
+          * Example: If KB says "Metering: $700/year" and annual = $1,560/year, then savings = $1,560 - $700 = $860/year
+          * **CRITICAL: Use the BASE benchmark value (e.g., $700/year) for savings calculation, NOT the warning threshold ($1,000/year)**
         - Step 6: Add to low_hanging_fruit with type: "High Meter Charges"
-        - Example workflow (all values must come from KB):
-          * Step 1: Calculate annual = (meter_charges / billing_days) × 365
-          * Step 2: Extract KB thresholds from knowledge base (e.g., if KB says "🟡 >$X/year, 🔴 >$Y/year")
-          * Step 3: Compare annual to KB thresholds to determine severity
-          * Step 4: Calculate savings = annual_meter_charges - KB_warning_threshold (from KB)
-          * Step 5: Add entry with message referencing the actual KB threshold values
+        - Step 7: In the message field, you MUST include:
+          * The actual KB base benchmark value (e.g., "exceed KB benchmark of $700/year")
+          * The severity threshold that was exceeded (e.g., "exceeds KB critical threshold of $1,200/year")
+          * Example: "Annual meter charges $1,560/year exceed KB benchmark of $700/year and critical threshold of $1,200/year"
+        - **VALIDATION: Before creating the entry, verify that ALL values (base benchmark, warning threshold, critical threshold) match values you can see in the KB context above**
      
      d) **DEMAND CHARGES** (extract from KB guide):
+        - **FORBIDDEN VALUES: DO NOT USE $15.00, $18.00, or any other hardcoded dollar amounts**
         - Annualize: (demand_charges / billing_days) × 365
+        - Search the KB for "Demand Charges", "Demand", or "kVA" in MARKET BENCHMARKS
         - Find demand charge benchmark in KB (may be per kVA/month or per kVA/year)
-        - Compare to KB benchmark value
+        - Extract the EXACT benchmark threshold values as they appear in the KB
+        - **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
+        - Compare to KB benchmark value (use the EXACT value from KB)
+        - In the message field, include the actual KB threshold value you extracted
    
    - **CALCULATION FORMULAS** (use KB benchmark values):
      * Annual usage = (period_usage / billing_days) × 365
@@ -181,12 +213,18 @@ CRITICAL FINAL INSTRUCTIONS:
 1. Return ONLY the JSON array in a code block. No explanations, no summaries, no greetings — just the data.
 2. **DO NOT create placeholder entries in low_hanging_fruit** - only add entries when benchmarks are ACTUALLY exceeded
 3. **DO NOT use "Benchmarking" as a type** - use specific types like "High Meter Charges", "High Peak Rate", etc.
-4. **Every entry in low_hanging_fruit MUST have:**
+4. **ABSOLUTE PROHIBITION ON HARDCODED VALUES:**
+   - **NEVER use $1,000, $1,200, $800, $900, $700 for meter charges**
+   - **NEVER use $4.00, $5.00 for daily supply charges**
+   - **NEVER use $15.00, $18.00 for demand charges**
+   - **NEVER use any dollar or cent amounts unless you can point to the EXACT value in the KB context above**
+   - **If you cannot find a benchmark value in the KB, DO NOT create an entry - it's better to have no entry than a wrong one**
+5. **Every entry in low_hanging_fruit MUST have:**
    - A specific type (not "Benchmarking")
    - A severity of "high" or "medium" (not "low")
    - A calculated potential_savings value (not empty)
-   - A descriptive message
-5. **If no benchmarks are exceeded, set low_hanging_fruit to [] (empty array) or null**`;
+   - A descriptive message that includes the ACTUAL KB threshold value (not a hardcoded one)
+6. **If no benchmarks are exceeded OR if KB values cannot be found, set low_hanging_fruit to [] (empty array) or null**`;
 }
 
 /**
