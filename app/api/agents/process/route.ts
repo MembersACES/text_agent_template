@@ -126,7 +126,7 @@ async function processFile(file: File): Promise<ProcessedFile> {
         fileName.endsWith('.json');
 
     const fileBuffer = Buffer.from(await file.arrayBuffer());
-    let content: string;
+    let content: string = '';
 
     if (isTextBased) {
         content = fileBuffer.toString('utf-8');
@@ -137,19 +137,40 @@ async function processFile(file: File): Promise<ProcessedFile> {
             throw new Error('GEMINI_API_KEY not configured');
         }
 
+        // Check file size (Gemini has limits - base64 increases size by ~33%)
+        const fileSizeMB = fileBuffer.length / (1024 * 1024);
+        const maxSizeMB = 20; // Gemini typically supports up to 20MB files
+        if (fileSizeMB > maxSizeMB) {
+            throw new Error(`File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (${maxSizeMB}MB) for Gemini Vision API`);
+        }
+
         const base64Data = fileBuffer.toString('base64');
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-        const result = await model.generateContent([
-            {
-                inlineData: {
-                    mimeType: mimeType,
-                    data: base64Data,
-                },
+        const model = genAI.getGenerativeModel({ 
+            model: 'gemini-2.5-flash',
+            generationConfig: {
+                maxOutputTokens: 8192,
+                temperature: 0.1,
             },
-            {
-                text: `Extract ALL text from this document exactly as written. 
+        });
+
+        // Retry logic for network failures
+        const maxRetries = 3;
+        let extractionSuccessful = false;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[Agent Process API] Attempting to extract text from ${fileName} (attempt ${attempt}/${maxRetries}, size: ${fileSizeMB.toFixed(2)}MB)...`);
+                
+                const result = await model.generateContent([
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64Data,
+                        },
+                    },
+                    {
+                        text: `Extract ALL text from this document exactly as written. 
 Include every number, date, address, account number, rate, charge, and total.
 Preserve the structure (tables, sections, line items).
 If this is an invoice, make sure to capture:
@@ -158,13 +179,39 @@ If this is an invoice, make sure to capture:
 - All charges and totals
 - Dates, billing periods, meter numbers
 Return ONLY the extracted text, no commentary.`
-            },
-        ]);
+                    },
+                ]);
 
-        const response = await result.response;
-        content = response.text();
-        console.log(`[Agent Process API] Extracted ${content.length} chars from ${fileName} (${mimeType})`);
-        console.log(`[Agent Process API] Preview: ${content.substring(0, 200)}...`);
+                const response = await result.response;
+                content = response.text();
+                extractionSuccessful = true;
+                console.log(`[Agent Process API] Extracted ${content.length} chars from ${fileName} (${mimeType})`);
+                console.log(`[Agent Process API] Preview: ${content.substring(0, 200)}...`);
+                break; // Success, exit retry loop
+            } catch (error: any) {
+                const errorMessage = error.message || String(error);
+                console.error(`[Agent Process API] Attempt ${attempt}/${maxRetries} failed for ${fileName}:`, errorMessage);
+                
+                // If it's the last attempt, throw the error
+                if (attempt === maxRetries) {
+                    throw new Error(
+                        `Failed to extract text from ${fileName} after ${maxRetries} attempts. ` +
+                        `Last error: ${errorMessage}. ` +
+                        `This may be due to network issues, API rate limits, or file size. ` +
+                        `File size: ${fileSizeMB.toFixed(2)}MB`
+                    );
+                }
+                
+                // Wait before retrying (exponential backoff)
+                const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
+                console.log(`[Agent Process API] Waiting ${waitTime}ms before retry...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+        }
+        
+        if (!extractionSuccessful) {
+            throw new Error(`Failed to extract text from ${fileName} - all retry attempts exhausted`);
+        }
     }
 
     if (!content || !content.trim()) {
@@ -225,20 +272,43 @@ async function processInvoicesWithChat(
     if (useKnowledgeBase) {
         const kb = await getCachedKnowledgeBase(agentId);
         if (kb) {
-            const message = 'Run these invoices for a Base 1 Review';
+            // Use guide documents directly (like chat API) to ensure benchmark sections are included
+            const guideDocuments = ['ELECTRICITY_GUIDE', 'GAS_GUIDE', 'WATER_GUIDE', 'WASTE_GUIDE', 'OIL_GUIDE'];
+            
+            // Get all chunks from guide documents
+            const guideChunks = kb.chunks.filter((chunk: any) => {
+                const source = chunk.source || '';
+                return guideDocuments.some(guide => source.includes(guide));
+            });
+            
             let similarChunks: any[] = [];
             let useKBContext = false;
 
-            // Try to get embeddings, but don't fail if embedding model is unavailable
-            try {
-                const queryEmbedding = await generateEmbedding(message);
-                similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
+            if (guideChunks.length > 0) {
+                // Prioritize chunks that contain "benchmark" or "metering" to ensure benchmark sections are included
+                similarChunks = guideChunks
+                    .map(chunk => ({
+                        ...chunk,
+                        priority: (chunk.text.toLowerCase().includes('benchmark') || 
+                                 chunk.text.toLowerCase().includes('metering') ||
+                                 chunk.text.toLowerCase().includes('dma') ||
+                                 chunk.text.toLowerCase().includes('market benchmark')) ? 1 : 0
+                    }))
+                    .sort((a, b) => {
+                        // Sort by priority first, then by source (prefer ELECTRICITY_GUIDE)
+                        if (a.priority !== b.priority) return b.priority - a.priority;
+                        const aIsElec = (a.source || '').includes('ELECTRICITY_GUIDE');
+                        const bIsElec = (b.source || '').includes('ELECTRICITY_GUIDE');
+                        if (aIsElec && !bIsElec) return -1;
+                        if (!aIsElec && bIsElec) return 1;
+                        return 0;
+                    })
+                    .slice(0, 20); // Get top 20 chunks from guides
+                
                 useKBContext = true;
-            } catch (embeddingError: any) {
-                // Embedding model not available - skip KB context entirely
-                console.warn(`[Agent Process API] Embedding generation failed (${embeddingError.message}), skipping KB context and using only uploaded files`);
-                useKBContext = false;
-                similarChunks = [];
+                console.log(`[Agent Process API] Found ${guideChunks.length} guide document chunks, using ${similarChunks.length} for benchmarking`);
+            } else {
+                console.warn(`[Agent Process API] No guide document chunks found. Available sources: ${[...new Set(kb.chunks.map((c: any) => c.source))].join(', ')}`);
             }
 
             // Only use KB context if embeddings worked
@@ -249,6 +319,14 @@ async function processInvoicesWithChat(
                         return `[Source ${i + 1}${sourceInfo}]:\n${chunk.text}`;
                     })
                     .join('\n\n---\n\n');
+                
+                // Log KB context being used for debugging
+                console.log(`[Agent Process API] Using ${similarChunks.length} KB chunks for benchmarking`);
+                similarChunks.forEach((chunk: any, i: number) => {
+                    console.log(`  KB Chunk ${i + 1}: ${chunk.source || 'Unknown'} (${chunk.text.substring(0, 100)}...)`);
+                });
+            } else {
+                console.warn(`[Agent Process API] No KB context available - benchmarks may not be accurate`);
             }
 
             // Build context - only include KB if embeddings worked
@@ -315,42 +393,55 @@ CRITICAL INSTRUCTIONS:
    - For Gas: Follow classification rules in GAS_GUIDE
    - For other utilities: Follow the corresponding guide
 
-4. **BENCHMARKING & SAVINGS** (MANDATORY - use values from knowledge base):
-   - **YOU MUST CHECK EVERY BENCHMARK** from the MARKET BENCHMARKS section in the guide document
+4. **BENCHMARKING & SAVINGS** (CRITICAL - ALL VALUES MUST COME FROM KNOWLEDGE BASE):
+   - **DO NOT use any hardcoded benchmark values from this prompt**
+   - **YOU MUST extract ALL benchmark values from the KNOWLEDGE BASE documents provided above**
+   - Look for sections like "MARKET BENCHMARKS", "Benchmark Tables", "DMA benchmark", etc. in the knowledge base
    - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
-   - **FOR EACH INVOICE, CHECK ALL OF THESE:**
+   - **FOR EACH INVOICE, CHECK ALL OF THESE (using values from KB only):**
      
-     a) **RATE BENCHMARKS** (from guide):
-        - Peak rate: Compare peak_rate_c_per_kwh to benchmark (e.g., C&I: 🟡 >32 c/kWh, 🔴 >35 c/kWh)
-        - Shoulder rate: Compare shoulder_rate_c_per_kwh (if 3-period TOU)
-        - Off-peak rate: Compare off_peak_rate_c_per_kwh
-        - Gas rate: Compare gas_rate_per_gj (for gas invoices)
-        - Calculate savings: (current_rate - warning_threshold) / 100 × annual_usage
+     a) **RATE BENCHMARKS** (extract from KB guide):
+        - Find the benchmark values for peak, shoulder, and off-peak rates in the KB
+        - Compare peak_rate_c_per_kwh to the benchmark value from KB
+        - Compare shoulder_rate_c_per_kwh (if 3-period TOU) to KB benchmark
+        - Compare off_peak_rate_c_per_kwh to KB benchmark
+        - For gas: Compare gas_rate_per_gj to KB benchmark
+        - Calculate savings: (current_rate - KB_benchmark_threshold) / 100 × annual_usage
      
-     b) **DAILY SUPPLY CHARGE** (from guide):
-        - Compare daily_supply_charge directly to benchmark (e.g., C&I: 🟡 >$4.00/day, 🔴 >$5.00/day)
-        - Calculate savings: (current_daily_supply - warning_threshold) × 365
+     b) **DAILY SUPPLY CHARGE** (extract from KB guide):
+        - Find the daily supply charge benchmark in the KB
+        - Compare daily_supply_charge to the KB benchmark value
+        - Calculate savings: (current_daily_supply - KB_benchmark) × 365
      
-     c) **METER CHARGES** (CRITICAL - MUST CHECK):
+     c) **METER CHARGES (DMA - Daily Metering Access)** (CRITICAL - extract from KB):
         - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
-        - Step 2: Compare annual meter charges to benchmark from guide:
-          * C&I: 🟡 >$1,000/year, 🔴 >$1,200/year
-          * SME: 🟡 >$800/year, 🔴 >$900/year
-        - Step 3: If exceeds threshold, calculate savings = annual_meter_charges - warning_threshold
-        - Step 4: Add to low_hanging_fruit with type: "High Meter Charges"
-        - Example: If meter_charges = $132.49, billing_days = 31:
+        - Step 2: Find the DMA/Metering benchmark value in the knowledge base
+          * Look for "Metering: $X/year" in the MARKET BENCHMARKS section
+          * The benchmark is the BASE VALUE (e.g., "$700/year")
+          * DO NOT use the severity thresholds ($1,000, $1,200) as the benchmark
+          * The severity thresholds are only for determining 🟡 vs 🔴 flags
+        - Step 3: Compare annual meter charges to the KB benchmark value (the base value, not the threshold)
+        - Step 4: If annual meter charges exceed KB benchmark, calculate savings = annual_meter_charges - KB_benchmark
+        - Step 5: Determine severity based on thresholds:
+          * If annual > $1,200/year: severity = "high" (🔴)
+          * If annual > $1,000/year: severity = "medium" (🟡)
+          * But ALWAYS use $700/year as the benchmark for savings calculation
+        - Step 6: Add to low_hanging_fruit with type: "High Meter Charges"
+        - Example (using KB values):
           * Annual = ($132.49 / 31) × 365 = $1,560/year
-          * Exceeds C&I 🔴 threshold of $700/year
+          * KB Benchmark = $700/year (from "Metering: $700/year" in KB)
           * Savings = $1,560 - $700 = $860/year
-          * Add: { type: "High Meter Charges", severity: "high", message: "Annual meter charges $1,560/year exceed benchmark", potential_savings: "$560/year" }
+          * Severity = "high" (because $1,560 > $1,200 threshold)
+          * Add: { type: "High Meter Charges", severity: "high", message: "Annual meter charges $1,560/year exceed DMA benchmark of $700/year", potential_savings: "$860/year" }
      
-     d) **DEMAND CHARGES** (C&I only, if present):
+     d) **DEMAND CHARGES** (extract from KB guide):
         - Annualize: (demand_charges / billing_days) × 365
-        - Compare to benchmark (e.g., 🟡 >$15/kVA/month, 🔴 >$18/kVA/month)
+        - Find demand charge benchmark in KB (may be per kVA/month or per kVA/year)
+        - Compare to KB benchmark value
    
-   - **CALCULATION FORMULAS** (from guide):
+   - **CALCULATION FORMULAS** (these are correct, but use KB values):
      * Annual usage = (period_usage / billing_days) × 365
-     * Annual savings for rates = (current_rate - warning_threshold) / 100 × annual_usage
+     * Annual savings for rates = (current_rate - KB_benchmark_threshold) / 100 × annual_usage
      * Annual meter charges = (meter_charges / billing_days) × 365
      * Annual demand charges = (demand_charges / billing_days) × 365
    
@@ -567,6 +658,34 @@ Return ONLY the JSON array in a code block, no other text.`;
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
     }
+
+    // Log detailed benchmarking information for debugging
+    console.log(`[Agent Process API] Extracted ${extractedData.length} invoice(s)`);
+    extractedData.forEach((invoice, index) => {
+        console.log(`\n[Agent Process API] Invoice ${index + 1} Details:`);
+        console.log(`  - Business: ${invoice.business_name || 'N/A'}`);
+        console.log(`  - NMI: ${invoice.nmi || 'N/A'}`);
+        console.log(`  - Meter Charges: $${invoice.meter_charges || 0}`);
+        console.log(`  - Billing Days: ${invoice.billing_days || 0}`);
+        
+        if (invoice.meter_charges && invoice.billing_days) {
+            const annualMeterCharges = (invoice.meter_charges / invoice.billing_days) * 365;
+            const benchmark = 700;
+            const savings = annualMeterCharges > benchmark ? annualMeterCharges - benchmark : 0;
+            console.log(`  - Annual Meter Charges: $${annualMeterCharges.toFixed(2)}/year`);
+            console.log(`  - DMA Benchmark: $${benchmark}/year`);
+            console.log(`  - Calculated Savings: $${savings.toFixed(2)}/year`);
+        }
+        
+        if (invoice.low_hanging_fruit && invoice.low_hanging_fruit.length > 0) {
+            console.log(`  - Savings Opportunities: ${invoice.low_hanging_fruit.length}`);
+            invoice.low_hanging_fruit.forEach((opp: any, oppIndex: number) => {
+                console.log(`    ${oppIndex + 1}. ${opp.type}: ${opp.potential_savings || 'N/A'} - ${opp.message || 'N/A'}`);
+            });
+        } else {
+            console.log(`  - Savings Opportunities: None found`);
+        }
+    });
 
     return extractedData;
 }
@@ -804,30 +923,44 @@ export async function POST(request: Request) {
         };
 
         // Build report data
+        const savingsSummary = calculateSavingsSummary(extractedInvoices);
+        
+        // Log savings summary calculation details
+        console.log(`\n[Agent Process API] Savings Summary Calculation:`);
+        console.log(`  - Total Raw Savings: $${savingsSummary.conservative / 0.7}`);
+        console.log(`  - Conservative (70%): $${savingsSummary.conservative.toFixed(2)}`);
+        console.log(`  - Moderate (85%): $${savingsSummary.moderate.toFixed(2)}`);
+        console.log(`  - Optimistic (100%): $${savingsSummary.optimistic.toFixed(2)}`);
+        console.log(`  - Critical Issues: ${savingsSummary.criticalIssues.length}`);
+        savingsSummary.criticalIssues.forEach((issue, idx) => {
+            console.log(`    ${idx + 1}. ${issue.issue}: $${issue.savings.toFixed(2)}/year (${issue.severity})`);
+        });
+        
         const reportData: ReportData = {
             businessInfo,
             invoices: extractedInvoices,
             generatedAt: new Date().toISOString(),
-            savingsSummary: calculateSavingsSummary(extractedInvoices),
+            savingsSummary,
         };
 
         // Generate Excel workbook
         console.log(`[Agent Process API] Generating Excel report...`);
         const excelBuffer = await generateBase1Workbook(reportData);
 
-        // Check if JSON format is requested (query param or Accept header)
+        // Check if additional metadata is requested (query param or Accept header)
         const url = new URL(request.url);
         const formatParam = url.searchParams.get('format');
         const acceptHeader = request.headers.get('accept') || '';
-        const wantsJson = formatParam === 'json' || acceptHeader.includes('application/json');
+        const includeMetadata = formatParam === 'json' || acceptHeader.includes('application/json');
 
         // Return Excel file as response
         const fileName = `base1-review-${businessInfo.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.xlsx`;
 
-        // If JSON format requested, return JSON with Excel base64 and HTML email
-        if (wantsJson) {
-            const excelBase64 = excelBuffer.toString('base64');
+        // If metadata requested, return JSON with Excel as base64 + HTML email + metadata
+        // Note: Using base64 for n8n compatibility (multipart is not easily parsed by n8n)
+        if (includeMetadata) {
             const htmlEmail = generateReportEmail(reportData);
+            const excelBase64 = excelBuffer.toString('base64');
 
             return NextResponse.json({
                 excelBase64,
@@ -842,7 +975,7 @@ export async function POST(request: Request) {
             });
         }
 
-        // Otherwise, return binary Excel (backward-compatible)
+        // Otherwise, return binary Excel only (backward-compatible)
         const uint8Array = new Uint8Array(excelBuffer);
 
         return new NextResponse(uint8Array, {

@@ -213,7 +213,16 @@ export function generateReportEmail(data: ReportData): string {
                             <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">
                                 We recommend scheduling a consultation to discuss these findings in detail and develop a customized action plan to maximize your savings.
                             </p>
-                            <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #333333;">
+                            <div style="background-color: #f8f9fa; border-left: 4px solid #366092; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #366092;">Next Steps</h3>
+                                <p style="margin: 0 0 12px 0; font-size: 16px; line-height: 1.6; color: #333333;">
+                                    To proceed, please find attached our <strong>Letter of Authority Document</strong> and <strong>Service Fee Agreement Documents</strong>.
+                                </p>
+                                <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #333333;">
+                                    The Letter of Authority enables us to speak with your current providers to obtain contract and usage information, allowing us to provide actual quotes rather than estimates. The Service Fee Agreement outlines our fee structure, which is the first month's savings for any service or goods we bring in and/or 20% of new revenues we bring in.
+                                </p>
+                            </div>
+                            <p style="margin: 16px 0 0 0; font-size: 16px; line-height: 1.6; color: #333333;">
                                 Please don't hesitate to contact us if you have any questions or would like to proceed with implementing these recommendations.
                             </p>
                         </td>
@@ -225,8 +234,14 @@ export function generateReportEmail(data: ReportData): string {
                             <p style="margin: 0 0 8px 0; font-size: 12px; color: #666666;">
                                 Report generated: ${formatDate(generatedAt)}
                             </p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #333333;">
+                                Australian Circular Economy Solution
+                            </p>
+                            <p style="margin: 0 0 4px 0; font-size: 12px; color: #666666;">
+                                470 St Kilda Road, Melbourne VIC 3004
+                            </p>
                             <p style="margin: 0; font-size: 12px; color: #666666;">
-                                ACES Solutions - Utility Cost Optimization Specialists
+                                Ph: 1300 938 638 | Website: <a href="https://acesolutions.com.au" style="color: #366092; text-decoration: none;">acesolutions.com.au</a>
                             </p>
                         </td>
                     </tr>
