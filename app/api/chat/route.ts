@@ -5,6 +5,8 @@ import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { findSimilarChunks } from '@/lib/document-chunker';
 import { traceable } from 'langsmith/traceable';
 import { getPromptTemplate, getSystemSettings } from '@/lib/gcs-client';
+import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/prompts';
+import { extractJsonFromResponse } from '@/lib/json-parser';
 
 const retrieveContext = traceable(async (query: string, agentId?: string) => {
     const kb = await getCachedKnowledgeBase(agentId);
@@ -22,182 +24,6 @@ const generateAIResponse = traceable(async ({ model, prompt }: { model: any, pro
     const response = await result.response;
     return response.text();
 }, { name: "generate_answer" });
-
-/**
- * Build the invoice extraction prompt for Base 1 Review processing
- * Uses knowledge base documents for rules and benchmarks instead of hardcoding
- */
-function buildInvoiceExtractionPrompt(context: string): string {
-    return `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
-
-${context}
-
-CRITICAL INSTRUCTIONS:
-
-1. **USE KNOWLEDGE BASE DOCUMENTS**: 
-   - The context above includes knowledge base documents (ELECTRICITY_GUIDE, GAS_GUIDE, WATER_GUIDE, WASTE_GUIDE, OIL_GUIDE, etc.)
-   - You MUST follow the classification frameworks, extraction requirements, benchmarks, and savings calculation methods from these guides
-   - For electricity invoices: Use ELECTRICITY_GUIDE for classification (C&I vs SME), billing structure (bundled vs unbundled), TOU structure (2-period vs 3-period), benchmarks, and rate calculations
-   - For gas invoices: Use GAS_GUIDE for classification, benchmarks, and extraction requirements
-   - For other utilities: Use the corresponding guide document
-
-2. **EXTRACTION REQUIREMENTS**:
-   - Extract data from EVERY uploaded file above
-   - All numeric fields MUST be numbers (never strings)
-   - Use null for missing data — NEVER use 0 as placeholder
-   - Dates must be DD/MM/YYYY format
-   - NMI must be 10-11 characters (electricity) - validate length
-   - MRIN must be 8-12 characters (gas) - validate length
-   - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
-   - daily_supply_charge in $/day (convert from monthly if needed)
-   - ALWAYS calculate rates if not shown: rate = charges / usage (follow rate calculation methods from the guides)
-   - For waste: populate waste_services array with ALL line items and pickup dates
-   - For oil: populate oil_services array with ALL line items
-
-3. **CLASSIFICATION** (follow the guide documents):
-   - For Electricity: Follow the CLASSIFICATION FRAMEWORK in ELECTRICITY_GUIDE
-     * Step 1: Identify Customer Type (C&I / SME / Residential)
-     * Step 2: Identify Billing Structure (Bundled / Unbundled)
-     * Step 3: Identify TOU Structure (2-period / 3-period) based on state
-   - For Gas: Follow classification rules in GAS_GUIDE
-   - For other utilities: Follow the corresponding guide
-
-4. **BENCHMARKING & SAVINGS** (MANDATORY - use values from knowledge base):
-   - **YOU MUST CHECK EVERY BENCHMARK** from the MARKET BENCHMARKS section in the guide document
-   - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
-   - **FOR EACH INVOICE, CHECK ALL OF THESE:**
-     
-     a) **RATE BENCHMARKS** (from guide):
-        - Peak rate: Compare peak_rate_c_per_kwh to benchmark (e.g., C&I: 🟡 >32 c/kWh, 🔴 >35 c/kWh)
-        - Shoulder rate: Compare shoulder_rate_c_per_kwh (if 3-period TOU)
-        - Off-peak rate: Compare off_peak_rate_c_per_kwh
-        - Gas rate: Compare gas_rate_per_gj (for gas invoices)
-        - Calculate savings: (current_rate - warning_threshold) / 100 × annual_usage
-     
-     b) **DAILY SUPPLY CHARGE** (from guide):
-        - Compare daily_supply_charge directly to benchmark (e.g., C&I: 🟡 >$4.00/day, 🔴 >$5.00/day)
-        - Calculate savings: (current_daily_supply - warning_threshold) × 365
-     
-     c) **METER CHARGES** (CRITICAL - MUST CHECK):
-        - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
-        - Step 2: Compare annual meter charges to benchmark from guide:
-          * C&I: 🟡 >$1,000/year, 🔴 >$1,200/year
-          * SME: 🟡 >$800/year, 🔴 >$900/year
-        - Step 3: If exceeds threshold, calculate savings = annual_meter_charges - warning_threshold
-        - Step 4: Add to low_hanging_fruit with type: "High Meter Charges"
-        - Example: If meter_charges = $132.49, billing_days = 31:
-          * Annual = ($132.49 / 31) × 365 = $1,560/year
-          * Exceeds C&I 🔴 threshold of $1,200/year
-          * Savings = $1,560 - $1,000 = $560/year
-          * Add: { type: "High Meter Charges", severity: "high", message: "Annual meter charges $1,560/year exceed benchmark", potential_savings: "$560/year" }
-     
-     d) **DEMAND CHARGES** (C&I only, if present):
-        - Annualize: (demand_charges / billing_days) × 365
-        - Compare to benchmark (e.g., 🟡 >$15/kVA/month, 🔴 >$18/kVA/month)
-   
-   - **CALCULATION FORMULAS** (from guide):
-     * Annual usage = (period_usage / billing_days) × 365
-     * Annual savings for rates = (current_rate - warning_threshold) / 100 × annual_usage
-     * Annual meter charges = (meter_charges / billing_days) × 365
-     * Annual demand charges = (demand_charges / billing_days) × 365
-   
-   - **POPULATE low_hanging_fruit ARRAY** (CRITICAL):
-     * **DO NOT create placeholder or empty entries**
-     * **ONLY add entries when benchmarks are ACTUALLY exceeded**
-     * For EVERY finding that exceeds benchmarks, add an entry with this EXACT structure:
-       {
-         "type": "High Meter Charges" | "High Peak Rate" | "High Shoulder Rate" | "High Off-Peak Rate" | "High Daily Supply" | "High Demand Charges" | "High Gas Rate",
-         "severity": "high" | "medium",
-         "message": "Descriptive message explaining the issue (e.g., 'Annual meter charges $1,560/year exceed C&I benchmark of $1,200/year')",
-         "potential_savings": "$X,XXX.XX/year" (calculated savings amount)
-       }
-     * Use severity: "high" for 🔴 threshold exceeded, "medium" for 🟡 threshold exceeded
-     * Include potential_savings in format "$X,XXX.XX/year" (must be a calculated number, not empty)
-     * Only include if savings >$200/year
-     * **If no benchmarks are exceeded, low_hanging_fruit should be an empty array [] or null**
-     * **DO NOT use generic types like "Benchmarking" - use specific types like "High Meter Charges"**
-
-OUTPUT SCHEMA (return array of these objects):
-
-\`\`\`json
-[
-  {
-    "business_name": string | null,
-    "supplier": string | null,
-    "utility_type": "Electricity" | "Gas" | "Water" | "Waste" | "Oil" | "Cleaning",
-    "site_address": string | null,
-    "nmi": string | null,
-    "mrin": string | null,
-    "account_number": string | null,
-    "invoice_number": string | null,
-    "meter_number": string | null,
-    "invoice_date": string | null,
-    "billing_period_start": string | null,
-    "billing_period_end": string | null,
-    "billing_days": number | null,
-    "peak_usage_kwh": number | null,
-    "shoulder_usage_kwh": number | null,
-    "off_peak_usage_kwh": number | null,
-    "total_usage_kwh": number | null,
-    "peak_rate_c_per_kwh": number | null,
-    "shoulder_rate_c_per_kwh": number | null,
-    "off_peak_rate_c_per_kwh": number | null,
-    "daily_supply_charge": number | null,
-    "demand_kw": number | null,
-    "demand_charges": number | null,
-    "meter_charges": number | null,
-    "total_usage_mj": number | null,
-    "total_usage_gj": number | null,
-    "volume_m3": number | null,
-    "gas_rate_per_gj": number | null,
-    "usage_charges_ex_gst": number | null,
-    "supply_charges_ex_gst": number | null,
-    "network_charges_ex_gst": number | null,
-    "total_charges_ex_gst": number | null,
-    "gst_amount": number | null,
-    "total_inc_gst": number | null,
-    "tariff_type": string | null,
-    "waste_services": [
-      {
-        "service_type": string,
-        "frequency": number | null,
-        "unit_cost": number | null,
-        "total_cost": number | null,
-        "pickup_dates": string[] | null
-      }
-    ] | null,
-    "oil_services": [
-      {
-        "service_type": string,
-        "quantity": number | null,
-        "unit_cost": number | null,
-        "total_cost": number | null
-      }
-    ] | null,
-    "low_hanging_fruit": [
-      {
-        "type": string,
-        "severity": "high" | "medium" | "low",
-        "message": string,
-        "potential_savings": string | null
-      }
-    ],
-    "error": string | null
-  }
-]
-\`\`\`
-
-CRITICAL FINAL INSTRUCTIONS:
-1. Return ONLY the JSON array in a code block. No explanations, no summaries, no greetings — just the data.
-2. **DO NOT create placeholder entries in low_hanging_fruit** - only add entries when benchmarks are ACTUALLY exceeded
-3. **DO NOT use "Benchmarking" as a type** - use specific types like "High Meter Charges", "High Peak Rate", etc.
-4. **Every entry in low_hanging_fruit MUST have:**
-   - A specific type (not "Benchmarking")
-   - A severity of "high" or "medium" (not "low")
-   - A calculated potential_savings value (not empty)
-   - A descriptive message
-5. **If no benchmarks are exceeded, set low_hanging_fruit to [] (empty array) or null**`;
-}
 
 export async function POST(request: Request) {
     try {
@@ -429,7 +255,7 @@ export async function POST(request: Request) {
             // If this is an invoice processing request, use the extraction prompt
             if (isInvoiceProcessingRequest) {
                 console.log(`[Chat API] Detected invoice processing request, using extraction prompt`);
-                finalMessage = buildInvoiceExtractionPrompt(contextParts.join('\n\n---\n\n'));
+                finalMessage = buildNoKBExtractionPrompt(fileContext);
             } else {
                 finalMessage = fullPrompt
                     .replace('{{context}}', contextParts.join('\n\n---\n\n'))
@@ -457,119 +283,47 @@ export async function POST(request: Request) {
         let cleanedResponse = text.replace(/\[GENERATE_REPORT\]/gi, '').trim();
         let generateReport = false;
 
-        // Check for JSON code blocks in the response - extract ALL blocks, not just the first
-        // Use ([\s\S]*?) instead of (\{[\s\S]*?\}) to capture all content, including nested JSON
-        const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
-        const jsonBlockMatches = [...text.matchAll(jsonBlockRegex)];
-        
-        if (jsonBlockMatches.length > 0) {
-            try {
-                // Parse all JSON blocks into an array
-                const parsedBlocks = jsonBlockMatches
-                    .map(match => {
-                        try {
-                            let jsonContent = match[1].trim();
-                            
-                            // If content doesn't start with { or [, try to find JSON within the content
-                            if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
-                                // Try to find a JSON object or array within the content
-                                const jsonObjectMatch = jsonContent.match(/\{[\s\S]*\}/);
-                                const jsonArrayMatch = jsonContent.match(/\[[\s\S]*\]/);
-                                
-                                if (jsonObjectMatch) {
-                                    jsonContent = jsonObjectMatch[0];
-                                } else if (jsonArrayMatch) {
-                                    jsonContent = jsonArrayMatch[0];
-                                } else {
-                                    return null; // No JSON found
-                                }
-                            }
-                            
-                            // Try to parse, but if it fails, try to extract just the JSON part
-                            try {
-                                return JSON.parse(jsonContent);
-                            } catch (parseError) {
-                                // If parsing fails, try to find the actual JSON boundaries
-                                // Look for the first { or [ and find its matching closing brace/bracket
-                                const startChar = jsonContent[0];
-                                const endChar = startChar === '{' ? '}' : ']';
-                                
-                                let depth = 0;
-                                let jsonStart = -1;
-                                let jsonEnd = -1;
-                                
-                                for (let i = 0; i < jsonContent.length; i++) {
-                                    if (jsonContent[i] === startChar) {
-                                        if (jsonStart === -1) jsonStart = i;
-                                        depth++;
-                                    } else if (jsonContent[i] === endChar) {
-                                        depth--;
-                                        if (depth === 0 && jsonStart !== -1) {
-                                            jsonEnd = i;
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                if (jsonStart !== -1 && jsonEnd !== -1) {
-                                    const extractedJson = jsonContent.substring(jsonStart, jsonEnd + 1);
-                                    return JSON.parse(extractedJson);
-                                }
-                                
-                                throw parseError; // Re-throw if we couldn't extract valid JSON
-                            }
-                        } catch (e) {
-                            console.error('Failed to parse JSON block:', e);
-                            return null;
-                        }
-                    })
-                    .filter(block => block !== null); // Remove any failed parses
-                
-                if (parsedBlocks.length > 0) {
-                    // If only one block, return it as a single object (backward compatible)
-                    // If multiple blocks, return as array
-                    extractedData = parsedBlocks.length === 1 ? parsedBlocks[0] : parsedBlocks;
-                    
-                    // Remove all JSON blocks from the response text (very aggressive pattern)
-                    // First pass: Remove code blocks
-                    cleanedResponse = text
-                        .replace(/```json\s*[\s\S]*?```/gi, '') // Remove ```json ... ```
-                        .replace(/```\s*\{[\s\S]*?\}\s*```/g, '') // Remove ``` {...} ```
-                        .replace(/```\s*\[[\s\S]*?\]\s*```/g, '') // Remove ``` [...] ```
-                        .replace(/```\s*[\s\S]*?```/g, '') // Remove any remaining ``` ... ```
-                        .trim();
-                    
-                    // Second pass: Remove complete JSON objects/arrays
-                    cleanedResponse = cleanedResponse
-                        .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects (multiline)
-                        .replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '') // Remove [{...}] JSON arrays
-                        .replace(/\{\s*[\s\S]*?\}/g, '') // More aggressive: any {...} blocks
-                        .trim();
-                    
-                    // Third pass: Remove JSON fragments and artifacts (like ",],\n"error": null\n}")
-                    cleanedResponse = cleanedResponse
-                        .replace(/,\s*\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove trailing JSON fragments
-                        .replace(/\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove ] ,"error": null}
-                        .replace(/"error"\s*:\s*null\s*\}/g, '') // Remove "error": null}
-                        .replace(/^\s*[,\[\{]\s*$/gm, '') // Remove lines with just brackets/commas
-                        .replace(/^\s*"[^"]*"\s*:\s*[^,}\]]+\s*[,}\]]\s*$/gm, '') // Remove JSON key-value lines
-                        .replace(/^\s*json\s*$/gmi, '') // Remove standalone "json" lines
-                        .replace(/\n\s*json\s*\n/g, '\n') // Remove "json" on its own line
-                        .replace(/\n\s*\n\s*\n/g, '\n\n') // Remove excessive blank lines
-                        .replace(/^\s*,\s*$/gm, '') // Remove lines with just commas
-                        .trim();
-                    
-                    console.log(`[Chat API] Extracted ${parsedBlocks.length} JSON block(s) from response`);
-                }
-            } catch (e) {
-                console.error('Failed to parse extracted JSON:', e);
-            }
+        // Use shared JSON extraction utility
+        const extractedJson = extractJsonFromResponse(text);
+        if (extractedJson.length > 0) {
+            extractedData = extractedJson.length === 1 ? extractedJson[0] : extractedJson;
+            
+            // Remove all JSON blocks from the response text (very aggressive pattern)
+            // First pass: Remove code blocks
+            cleanedResponse = text
+                .replace(/```json\s*[\s\S]*?```/gi, '') // Remove ```json ... ```
+                .replace(/```\s*\{[\s\S]*?\}\s*```/g, '') // Remove ``` {...} ```
+                .replace(/```\s*\[[\s\S]*?\]\s*```/g, '') // Remove ``` [...] ```
+                .replace(/```\s*[\s\S]*?```/g, '') // Remove any remaining ``` ... ```
+                .trim();
+            
+            // Second pass: Remove complete JSON objects/arrays
+            cleanedResponse = cleanedResponse
+                .replace(/\{\s*"[\s\S]*?"\s*\}/g, '') // Remove {...} JSON objects (multiline)
+                .replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '') // Remove [{...}] JSON arrays
+                .replace(/\{\s*[\s\S]*?\}/g, '') // More aggressive: any {...} blocks
+                .trim();
+            
+            // Third pass: Remove JSON fragments and artifacts (like ",],\n"error": null\n}")
+            cleanedResponse = cleanedResponse
+                .replace(/,\s*\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove trailing JSON fragments
+                .replace(/\]\s*,\s*"error"\s*:\s*null\s*\}/g, '') // Remove ] ,"error": null}
+                .replace(/"error"\s*:\s*null\s*\}/g, '') // Remove "error": null}
+                .replace(/^\s*[,\[\{]\s*$/gm, '') // Remove lines with just brackets/commas
+                .replace(/^\s*"[^"]*"\s*:\s*[^,}\]]+\s*[,}\]]\s*$/gm, '') // Remove JSON key-value lines
+                .replace(/^\s*json\s*$/gmi, '') // Remove standalone "json" lines
+                .replace(/\n\s*json\s*\n/g, '\n') // Remove "json" on its own line
+                .replace(/\n\s*\n\s*\n/g, '\n\n') // Remove excessive blank lines
+                .replace(/^\s*,\s*$/gm, '') // Remove lines with just commas
+                .trim();
+            
+            console.log(`[Chat API] Extracted ${extractedJson.length} JSON block(s) from response`);
         }
 
         const extractedCount = extractedData 
             ? (Array.isArray(extractedData) ? extractedData.length : 1)
             : 0;
-        console.log(`[Chat API] JSON blocks found: ${jsonBlockMatches.length}, extractedData: ${extractedCount} invoice(s)`);
+        console.log(`[Chat API] Extracted ${extractedCount} invoice(s) from response`);
         
         // Log low_hanging_fruit data for debugging
         if (extractedData) {
@@ -617,10 +371,10 @@ export async function POST(request: Request) {
             ...(extractedData && { extractedData }),
             ...(generateReport && { generateReport }),
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error in chat API:', error);
         return NextResponse.json(
-            { error: 'Failed to process message' },
+            { error: error.message || 'Failed to process message' },
             { status: 500 }
         );
     }

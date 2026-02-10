@@ -483,7 +483,7 @@ function buildWaterSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[])
             inv.invoice_date || '',
             inv.supplier || '',
             inv.site_address || '',
-            inv.volume_m3 ? (inv.volume_m3 * 1000) : 0, // Convert m3 to kL
+            inv.volume_m3 || 0, // 1 m3 = 1 kL (no conversion needed)
             inv.total_inc_gst || 0
         ]);
     });
@@ -694,12 +694,42 @@ function buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
         if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
             inv.low_hanging_fruit.forEach(opp => {
                 const flag = opp.severity === 'high' ? '🔴' : opp.severity === 'medium' ? '🟡' : '🟢';
+                
+                // Calculate current rate/cost based on opportunity type
+                let currentRate = '';
+                if (opp.type === 'High Peak Rate' && inv.peak_rate_c_per_kwh !== null) {
+                    currentRate = `${inv.peak_rate_c_per_kwh.toFixed(2)} c/kWh`;
+                } else if (opp.type === 'High Shoulder Rate' && inv.shoulder_rate_c_per_kwh !== null) {
+                    currentRate = `${inv.shoulder_rate_c_per_kwh.toFixed(2)} c/kWh`;
+                } else if (opp.type === 'High Off-Peak Rate' && inv.off_peak_rate_c_per_kwh !== null) {
+                    currentRate = `${inv.off_peak_rate_c_per_kwh.toFixed(2)} c/kWh`;
+                } else if (opp.type === 'High Daily Supply' && inv.daily_supply_charge !== null) {
+                    currentRate = `$${inv.daily_supply_charge.toFixed(2)}/day`;
+                } else if (opp.type === 'High Meter Charges' && inv.meter_charges !== null && inv.billing_days !== null) {
+                    const annualMeterCharges = (inv.meter_charges / inv.billing_days) * 365;
+                    currentRate = `$${annualMeterCharges.toFixed(2)}/year`;
+                } else if (opp.type === 'High Demand Charges' && inv.demand_charges !== null && inv.billing_days !== null) {
+                    const annualDemandCharges = (inv.demand_charges / inv.billing_days) * 365;
+                    currentRate = `$${annualDemandCharges.toFixed(2)}/year`;
+                } else if (opp.type === 'High Gas Rate' && inv.gas_rate_per_gj !== null) {
+                    currentRate = `$${inv.gas_rate_per_gj.toFixed(2)}/GJ`;
+                }
+                
+                // Try to extract benchmark from message (e.g., "exceed benchmark of $700/year")
+                let benchmark = '';
+                if (opp.message) {
+                    const benchmarkMatch = opp.message.match(/(?:benchmark|threshold)\s+(?:of\s+)?([$]?[\d,]+\.?\d*\s*(?:\/year|\/day|\/GJ|c\/kWh)?)/i);
+                    if (benchmarkMatch) {
+                        benchmark = benchmarkMatch[1];
+                    }
+                }
+                
                 sheet.addRow([
                     inv.utility_type,
                     opp.type,
                     flag,
-                    '', // Current rate - would need calculation
-                    '', // Market benchmark
+                    currentRate,
+                    benchmark,
                     opp.potential_savings || ''
                 ]);
             });

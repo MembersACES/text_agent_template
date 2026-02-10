@@ -76,10 +76,10 @@ import { generateReportEmail } from '@/lib/email-generator';
 import { getPromptConfig } from '@/lib/gcs-client';
 import { getSystemSettings } from '@/lib/gcs-client';
 import { getPromptTemplate } from '@/lib/gcs-client';
-import { generateEmbedding } from '@/lib/embeddings';
 import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
-import { findSimilarChunks } from '@/lib/document-chunker';
 import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/report-types';
+import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/prompts';
+import { extractJsonFromResponse } from '@/lib/json-parser';
 import {
     listFilesInFolder,
     downloadDriveFile,
@@ -96,8 +96,10 @@ interface ProcessedFile {
 /**
  * Process a single file - extract text content
  * Reuses logic from /api/uploads
+ * @param file - The file to process
+ * @param model - Optional shared Gemini model instance (for efficiency when processing multiple files)
  */
-async function processFile(file: File): Promise<ProcessedFile> {
+async function processFile(file: File, model?: any): Promise<ProcessedFile> {
     const fileName = file.name || 'uploaded-file';
     const mimeType = file.type || 'application/octet-stream';
 
@@ -145,14 +147,19 @@ async function processFile(file: File): Promise<ProcessedFile> {
         }
 
         const base64Data = fileBuffer.toString('base64');
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ 
-            model: 'gemini-2.5-flash',
-            generationConfig: {
-                maxOutputTokens: 8192,
-                temperature: 0.1,
-            },
-        });
+        
+        // Use shared model if provided, otherwise create a new one
+        let geminiModel = model;
+        if (!geminiModel) {
+            const genAI = new GoogleGenerativeAI(apiKey);
+            geminiModel = genAI.getGenerativeModel({ 
+                model: 'gemini-2.5-flash',
+                generationConfig: {
+                    maxOutputTokens: 8192,
+                    temperature: 0.1,
+                },
+            });
+        }
 
         // Retry logic for network failures
         const maxRetries = 3;
@@ -162,7 +169,7 @@ async function processFile(file: File): Promise<ProcessedFile> {
             try {
                 console.log(`[Agent Process API] Attempting to extract text from ${fileName} (attempt ${attempt}/${maxRetries}, size: ${fileSizeMB.toFixed(2)}MB)...`);
                 
-                const result = await model.generateContent([
+                const result = await geminiModel.generateContent([
                     {
                         inlineData: {
                             mimeType: mimeType,
@@ -262,9 +269,8 @@ async function processInvoicesWithChat(
     const agentPrompt = await getPromptTemplate(agentId);
     const fullPrompt = `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
 
-    // Check if knowledge base should be used
-    const config = await getPromptConfig(agentId);
-    const useKnowledgeBase = true; // Always use KB if available
+    // Always use KB if available
+    const useKnowledgeBase = true;
 
     let finalMessage = '';
     let kbContext = '';
@@ -358,209 +364,15 @@ async function processInvoicesWithChat(
 
             const combinedContext = combinedContextParts.join('\n\n---\n\n');
 
-            // Dedicated extraction prompt for batch processing
-            finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
-
-${combinedContext}
-
-CRITICAL INSTRUCTIONS:
-
-1. **USE KNOWLEDGE BASE DOCUMENTS**: 
-   - The context above includes knowledge base documents (ELECTRICITY_GUIDE, GAS_GUIDE, WATER_GUIDE, WASTE_GUIDE, OIL_GUIDE, etc.)
-   - You MUST follow the classification frameworks, extraction requirements, benchmarks, and savings calculation methods from these guides
-   - For electricity invoices: Use ELECTRICITY_GUIDE for classification (C&I vs SME), billing structure (bundled vs unbundled), TOU structure (2-period vs 3-period), benchmarks, and rate calculations
-   - For gas invoices: Use GAS_GUIDE for classification, benchmarks, and extraction requirements
-   - For other utilities: Use the corresponding guide document
-
-2. **EXTRACTION REQUIREMENTS**:
-   - Extract data from EVERY uploaded file above
-   - All numeric fields MUST be numbers (never strings)
-   - Use null for missing data — NEVER use 0 as placeholder
-   - Dates must be DD/MM/YYYY format
-   - NMI must be 10-11 characters (electricity) - validate length
-   - MRIN must be 8-12 characters (gas) - validate length
-   - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
-   - daily_supply_charge in $/day (convert from monthly if needed)
-   - ALWAYS calculate rates if not shown: rate = charges / usage (follow rate calculation methods from the guides)
-   - For waste: populate waste_services array with ALL line items and pickup dates
-   - For oil: populate oil_services array with ALL line items
-
-3. **CLASSIFICATION** (follow the guide documents):
-   - For Electricity: Follow the CLASSIFICATION FRAMEWORK in ELECTRICITY_GUIDE
-     * Step 1: Identify Customer Type (C&I / SME / Residential)
-     * Step 2: Identify Billing Structure (Bundled / Unbundled)
-     * Step 3: Identify TOU Structure (2-period / 3-period) based on state
-   - For Gas: Follow classification rules in GAS_GUIDE
-   - For other utilities: Follow the corresponding guide
-
-4. **BENCHMARKING & SAVINGS** (CRITICAL - ALL VALUES MUST COME FROM KNOWLEDGE BASE):
-   - **DO NOT use any hardcoded benchmark values from this prompt**
-   - **YOU MUST extract ALL benchmark values from the KNOWLEDGE BASE documents provided above**
-   - Look for sections like "MARKET BENCHMARKS", "Benchmark Tables", "DMA benchmark", etc. in the knowledge base
-   - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
-   - **FOR EACH INVOICE, CHECK ALL OF THESE (using values from KB only):**
-     
-     a) **RATE BENCHMARKS** (extract from KB guide):
-        - Find the benchmark values for peak, shoulder, and off-peak rates in the KB
-        - Compare peak_rate_c_per_kwh to the benchmark value from KB
-        - Compare shoulder_rate_c_per_kwh (if 3-period TOU) to KB benchmark
-        - Compare off_peak_rate_c_per_kwh to KB benchmark
-        - For gas: Compare gas_rate_per_gj to KB benchmark
-        - Calculate savings: (current_rate - KB_benchmark_threshold) / 100 × annual_usage
-     
-     b) **DAILY SUPPLY CHARGE** (extract from KB guide):
-        - Find the daily supply charge benchmark in the KB
-        - Compare daily_supply_charge to the KB benchmark value
-        - Calculate savings: (current_daily_supply - KB_benchmark) × 365
-     
-     c) **METER CHARGES (DMA - Daily Metering Access)** (CRITICAL - extract from KB):
-        - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
-        - Step 2: Find the DMA/Metering benchmark value in the knowledge base
-          * Look for "Metering: $X/year" in the MARKET BENCHMARKS section
-          * The benchmark is the BASE VALUE (e.g., "$700/year")
-          * DO NOT use the severity thresholds ($1,000, $1,200) as the benchmark
-          * The severity thresholds are only for determining 🟡 vs 🔴 flags
-        - Step 3: Compare annual meter charges to the KB benchmark value (the base value, not the threshold)
-        - Step 4: If annual meter charges exceed KB benchmark, calculate savings = annual_meter_charges - KB_benchmark
-        - Step 5: Determine severity based on thresholds:
-          * If annual > $1,200/year: severity = "high" (🔴)
-          * If annual > $1,000/year: severity = "medium" (🟡)
-          * But ALWAYS use $700/year as the benchmark for savings calculation
-        - Step 6: Add to low_hanging_fruit with type: "High Meter Charges"
-        - Example (using KB values):
-          * Annual = ($132.49 / 31) × 365 = $1,560/year
-          * KB Benchmark = $700/year (from "Metering: $700/year" in KB)
-          * Savings = $1,560 - $700 = $860/year
-          * Severity = "high" (because $1,560 > $1,200 threshold)
-          * Add: { type: "High Meter Charges", severity: "high", message: "Annual meter charges $1,560/year exceed DMA benchmark of $700/year", potential_savings: "$860/year" }
-     
-     d) **DEMAND CHARGES** (extract from KB guide):
-        - Annualize: (demand_charges / billing_days) × 365
-        - Find demand charge benchmark in KB (may be per kVA/month or per kVA/year)
-        - Compare to KB benchmark value
-   
-   - **CALCULATION FORMULAS** (these are correct, but use KB values):
-     * Annual usage = (period_usage / billing_days) × 365
-     * Annual savings for rates = (current_rate - KB_benchmark_threshold) / 100 × annual_usage
-     * Annual meter charges = (meter_charges / billing_days) × 365
-     * Annual demand charges = (demand_charges / billing_days) × 365
-   
-   - **POPULATE low_hanging_fruit ARRAY**:
-     * For EVERY finding that exceeds benchmarks, add an entry
-     * Use severity: "high" for 🔴, "medium" for 🟡
-     * Include potential_savings in format "$X,XXX.XX/year"
-     * Only include if savings >$200/year
-     * Example types: "High Peak Rate", "High Meter Charges", "High Daily Supply", "High Demand Charges", "High Gas Rate"
-
-OUTPUT SCHEMA (return array of these objects):
-
-\`\`\`json
-[
-  {
-    "business_name": string | null,
-    "supplier": string | null,
-    "utility_type": "Electricity" | "Gas" | "Water" | "Waste" | "Oil" | "Cleaning",
-    "site_address": string | null,
-    "nmi": string | null,
-    "mrin": string | null,
-    "account_number": string | null,
-    "invoice_number": string | null,
-    "meter_number": string | null,
-    "invoice_date": string | null,
-    "billing_period_start": string | null,
-    "billing_period_end": string | null,
-    "billing_days": number | null,
-    "peak_usage_kwh": number | null,
-    "shoulder_usage_kwh": number | null,
-    "off_peak_usage_kwh": number | null,
-    "total_usage_kwh": number | null,
-    "peak_rate_c_per_kwh": number | null,
-    "shoulder_rate_c_per_kwh": number | null,
-    "off_peak_rate_c_per_kwh": number | null,
-    "daily_supply_charge": number | null,
-    "demand_kw": number | null,
-    "demand_charges": number | null,
-    "meter_charges": number | null,
-    "total_usage_mj": number | null,
-    "total_usage_gj": number | null,
-    "volume_m3": number | null,
-    "gas_rate_per_gj": number | null,
-    "usage_charges_ex_gst": number | null,
-    "supply_charges_ex_gst": number | null,
-    "network_charges_ex_gst": number | null,
-    "total_charges_ex_gst": number | null,
-    "gst_amount": number | null,
-    "total_inc_gst": number | null,
-    "tariff_type": string | null,
-    "waste_services": [
-      {
-        "service_type": string,
-        "frequency": number | null,
-        "unit_cost": number | null,
-        "total_cost": number | null,
-        "pickup_dates": string[] | null
-      }
-    ] | null,
-    "oil_services": [
-      {
-        "service_type": string,
-        "quantity": number | null,
-        "unit_cost": number | null,
-        "total_cost": number | null
-      }
-    ] | null,
-    "low_hanging_fruit": [
-      {
-        "type": string,
-        "severity": "high" | "medium" | "low",
-        "message": string,
-        "potential_savings": string | null
-      }
-    ],
-    "error": string | null
-  }
-]
-\`\`\`
-
-CRITICAL: Return ONLY the JSON array in a code block. No explanations, no summaries, no greetings — just the data.`;
+            // Use shared extraction prompt
+            finalMessage = buildInvoiceExtractionPrompt(combinedContext);
         } else {
-            // No KB, just use uploaded files
-            finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
-
-UPLOADED FILES FOR THIS CONVERSATION:
-${fileContext}
-
-NOTE: Knowledge base guides are not available. Use standard extraction rules:
-- Extract data from EVERY uploaded file above
-- All numeric fields MUST be numbers (never strings)
-- Use null for missing data — NEVER use 0 as placeholder
-- Dates must be DD/MM/YYYY format
-- NMI must be 10-11 characters (electricity)
-- MRIN must be 8-12 characters (gas)
-- shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT)
-- daily_supply_charge in $/day (convert from monthly if needed)
-- ALWAYS calculate rates if not shown: rate = charges / usage
-
-Return ONLY the JSON array in a code block, no other text.`;
+            // No KB, just use uploaded files - use shared no-KB prompt
+            finalMessage = buildNoKBExtractionPrompt(fileContext);
         }
     } else {
-        finalMessage = `You are a utility invoice data extraction system for ACES Solutions. Extract structured data from ALL provided invoices and return ONLY a JSON array.
-
-UPLOADED FILES FOR THIS CONVERSATION:
-${fileContext}
-
-NOTE: Knowledge base guides are not available. Use standard extraction rules:
-- Extract data from EVERY uploaded file above
-- All numeric fields MUST be numbers (never strings)
-- Use null for missing data — NEVER use 0 as placeholder
-- Dates must be DD/MM/YYYY format
-- NMI must be 10-11 characters (electricity)
-- MRIN must be 8-12 characters (gas)
-- shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT)
-- daily_supply_charge in $/day (convert from monthly if needed)
-- ALWAYS calculate rates if not shown: rate = charges / usage
-
-Return ONLY the JSON array in a code block, no other text.`;
+        // KB disabled - use shared no-KB prompt
+        finalMessage = buildNoKBExtractionPrompt(fileContext);
     }
 
     // Initialize Gemini AI
@@ -581,79 +393,8 @@ Return ONLY the JSON array in a code block, no other text.`;
     console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
     console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
 
-    // Extract JSON from response
-    let extractedData: ExtractedInvoice[] = [];
-    const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
-    const jsonBlockMatches = [...text.matchAll(jsonBlockRegex)];
-
-    console.log(`[Agent Process API] Found ${jsonBlockMatches.length} JSON blocks in response`);
-
-    if (jsonBlockMatches.length > 0) {
-        try {
-            const parsedBlocks = jsonBlockMatches
-                .map(match => {
-                    try {
-                        let jsonContent = match[1].trim();
-
-                        if (!jsonContent.startsWith('{') && !jsonContent.startsWith('[')) {
-                            const jsonObjectMatch = jsonContent.match(/\{[\s\S]*\}/);
-                            const jsonArrayMatch = jsonContent.match(/\[[\s\S]*\]/);
-
-                            if (jsonObjectMatch) {
-                                jsonContent = jsonObjectMatch[0];
-                            } else if (jsonArrayMatch) {
-                                jsonContent = jsonArrayMatch[0];
-                            } else {
-                                return null;
-                            }
-                        }
-
-                        try {
-                            return JSON.parse(jsonContent);
-                        } catch (parseError) {
-                            const startChar = jsonContent[0];
-                            const endChar = startChar === '{' ? '}' : ']';
-
-                            let depth = 0;
-                            let jsonStart = -1;
-                            let jsonEnd = -1;
-
-                            for (let i = 0; i < jsonContent.length; i++) {
-                                if (jsonContent[i] === startChar) {
-                                    if (jsonStart === -1) jsonStart = i;
-                                    depth++;
-                                } else if (jsonContent[i] === endChar) {
-                                    depth--;
-                                    if (depth === 0 && jsonStart !== -1) {
-                                        jsonEnd = i;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (jsonStart !== -1 && jsonEnd !== -1) {
-                                const extractedJson = jsonContent.substring(jsonStart, jsonEnd + 1);
-                                return JSON.parse(extractedJson);
-                            }
-
-                            throw parseError;
-                        }
-                    } catch (e) {
-                        console.error('Failed to parse JSON block:', e);
-                        return null;
-                    }
-                })
-                .filter(block => block !== null);
-
-            if (parsedBlocks.length > 0) {
-                extractedData = parsedBlocks.length === 1
-                    ? (Array.isArray(parsedBlocks[0]) ? parsedBlocks[0] : [parsedBlocks[0]])
-                    : parsedBlocks;
-            }
-        } catch (e) {
-            console.error('Failed to parse extracted JSON:', e);
-        }
-    }
+    // Extract JSON from response using shared utility
+    const extractedData: ExtractedInvoice[] = extractJsonFromResponse(text);
 
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
@@ -670,11 +411,10 @@ Return ONLY the JSON array in a code block, no other text.`;
         
         if (invoice.meter_charges && invoice.billing_days) {
             const annualMeterCharges = (invoice.meter_charges / invoice.billing_days) * 365;
-            const benchmark = 700;
-            const savings = annualMeterCharges > benchmark ? annualMeterCharges - benchmark : 0;
+            // Note: Actual benchmark should come from KB - this is just for logging comparison
+            // The LLM uses KB values, so this log may not match if KB benchmark differs
             console.log(`  - Annual Meter Charges: $${annualMeterCharges.toFixed(2)}/year`);
-            console.log(`  - DMA Benchmark: $${benchmark}/year`);
-            console.log(`  - Calculated Savings: $${savings.toFixed(2)}/year`);
+            console.log(`  - Note: DMA Benchmark should be extracted from KB (not logged here to avoid hardcoding)`);
         }
         
         if (invoice.low_hanging_fruit && invoice.low_hanging_fruit.length > 0) {
@@ -836,6 +576,19 @@ export async function POST(request: Request) {
             }
         }
 
+        // Check agent configuration for upload permission BEFORE processing files
+        if (agentId) {
+            const config = await getPromptConfig(agentId);
+            const allowUploads = config.config?.allowFileUploads === true;
+
+            if (!allowUploads) {
+                return NextResponse.json(
+                    { error: 'File uploads are disabled for this agent' },
+                    { status: 403 }
+                );
+            }
+        }
+
         // If Google Drive folder ID is provided, fetch all files from that folder
         if (googleDriveFolderId) {
             console.log(`[Agent Process API] Fetching files from Google Drive folder: ${googleDriveFolderId}`);
@@ -875,19 +628,6 @@ export async function POST(request: Request) {
             }
         }
 
-        // Check agent configuration for upload permission
-        if (agentId) {
-            const config = await getPromptConfig(agentId);
-            const allowUploads = config.config?.allowFileUploads === true;
-
-            if (!allowUploads) {
-                return NextResponse.json(
-                    { error: 'File uploads are disabled for this agent' },
-                    { status: 403 }
-                );
-            }
-        }
-
         if (files.length === 0 && !googleDriveFolderId) {
             return NextResponse.json(
                 { error: 'At least one file or a googleDriveFolderId is required' },
@@ -897,9 +637,36 @@ export async function POST(request: Request) {
 
         console.log(`[Agent Process API] Processing ${files.length} file(s) for agent: ${agentId || 'default'}`);
 
+        // Create shared Gemini model instance for file processing (if needed for binary files)
+        const apiKey = process.env.GEMINI_API_KEY;
+        let sharedModel: any = undefined;
+        if (apiKey) {
+            // Check if we have any binary files that need Gemini Vision
+            const hasBinaryFiles = files.some(file => {
+                const mimeType = file.type || 'application/octet-stream';
+                return !mimeType.startsWith('text/') && 
+                       mimeType !== 'application/json' && 
+                       !file.name.endsWith('.md') && 
+                       !file.name.endsWith('.txt') && 
+                       !file.name.endsWith('.csv') && 
+                       !file.name.endsWith('.json');
+            });
+            
+            if (hasBinaryFiles) {
+                const genAI = new GoogleGenerativeAI(apiKey);
+                sharedModel = genAI.getGenerativeModel({ 
+                    model: 'gemini-2.5-flash',
+                    generationConfig: {
+                        maxOutputTokens: 8192,
+                        temperature: 0.1,
+                    },
+                });
+            }
+        }
+
         // Process all files in parallel
         const processedFiles = await Promise.all(
-            files.map(file => processFile(file))
+            files.map(file => processFile(file, sharedModel))
         );
 
         console.log(`[Agent Process API] Files processed, extracting invoice data...`);
@@ -927,7 +694,7 @@ export async function POST(request: Request) {
         
         // Log savings summary calculation details
         console.log(`\n[Agent Process API] Savings Summary Calculation:`);
-        console.log(`  - Total Raw Savings: $${savingsSummary.conservative / 0.7}`);
+        console.log(`  - Total Raw Savings: $${savingsSummary.optimistic.toFixed(2)}`);
         console.log(`  - Conservative (70%): $${savingsSummary.conservative.toFixed(2)}`);
         console.log(`  - Moderate (85%): $${savingsSummary.moderate.toFixed(2)}`);
         console.log(`  - Optimistic (100%): $${savingsSummary.optimistic.toFixed(2)}`);
