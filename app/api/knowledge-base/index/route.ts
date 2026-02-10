@@ -59,14 +59,7 @@ export async function GET(request: Request) {
                 modifiedTime: meta.modifiedTime
             }));
 
-        // Clean up old reports (non-blocking - don't fail if cleanup fails)
-        let cleanupStats = null;
-        try {
-            console.log('[KB Index GET] Running report cleanup...');
-            cleanupStats = await cleanupOldReports();
-        } catch (cleanupError) {
-            console.warn('[KB Index GET] Report cleanup failed (non-critical):', cleanupError);
-        }
+        // Note: Report cleanup runs on POST requests (when indexing), not on GET to avoid slowing down reads
 
         return NextResponse.json({
             indexed,
@@ -76,7 +69,6 @@ export async function GET(request: Request) {
                 totalDriveFiles: driveFiles.length,
                 totalIndexedFiles: Object.keys(indexedMeta).length
             },
-            ...(cleanupStats && { cleanup: cleanupStats }),
         });
 
     } catch (error) {
@@ -247,14 +239,16 @@ export async function POST(request: Request) {
 
         console.log('Indexing complete!');
 
-        // Clean up old reports (non-blocking - don't fail if cleanup fails)
-        let cleanupStats = null;
-        try {
-            console.log('[KB Index] Running report cleanup...');
-            cleanupStats = await cleanupOldReports();
-        } catch (cleanupError) {
-            console.warn('[KB Index] Report cleanup failed (non-critical):', cleanupError);
-        }
+        // Clean up old reports in background (non-blocking - don't await to avoid slowing down response)
+        cleanupOldReports()
+            .then((cleanupStats) => {
+                if (cleanupStats && cleanupStats.deleted > 0) {
+                    console.log(`[KB Index] Background cleanup: Deleted ${cleanupStats.deleted} old report(s)`);
+                }
+            })
+            .catch((cleanupError) => {
+                console.warn('[KB Index] Background report cleanup failed (non-critical):', cleanupError);
+            });
 
         return NextResponse.json({
             success: true,
@@ -268,7 +262,6 @@ export async function POST(request: Request) {
                 newChunks: totalStats.totalChunks,
                 totalCharacters: totalStats.totalOriginalChars,
             },
-            ...(cleanupStats && { cleanup: cleanupStats }),
         });
 
     } catch (error) {

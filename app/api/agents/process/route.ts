@@ -72,13 +72,14 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { generateBase1Workbook } from '@/lib/excel-generator';
+import { generateReportEmail } from '@/lib/email-generator';
 import { getPromptConfig } from '@/lib/gcs-client';
 import { getSystemSettings } from '@/lib/gcs-client';
 import { getPromptTemplate } from '@/lib/gcs-client';
 import { generateEmbedding } from '@/lib/embeddings';
 import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
 import { findSimilarChunks } from '@/lib/document-chunker';
-import { ExtractedInvoice, BusinessInfo, ReportData } from '@/lib/report-types';
+import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/report-types';
 import {
     listFilesInFolder,
     downloadDriveFile,
@@ -570,42 +571,6 @@ Return ONLY the JSON array in a code block, no other text.`;
     return extractedData;
 }
 
-/**
- * Calculate savings summary from invoices
- */
-function calculateSavingsSummary(invoices: ExtractedInvoice[]) {
-    let totalSavings = 0;
-    const criticalIssues: Array<{ issue: string; savings: number; severity: 'high' | 'medium' | 'low' }> = [];
-
-    invoices.forEach(inv => {
-        if (inv.low_hanging_fruit) {
-            inv.low_hanging_fruit.forEach((opp: any) => {
-                if (opp.potential_savings) {
-                    const match = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (match) {
-                        const savings = parseFloat(match[0].replace(/,/g, ''));
-                        totalSavings += savings;
-
-                        if (opp.severity === 'high') {
-                            criticalIssues.push({
-                                issue: opp.message,
-                                savings,
-                                severity: opp.severity,
-                            });
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    return {
-        conservative: totalSavings * 0.7,
-        moderate: totalSavings * 0.85,
-        optimistic: totalSavings,
-        criticalIssues,
-    };
-}
 
 // Add GET handler for testing/debugging
 export async function GET() {
@@ -850,10 +815,34 @@ export async function POST(request: Request) {
         console.log(`[Agent Process API] Generating Excel report...`);
         const excelBuffer = await generateBase1Workbook(reportData);
 
+        // Check if JSON format is requested (query param or Accept header)
+        const url = new URL(request.url);
+        const formatParam = url.searchParams.get('format');
+        const acceptHeader = request.headers.get('accept') || '';
+        const wantsJson = formatParam === 'json' || acceptHeader.includes('application/json');
+
         // Return Excel file as response
         const fileName = `base1-review-${businessInfo.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.xlsx`;
 
-        // Convert Buffer to Uint8Array for NextResponse compatibility
+        // If JSON format requested, return JSON with Excel base64 and HTML email
+        if (wantsJson) {
+            const excelBase64 = excelBuffer.toString('base64');
+            const htmlEmail = generateReportEmail(reportData);
+
+            return NextResponse.json({
+                excelBase64,
+                htmlEmail,
+                businessInfo,
+                metadata: {
+                    fileName,
+                    invoiceCount: extractedInvoices.length,
+                    generatedAt: reportData.generatedAt,
+                    savingsSummary: reportData.savingsSummary,
+                },
+            });
+        }
+
+        // Otherwise, return binary Excel (backward-compatible)
         const uint8Array = new Uint8Array(excelBuffer);
 
         return new NextResponse(uint8Array, {

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { generateBase1Workbook } from '@/lib/excel-generator';
 import { getStorageClient } from '@/lib/google-auth';
 // import { uploadExcelToDrive, uploadFilesToDrive } from '@/lib/drive-uploader'; // Drive upload feature disabled
-import { ReportData, ExtractedInvoice, BusinessInfo } from '@/lib/report-types';
+import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/report-types';
+import { generateReportEmail } from '@/lib/email-generator';
 
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
 
@@ -126,10 +127,14 @@ export async function POST(request: Request) {
         //     }
         // }
 
+        // Generate HTML email
+        const htmlEmail = generateReportEmail(reportData);
+
         return NextResponse.json({
             success: true,
             downloadUrl,
             fileName,
+            htmlEmail,
             note: 'Excel file is available for download. Drive upload feature is currently disabled.',
         });
     } catch (error) {
@@ -141,38 +146,4 @@ export async function POST(request: Request) {
     }
 }
 
-function calculateSavingsSummary(invoices: ExtractedInvoice[]) {
-    let totalSavings = 0;
-    const criticalIssues: Array<{ issue: string; savings: number; severity: 'high' | 'medium' | 'low' }> = [];
-
-    invoices.forEach(inv => {
-        if (inv.low_hanging_fruit) {
-            inv.low_hanging_fruit.forEach(opp => {
-                if (opp.potential_savings) {
-                    // Extract number from string like "$1,234.56/year"
-                    const match = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (match) {
-                        const savings = parseFloat(match[0].replace(/,/g, ''));
-                        totalSavings += savings;
-                        
-                        if (opp.severity === 'high') {
-                            criticalIssues.push({
-                                issue: opp.message,
-                                savings,
-                                severity: opp.severity,
-                            });
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    return {
-        conservative: totalSavings * 0.7,
-        moderate: totalSavings * 0.85,
-        optimistic: totalSavings,
-        criticalIssues,
-    };
-}
 

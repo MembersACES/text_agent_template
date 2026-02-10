@@ -100,3 +100,41 @@ export interface ReportData {
     generatedAt: string; // ISO timestamp
 }
 
+/**
+ * Calculate savings summary from invoices
+ */
+export function calculateSavingsSummary(invoices: ExtractedInvoice[]): SavingsSummary {
+    let totalSavings = 0;
+    const criticalIssues: Array<{ issue: string; savings: number; severity: 'high' | 'medium' | 'low' }> = [];
+
+    invoices.forEach(inv => {
+        if (inv.low_hanging_fruit) {
+            inv.low_hanging_fruit.forEach((opp: any) => {
+                if (opp.potential_savings) {
+                    // Extract number from string like "$1,234.56/year"
+                    const match = opp.potential_savings.match(/[\d,]+\.?\d*/);
+                    if (match) {
+                        const savings = parseFloat(match[0].replace(/,/g, ''));
+                        totalSavings += savings;
+
+                        if (opp.severity === 'high') {
+                            criticalIssues.push({
+                                issue: opp.message,
+                                savings,
+                                severity: opp.severity,
+                            });
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    return {
+        conservative: totalSavings * 0.7,
+        moderate: totalSavings * 0.85,
+        optimistic: totalSavings,
+        criticalIssues,
+    };
+}
+
