@@ -28,7 +28,6 @@ function LockScreen({ onUnlock }: LockScreenProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-
       if (res.ok) {
         onUnlock();
       } else {
@@ -46,32 +45,17 @@ function LockScreen({ onUnlock }: LockScreenProps) {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="auth-icon-wrapper">
-            <LockIcon />
-          </div>
+          <div className="auth-icon-wrapper"><LockIcon /></div>
           <div className="auth-title">ACCESS RESTRICTED</div>
         </div>
-
         <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <input
-            type="password"
-            className="auth-input"
-            placeholder="ENTER PASSWORD"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoFocus
-          />
-
+          <input type="password" className="auth-input" placeholder="ENTER PASSWORD"
+            value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
           {error && <div className="error-msg">ACCESS DENIED</div>}
-
-          <button type="submit" className="auth-btn">
-            UNLOCK
-          </button>
+          <button type="submit" className="auth-btn">UNLOCK</button>
         </form>
       </div>
-      <div style={{ marginTop: '2rem', color: '#888', fontSize: '0.75rem' }}>
-        AUTHORIZED PERSONNEL ONLY
-      </div>
+      <div style={{ marginTop: '2rem', color: '#888', fontSize: '0.75rem' }}>AUTHORIZED PERSONNEL ONLY</div>
     </div>
   );
 }
@@ -86,9 +70,7 @@ export default function AgentPage() {
 
   useEffect(() => {
     const auth = sessionStorage.getItem('app-auth');
-    if (auth === 'true') {
-      setIsAuthorized(true);
-    }
+    if (auth === 'true') setIsAuthorized(true);
     setChecking(false);
   }, []);
 
@@ -104,19 +86,13 @@ export default function AgentPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-100 uppercase tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-              Locked
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>Locked
             </span>
           </div>
         </header>
-
         <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-          <LockScreen onUnlock={() => {
-            sessionStorage.setItem('app-auth', 'true');
-            setIsAuthorized(true);
-          }} />
+          <LockScreen onUnlock={() => { sessionStorage.setItem('app-auth', 'true'); setIsAuthorized(true); }} />
         </main>
-
         <footer className="fixed bottom-0 left-0 right-0 h-8 bg-white border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400">
           © Prograde IP Holdings 2026
         </footer>
@@ -140,21 +116,15 @@ export default function AgentPage() {
           onClick={() => router.push('/')}
           className="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
         >
-          ← Back to Default
+          ← Back
         </button>
       </header>
 
       {/* Main Split View */}
       <main className="flex-1 flex overflow-hidden min-h-0">
-        {/* Left Panel: Prompt Editor - scrollable */}
         <div className="w-1/2 min-w-[400px] h-full overflow-y-auto border-r border-gray-200">
-          <PromptEditor
-            agentId={agentId}
-            onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)}
-          />
+          <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
         </div>
-
-        {/* Right Panel: Chat - fixed */}
         <div className="flex-1 h-full bg-white relative overflow-hidden flex flex-col min-h-0">
           <ChatWindow agentId={agentId} refreshTrigger={refreshTrigger} />
         </div>
@@ -166,4 +136,3 @@ export default function AgentPage() {
     </div>
   );
 }
-
