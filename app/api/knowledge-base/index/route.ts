@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
-import { fetchGoogleDoc, listFilesInFolder, getFolderMetadata } from '@/lib/document-fetcher';
+import { fetchGoogleDoc, fetchGoogleSheet, listFilesInFolder, getFolderMetadata } from '@/lib/document-fetcher';
 import { chunkDocument } from '@/lib/document-chunker';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { saveKnowledgeBase, loadKnowledgeBase } from '@/lib/knowledge-base-storage';
+import { getPromptConfig } from '@/lib/gcs-client';
+import { cleanupOldReports } from '@/lib/report-cleanup';
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const { searchParams } = new URL(request.url);
+        const agentId = searchParams.get('agentId') || undefined;
+
+        // Prefer per-agent KB folder ID from config, fall back to global env
+        const promptConfig = await getPromptConfig(agentId);
+        const folderId = promptConfig.config?.kbFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
 
         if (!folderId) {
             return NextResponse.json({ indexed: [], pending: [], removed: [] });
@@ -15,8 +22,8 @@ export async function GET() {
         // Fetch current files from Drive
         const driveFiles = await listFilesInFolder(folderId);
 
-        // Load indexed metadata from storage
-        const kbData = await loadKnowledgeBase();
+        // Load indexed metadata from storage (agent-specific or default)
+        const kbData = await loadKnowledgeBase(agentId);
         const indexedMeta = kbData?.fileMetadata || {};
 
         const driveFileIds = new Set(driveFiles.map(f => f.id));
@@ -52,6 +59,8 @@ export async function GET() {
                 modifiedTime: meta.modifiedTime
             }));
 
+        // Note: Report cleanup runs on POST requests (when indexing), not on GET to avoid slowing down reads
+
         return NextResponse.json({
             indexed,
             pending,
@@ -59,7 +68,7 @@ export async function GET() {
             stats: {
                 totalDriveFiles: driveFiles.length,
                 totalIndexedFiles: Object.keys(indexedMeta).length
-            }
+            },
         });
 
     } catch (error) {
@@ -69,9 +78,17 @@ export async function GET() {
 }
 
 
-export async function POST() {
+export async function POST(request: Request) {
     try {
-        const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const body = await request.json().catch(() => ({}));
+        const agentId = body.agentId || undefined;
+        const explicitFolderId = typeof body.kbFolderId === 'string' && body.kbFolderId.trim() !== ''
+            ? body.kbFolderId.trim()
+            : undefined;
+
+        // Prefer KB folder ID sent in request body, then per-agent config, then global env
+        const promptConfig = await getPromptConfig(agentId);
+        const folderId = explicitFolderId || promptConfig.config?.kbFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
 
         if (!folderId) {
             return NextResponse.json(
@@ -80,10 +97,20 @@ export async function POST() {
             );
         }
 
-        console.log('Starting knowledge base indexing...');
+        console.log(`Starting knowledge base indexing for agent: ${agentId || 'default'}...`);
 
-        // Load existing knowledge base to check for changes
-        const existingKB = await loadKnowledgeBase();
+        // Load existing knowledge base to check for changes (agent-specific or default)
+        let existingKB = await loadKnowledgeBase(agentId);
+
+        // If the stored KB was built from a different folder, ignore it and start fresh
+        if (existingKB && existingKB.documentId !== folderId) {
+            console.log(
+                `Existing KB documentId (${existingKB.documentId}) does not match current folder (${folderId}). Resetting KB metadata for agent ${agentId || 'default'
+                }.`
+            );
+            existingKB = null;
+        }
+
         const existingFileMetadata = existingKB?.fileMetadata || {};
 
         let allChunks: Array<{ text: string; embedding: number[]; source?: string }> = [];
@@ -144,8 +171,18 @@ export async function POST() {
                     continue;
                 }
 
-                console.log(`Processing file: ${file.name} (${file.id})`);
-                const text = await fetchGoogleDoc(file.id);
+                console.log(`Processing file: ${file.name} (${file.id}) [${file.mimeType}]`);
+
+                let text = '';
+                if (file.mimeType === 'application/vnd.google-apps.document') {
+                    text = await fetchGoogleDoc(file.id);
+                } else if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+                    text = await fetchGoogleSheet(file.id);
+                } else {
+                    // Unsupported type; skip
+                    console.log(`Skipping unsupported file type: ${file.name} (${file.mimeType})`);
+                    continue;
+                }
 
                 if (!text) {
                     console.log(`Skipping empty file: ${file.name}`);
@@ -189,7 +226,7 @@ export async function POST() {
             );
         }
 
-        // Save to Cloud Storage
+        // Save to Cloud Storage (agent-specific or default)
         console.log(`Saving ${allChunks.length} chunks to Cloud Storage...`);
         await saveKnowledgeBase({
             chunks: allChunks,
@@ -198,9 +235,20 @@ export async function POST() {
             lastModified: new Date().toISOString(),
             indexedAt: new Date().toISOString(),
             fileMetadata: fileMetadata,
-        });
+        }, agentId);
 
         console.log('Indexing complete!');
+
+        // Clean up old reports in background (non-blocking - don't await to avoid slowing down response)
+        cleanupOldReports()
+            .then((cleanupStats) => {
+                if (cleanupStats && cleanupStats.deleted > 0) {
+                    console.log(`[KB Index] Background cleanup: Deleted ${cleanupStats.deleted} old report(s)`);
+                }
+            })
+            .catch((cleanupError) => {
+                console.warn('[KB Index] Background report cleanup failed (non-critical):', cleanupError);
+            });
 
         return NextResponse.json({
             success: true,

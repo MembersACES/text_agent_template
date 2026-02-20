@@ -11,12 +11,19 @@ export interface KnowledgeBaseData {
 
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
 const FILE_NAME = 'knowledge-base.json';
+const AGENTS_DIR = 'agents';
 
 // Save knowledge base data to Cloud Storage
-export async function saveKnowledgeBase(data: KnowledgeBaseData): Promise<void> {
+export async function saveKnowledgeBase(data: KnowledgeBaseData, agentId?: string): Promise<void> {
     const storage = getStorageClient();
     const bucket = storage.bucket(BUCKET_NAME);
-    const file = bucket.file(FILE_NAME);
+    
+    // Determine file path based on agentId
+    const filePath = agentId 
+        ? `${AGENTS_DIR}/${agentId}/knowledge-base.json`
+        : FILE_NAME;
+    
+    const file = bucket.file(filePath);
 
     await file.save(JSON.stringify(data, null, 2), {
         contentType: 'application/json',
@@ -24,16 +31,35 @@ export async function saveKnowledgeBase(data: KnowledgeBaseData): Promise<void> 
             cacheControl: 'no-cache',
         },
     });
+
+    // Update in-memory cache immediately so new data is visible without waiting for TTL
+    const cacheKey = agentId || 'default';
+    cache.set(cacheKey, { data, time: Date.now() });
 }
 
 // Load knowledge base data from Cloud Storage
-export async function loadKnowledgeBase(): Promise<KnowledgeBaseData | null> {
+export async function loadKnowledgeBase(agentId?: string): Promise<KnowledgeBaseData | null> {
     try {
         const storage = getStorageClient();
         const bucket = storage.bucket(BUCKET_NAME);
-        const file = bucket.file(FILE_NAME);
+        
+        // Determine file path based on agentId
+        let filePath: string;
+        if (agentId) {
+            filePath = `${AGENTS_DIR}/${agentId}/knowledge-base.json`;
+        } else {
+            filePath = FILE_NAME;
+        }
+        
+        let file = bucket.file(filePath);
+        let [exists] = await file.exists();
+        
+        // If agent-specific file doesn't exist, try default
+        if (!exists && agentId) {
+            file = bucket.file(FILE_NAME);
+            [exists] = await file.exists();
+        }
 
-        const [exists] = await file.exists();
         if (!exists) {
             return null;
         }
@@ -46,22 +72,23 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBaseData | null> {
     }
 }
 
-// In-memory cache with 10-minute TTL
-let cachedData: KnowledgeBaseData | null = null;
-let cacheTime: number = 0;
+// In-memory cache with 10-minute TTL (per agent)
+const cache: Map<string, { data: KnowledgeBaseData | null; time: number }> = new Map();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-export async function getCachedKnowledgeBase(): Promise<KnowledgeBaseData | null> {
+export async function getCachedKnowledgeBase(agentId?: string): Promise<KnowledgeBaseData | null> {
     const now = Date.now();
+    const cacheKey = agentId || 'default';
 
     // Return cached data if still valid
-    if (cachedData && (now - cacheTime < CACHE_TTL)) {
-        return cachedData;
+    const cached = cache.get(cacheKey);
+    if (cached && (now - cached.time < CACHE_TTL)) {
+        return cached.data;
     }
 
     // Reload from Cloud Storage
-    cachedData = await loadKnowledgeBase();
-    cacheTime = now;
+    const data = await loadKnowledgeBase(agentId);
+    cache.set(cacheKey, { data, time: now });
 
-    return cachedData;
+    return data;
 }

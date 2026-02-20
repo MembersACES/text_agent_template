@@ -3,12 +3,22 @@
 
 import { useState, useEffect } from 'react';
 
-export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => void }) {
+type AgentConfig = {
+    model?: string;
+    language?: string;
+    kbFolderId?: string;
+    allowFileUploads?: boolean;
+};
+
+export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess?: () => void; agentId?: string }) {
     // State for Config
     const [systemPrompt, setSystemPrompt] = useState('');
     const [welcomeMessage, setWelcomeMessage] = useState('');
     const [agentName, setAgentName] = useState('');
-    const [config, setConfig] = useState({ model: 'Gemini 3.0 Flash', language: 'Multilingual' });
+    const [config, setConfig] = useState<AgentConfig>({
+        model: 'Gemini 3.0 Flash',
+        language: 'Multilingual',
+    });
 
     // State for UI
     const [loading, setLoading] = useState(true);
@@ -16,7 +26,8 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
     // Accordion state - only one open at a time
-    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>('prompt');
+    // Default: all sections collapsed when the agent page first loads
+    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>(null);
 
     // KB Data
     interface KBFile {
@@ -38,11 +49,12 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
     useEffect(() => {
         fetchConfig();
         fetchKB();
-    }, []);
+    }, [agentId]);
 
     const fetchKB = async () => {
         try {
-            const res = await fetch('/api/knowledge-base/index');
+            const url = agentId ? `/api/knowledge-base/index?agentId=${agentId}` : '/api/knowledge-base/index';
+            const res = await fetch(url);
             const data = await res.json();
             if (data.indexed) {
                 setKbData({
@@ -62,7 +74,12 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
         setMessage(null);
         try {
             const res = await fetch('/api/knowledge-base/index', {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    agentId: agentId || undefined,
+                    kbFolderId: config.kbFolderId || undefined,
+                })
             });
             const data = await res.json();
 
@@ -83,7 +100,8 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
 
     const fetchConfig = async () => {
         try {
-            const res = await fetch('/api/prompt');
+            const url = agentId ? `/api/prompt?agentId=${agentId}` : '/api/prompt';
+            const res = await fetch(url);
             const data = await res.json();
             if (data.systemPrompt !== undefined) {
                 setSystemPrompt(data.systemPrompt);
@@ -114,7 +132,9 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                     systemPrompt,
                     welcomeMessage,
                     agentName,
-                    config
+                    config,
+                    // Ensure we save config for the correct agent, not always the default
+                    agentId: agentId || undefined,
                 }),
             });
 
@@ -169,7 +189,7 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                     className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
                     onClick={() => setExpandedSection(expandedSection === 'prompt' ? null : 'prompt')}
                 >
-                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                         <svg
                             className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'prompt' ? 'rotate-90' : ''}`}
                             fill="none"
@@ -178,8 +198,11 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        Prompt
-                    </h3>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900">Agent-Specific Prompt</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">This prompt is added below the global system prompt</p>
+                        </div>
+                    </div>
                 </div>
 
                 {expandedSection === 'prompt' && (
@@ -235,7 +258,6 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
 
                 {expandedSection === 'kb' && (
                     <div className="p-6 bg-gray-50/30 animate-slide-down flex flex-col gap-4">
-
                         {(kbData.pending.length > 0 || kbData.indexed.some(f => f.isStale)) && (
                             <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-center gap-3">
                                 <div className="p-1.5 bg-orange-100 text-orange-600 rounded-full">
@@ -372,6 +394,49 @@ export default function PromptEditor({ onSaveSuccess }: { onSaveSuccess?: () => 
                                     className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 resize-none min-h-[120px] shadow-sm transition-all"
                                     placeholder="Enter custom welcome message..."
                                 />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                        Google Drive Folder ID (Knowledge Base)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={config.kbFolderId || ''}
+                                        onChange={(e) => setConfig(prev => ({ ...prev, kbFolderId: e.target.value || undefined }))}
+                                        className="w-full p-3 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
+                                        placeholder="Override default GOOGLE_DRIVE_FOLDER_ID for this agent"
+                                    />
+                                    <p className="mt-1 text-[11px] text-gray-500">
+                                        If set, this agent will index and query documents from the specified Drive folder ID.
+                                        If left blank, it falls back to the global <code className="font-mono">GOOGLE_DRIVE_FOLDER_ID</code>.
+                                    </p>
+                                </div>
+
+                                <div className="flex flex-col gap-2">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                        File Uploads
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfig(prev => ({ ...prev, allowFileUploads: !prev.allowFileUploads }))}
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${config.allowFileUploads ? 'bg-green-500' : 'bg-gray-300'
+                                                }`}
+                                        >
+                                            <span
+                                                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${config.allowFileUploads ? 'translate-x-4' : 'translate-x-1'
+                                                    }`}
+                                            />
+                                        </button>
+                                        <span className="text-xs text-gray-600">
+                                            {config.allowFileUploads ? 'Enabled: this agent can accept file uploads.' : 'Disabled: this agent cannot accept file uploads.'}
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500">
+                                        When enabled, the chat window will show a file upload control and uploaded files will be available for this agent to analyse during the current conversation only (they are not stored in the long-term knowledge base).
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>

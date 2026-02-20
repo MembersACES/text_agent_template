@@ -1,9 +1,8 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
-import ChatWindow from './components/ChatWindow';
-import PromptEditor from './components/PromptEditor';
+import { useRouter } from 'next/navigation';
+import SystemPromptEditor from './components/SystemPromptEditor';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -76,9 +75,25 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   );
 }
 
+const FRIENDLY_AGENT_NAMES: Record<string, string> = {
+    'pudu-chatbot-test': 'Pudu Chatbot Test Agent',
+    'base-1-review': 'Base 1 Review',
+};
+
+function getFriendlyName(agentId: string): string {
+    if (FRIENDLY_AGENT_NAMES[agentId]) return FRIENDLY_AGENT_NAMES[agentId];
+    return agentId
+        .split('-')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+}
+
 export default function Home() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [agents, setAgents] = useState<string[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     const auth = sessionStorage.getItem('app-auth');
@@ -88,7 +103,25 @@ export default function Home() {
     setChecking(false);
   }, []);
 
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  useEffect(() => {
+    if (isAuthorized) {
+      fetchAgents();
+    }
+  }, [isAuthorized]);
+
+  const fetchAgents = async () => {
+    try {
+      const res = await fetch('/api/agents');
+      const data = await res.json();
+      if (data.agents) {
+        setAgents(data.agents);
+      }
+    } catch (error) {
+      console.error('Failed to fetch agents', error);
+    } finally {
+      setLoadingAgents(false);
+    }
+  };
 
   if (checking) return null;
 
@@ -125,24 +158,84 @@ export default function Home() {
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       {/* Header */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 shrink-0">
-        <div className="flex items-center gap-2">
-          <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
-          <div className="w-px h-4 bg-gray-200 mx-1"></div>
-          <div className="text-gray-900 font-bold tracking-tight">ACES</div>
+      <header className="sticky top-0 bg-white border-b border-gray-200 shadow-sm z-20 shrink-0">
+        <div className="h-14 flex items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
+            <div className="w-px h-4 bg-gray-200 mx-1"></div>
+            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
+            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">
+              Agent Management
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Main Split View */}
-      <main className="flex-1 flex overflow-hidden min-h-0">
-        {/* Left Panel: Prompt Editor - scrollable */}
-        <div className="w-1/2 min-w-[400px] h-full overflow-y-auto border-r border-gray-200">
-          <PromptEditor onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
-        </div>
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-6 space-y-6">
+          {/* Agents List Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Agents</h2>
+              <p className="text-sm text-gray-500 mt-1">Manage and configure your AI agents</p>
+            </div>
+            <div className="p-6">
+              {loadingAgents ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500"></div>
+                </div>
+              ) : agents.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p className="text-sm">No agents found.</p>
+                  <p className="text-xs mt-2 text-gray-400">
+                    Navigate to <code className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">/agent/[agentId]</code> to create one.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <button
+                    onClick={() => router.push('/')}
+                    className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-orange-400 hover:bg-orange-50 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                      </svg>
+                      <span className="font-semibold text-gray-900">Default Agent</span>
+                    </div>
+                    <p className="text-xs text-gray-500">Legacy default agent interface</p>
+                  </button>
+                  {agents.map((agentId) => (
+                    <button
+                      key={agentId}
+                      onClick={() => router.push(`/agent/${agentId}`)}
+                      className="p-4 border border-gray-200 rounded-lg hover:border-orange-400 hover:bg-orange-50 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <span className="font-semibold text-gray-900">{getFriendlyName(agentId)}</span>
+                      </div>
+                      <p className="text-xs text-gray-500">ID: {agentId}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
-        {/* Right Panel: Chat - fixed */}
-        <div className="flex-1 h-full bg-white relative overflow-hidden flex flex-col min-h-0">
-          <ChatWindow refreshTrigger={refreshTrigger} />
+          {/* Global System Prompt Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Global System Prompt</h2>
+              <p className="text-sm text-gray-500 mt-1">Rules that apply to all agents</p>
+            </div>
+            <div className="p-6">
+              <SystemPromptEditor />
+            </div>
+          </div>
         </div>
       </main>
 

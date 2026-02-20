@@ -2,9 +2,11 @@
 import { NextResponse } from 'next/server';
 import { getPromptConfig, savePromptConfig, PromptConfig } from '@/lib/gcs-client';
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
-        const config = await getPromptConfig();
+        const { searchParams } = new URL(request.url);
+        const agentId = searchParams.get('agentId') || undefined;
+        const config = await getPromptConfig(agentId || undefined);
         return NextResponse.json(config);
     } catch (error) {
         console.error('Error fetching prompt config:', error);
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'System prompt is required' }, { status: 400 });
         }
 
+        const agentId = data.agentId || undefined;
+
         const config: PromptConfig = {
             systemPrompt: data.systemPrompt,
             welcomeMessage: data.welcomeMessage,
@@ -28,7 +32,7 @@ export async function POST(request: Request) {
             config: data.config
         };
 
-        await savePromptConfig(config);
+        await savePromptConfig(config, agentId);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Error saving prompt config:', error);

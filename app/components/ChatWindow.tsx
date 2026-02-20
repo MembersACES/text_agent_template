@@ -6,13 +6,26 @@ import { useState, useRef, useEffect } from 'react';
 interface Message {
     role: 'user' | 'assistant';
     content: string;
+    actions?: Array<{
+        type: 'download' | 'sheets-link';
+        label: string;
+        url: string;
+    }>;
+}
+
+interface ExtractedInvoice {
+    business_name: string | null;
+    supplier: string | null;
+    utility_type: "Electricity" | "Gas" | "Water" | "Waste" | "Oil" | "Cleaning";
+    [key: string]: any;
 }
 
 interface ChatWindowProps {
     refreshTrigger?: number;
+    agentId?: string;
 }
 
-export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
+export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
@@ -21,15 +34,29 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
     ]);
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
     const [agentName, setAgentName] = useState("Text Agent");
+    const [allowFileUploads, setAllowFileUploads] = useState(false);
+    const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string; mimeType?: string; fileBufferBase64?: string }[]>([]);
+    const [extractedInvoices, setExtractedInvoices] = useState<ExtractedInvoice[]>([]);
+    const [isGeneratingReport, setIsGeneratingReport] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('Running...');
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; fileName: string } | null>(null);
+    const [uploadLoadingMessage, setUploadLoadingMessage] = useState('Uploading...');
+    const reportGenerationTriggered = useRef(false);
     const [showEndChatPopup, setShowEndChatPopup] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const loadingMessageIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const uploadLoadingMessageIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         const fetchConfig = async () => {
             try {
-                const res = await fetch('/api/prompt');
+                const url = agentId ? `/api/prompt?agentId=${agentId}` : '/api/prompt';
+                const res = await fetch(url);
                 const data = await res.json();
                 if (data.welcomeMessage) {
                     setWelcomeMessage(data.welcomeMessage);
@@ -46,6 +73,11 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
                 if (data.agentName) {
                     setAgentName(data.agentName);
                 }
+                if (data.config && data.config.allowFileUploads) {
+                    setAllowFileUploads(true);
+                } else {
+                    setAllowFileUploads(false);
+                }
             } catch (error) {
                 console.error("Failed to load welcome message", error);
                 setMessages([{
@@ -55,7 +87,7 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
             }
         };
         fetchConfig();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, agentId]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,6 +96,87 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    // Auto-fill input when invoices are processed (Base 1 Review agent only)
+    useEffect(() => {
+        if (extractedInvoices.length > 0 && !input.trim() && agentId === 'base-1-review' && !isLoading) {
+            // Small delay to ensure state is settled
+            const timer = setTimeout(() => {
+                setInput('Run these invoices for a Base 1 Review');
+            }, 300);
+            return () => clearTimeout(timer);
+        }
+    }, [extractedInvoices.length, agentId, input, isLoading]); // Trigger when invoice count changes
+
+    // Rotating loading messages for chat/AI processing
+    useEffect(() => {
+        if (isLoading || isGeneratingReport) {
+            const messages = [
+                'Running...',
+                'Thinking...',
+                'Exploring...',
+                'Analyzing...',
+                'Processing...',
+                'Reviewing...',
+                'Calculating...',
+                'Crunching numbers...',
+                'Working on it...',
+                'Almost there...',
+            ];
+            let currentIndex = 0;
+            setLoadingMessage(messages[0]);
+            
+            loadingMessageIntervalRef.current = setInterval(() => {
+                currentIndex = (currentIndex + 1) % messages.length;
+                setLoadingMessage(messages[currentIndex]);
+            }, 2000);
+        } else {
+            if (loadingMessageIntervalRef.current) {
+                clearInterval(loadingMessageIntervalRef.current);
+                loadingMessageIntervalRef.current = null;
+            }
+        }
+        
+        return () => {
+            if (loadingMessageIntervalRef.current) {
+                clearInterval(loadingMessageIntervalRef.current);
+            }
+        };
+    }, [isLoading, isGeneratingReport]);
+
+    // Rotating loading messages for file uploads
+    useEffect(() => {
+        if (isUploading) {
+            const messages = [
+                'Uploading...',
+                'Processing file...',
+                'Extracting text...',
+                'Reading document...',
+                'Scanning invoice...',
+                'Analyzing content...',
+                'Almost done...',
+            ];
+            let currentIndex = 0;
+            setUploadLoadingMessage(messages[0]);
+            
+            uploadLoadingMessageIntervalRef.current = setInterval(() => {
+                currentIndex = (currentIndex + 1) % messages.length;
+                setUploadLoadingMessage(messages[currentIndex]);
+            }, 2000);
+        } else {
+            if (uploadLoadingMessageIntervalRef.current) {
+                clearInterval(uploadLoadingMessageIntervalRef.current);
+                uploadLoadingMessageIntervalRef.current = null;
+            }
+            setUploadProgress(null);
+        }
+        
+        return () => {
+            if (uploadLoadingMessageIntervalRef.current) {
+                clearInterval(uploadLoadingMessageIntervalRef.current);
+            }
+        };
+    }, [isUploading]);
 
     const handleSend = async () => {
         if (!input.trim() || isLoading) return;
@@ -78,14 +191,111 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: userMessage, useKnowledgeBase: true }),
+                body: JSON.stringify({
+                    message: userMessage,
+                    conversationHistory: messages, // Include full conversation history
+                    useKnowledgeBase: true,
+                    agentId: agentId,
+                    uploadedFiles,
+                }),
             });
 
             const data = await response.json();
+            console.log('Chat API response length:', data.response?.length);
+            console.log('Chat API response first 200:', data.response?.substring(0, 200));
+            console.log('Chat API response last 200:', data.response?.substring(data.response.length - 200));
+
 
             if (!response.ok) throw new Error(data.error || 'Failed to get response');
 
-            setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+            // Extract structured data if present (silent accumulation)
+            // Use functional setState to avoid stale closure issues
+            if (data.extractedData) {
+                setExtractedInvoices(prev => {
+                    // Handle both single object and array from extractedData
+                    const newInvoices = Array.isArray(data.extractedData) 
+                        ? data.extractedData 
+                        : [data.extractedData];
+                    
+                    // Merge with existing invoices, avoiding duplicates by invoice_number if available
+                    const merged = [...prev];
+                    newInvoices.forEach((newInvoice: ExtractedInvoice) => {
+                        // Check if invoice already exists (by invoice_number if available, or by content)
+                        const exists = merged.some(existing => {
+                            if (newInvoice.invoice_number && existing.invoice_number) {
+                                return existing.invoice_number === newInvoice.invoice_number;
+                            }
+                            // Fallback: compare key fields if no invoice_number
+                            return existing.invoice_date === newInvoice.invoice_date &&
+                                   existing.total_inc_gst === newInvoice.total_inc_gst &&
+                                   existing.supplier === newInvoice.supplier;
+                        });
+                        
+                        if (!exists) {
+                            merged.push(newInvoice);
+                        }
+                    });
+                    
+                    console.log(`[ChatWindow] Accumulated ${merged.length} invoice(s) (added ${newInvoices.length} new)`);
+                    return merged;
+                });
+            }
+
+            // Check if report generation is requested
+            // Only trigger on explicit flag from API (not from checking user message, as that could trigger twice)
+            if (data.generateReport) {
+                // Clean the response to remove [GENERATE_REPORT] marker if present
+                const cleanedResponse = data.response.replace(/\[GENERATE_REPORT\]/g, '').trim();
+                
+                // Use a ref to prevent duplicate report generation calls (React Strict Mode can cause double renders)
+                if (!reportGenerationTriggered.current) {
+                    reportGenerationTriggered.current = true;
+                    
+                    // Use functional update to get the latest invoices state, then trigger report generation
+                    setExtractedInvoices(currentInvoices => {
+                        if (currentInvoices.length > 0) {
+                            // Trigger report generation with current invoices (only once)
+                            setTimeout(() => {
+                                handleGenerateReportWithInvoices(currentInvoices);
+                                // Reset the flag after a delay to allow for future report generations
+                                setTimeout(() => {
+                                    reportGenerationTriggered.current = false;
+                                }, 2000);
+                            }, 100);
+                        } else {
+                            setMessages(prev => [...prev, {
+                                role: 'assistant',
+                                content: 'No invoice data available to generate a report. Please provide invoices first.',
+                            }]);
+                            reportGenerationTriggered.current = false;
+                        }
+                        return currentInvoices; // Return unchanged state
+                    });
+                }
+                // Skip adding the assistant's response message here - handleGenerateReportWithInvoices will add its own message
+                // This prevents duplicate messages when report generation is triggered
+                // Only add the cleaned response if it has meaningful content (not just the marker)
+                if (cleanedResponse && cleanedResponse.length > 0 && !cleanedResponse.match(/^\s*$/)) {
+                    setMessages(prev => [...prev, { 
+                        role: 'assistant', 
+                        content: cleanedResponse,
+                    }]);
+                }
+            } else {
+                // Reset the flag when report generation is not requested
+                reportGenerationTriggered.current = false;
+                // Only add assistant's response if report generation is NOT being triggered
+                // Create message with actions if report was just generated
+                const messageActions = data.downloadUrl ? [
+                    { type: 'download' as const, label: 'Download .xlsx', url: data.downloadUrl },
+                ] : undefined;
+
+                setMessages(prev => [...prev, { 
+                    role: 'assistant', 
+                    content: data.response,
+                    actions: messageActions,
+                }]);
+            }
         } catch (error) {
             console.error('Error:', error);
             setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
@@ -101,6 +311,103 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
         }
     };
 
+    const handleGenerateReport = async () => {
+        handleGenerateReportWithInvoices(extractedInvoices);
+    };
+
+    const handleGenerateReportWithInvoices = async (invoices: ExtractedInvoice[]) => {
+        // Prevent duplicate report generation
+        if (isGeneratingReport) {
+            console.log('[ChatWindow] Report generation already in progress, skipping duplicate request');
+            return;
+        }
+
+        if (invoices.length === 0) {
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: 'No invoice data available to generate a report. Please provide invoices first.',
+            }]);
+            return;
+        }
+
+        setIsGeneratingReport(true);
+        try {
+            // Extract business info from first invoice
+            const businessInfo = {
+                name: invoices[0].business_name || 'Unknown Business',
+                address: invoices[0].site_address || undefined,
+            };
+
+            const response = await fetch('/api/export/generate-report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    invoices,
+                    businessInfo,
+                    agentId,
+                    uploadedFiles: uploadedFiles, // Include uploaded invoice files for Drive upload
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error || 'Failed to generate report');
+
+            // Add message with download button and Drive links
+            const actions: Array<{ type: 'download' | 'sheets-link'; label: string; url: string }> = [
+                { type: 'download', label: 'Download .xlsx', url: data.downloadUrl },
+            ];
+
+            // Add Drive links if files were uploaded
+            if (data.driveUploads && data.driveUploads.length > 0) {
+                data.driveUploads.forEach((upload: { url: string; fileName: string }) => {
+                    actions.push({
+                        type: 'sheets-link',
+                        label: `Open ${upload.fileName} in Drive`,
+                        url: upload.url,
+                    });
+                });
+            }
+
+            let content = 'Report generated successfully! You can download the Excel file.';
+            if (data.driveUploads && data.driveUploads.length > 0) {
+                content += `\n\n✅ ${data.driveUploads.length} file(s) uploaded to Google Drive:`;
+                data.driveUploads.forEach((upload: { fileName: string }) => {
+                    content += `\n  • ${upload.fileName}`;
+                });
+            }
+            if (data.driveUploadError) {
+                content += `\n\n⚠️ Drive upload warning: ${data.driveUploadError}`;
+            }
+            if (data.note && !data.driveUploads) {
+                content += `\n\n${data.note}`;
+            }
+
+            // Check if this message already exists to prevent duplicates
+            setMessages(prev => {
+                // Check if the last message is already the report generation message
+                const lastMessage = prev[prev.length - 1];
+                if (lastMessage && lastMessage.content === content && lastMessage.actions?.length === actions.length) {
+                    console.log('[ChatWindow] Report generation message already exists, skipping duplicate');
+                    return prev;
+                }
+                return [...prev, {
+                    role: 'assistant',
+                    content,
+                    actions,
+                }];
+            });
+        } catch (error) {
+            console.error('Error generating report:', error);
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: 'Sorry, I encountered an error while generating the report. Please try again.',
+            }]);
+        } finally {
+            setIsGeneratingReport(false);
+        }
+    };
+
     const confirmEndChat = async () => {
         try {
             await fetch('/api/end-of-chat-report', {
@@ -113,6 +420,9 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
         setShowEndChatPopup(false);
         setMessages([{ role: 'assistant', content: welcomeMessage }]);
         setInput('');
+        setExtractedInvoices([]); // Clear accumulated invoices
+        setUploadedFiles([]); // Clear uploaded files
+        setUploadError(null); // Clear any upload errors
     };
 
     return (
@@ -180,16 +490,73 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
                     <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${message.role === 'user' ? 'bg-orange-500 text-white' : 'bg-white text-gray-800 shadow-sm'}`}>
                             <p className="whitespace-pre-line text-sm">{message.content}</p>
+                            {message.actions && message.actions.length > 0 && (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    {message.actions.map((action, actionIndex) => (
+                                        action.type === 'download' ? (
+                                            <a
+                                                key={actionIndex}
+                                                href={action.url}
+                                                download
+                                                className="px-3 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-lg hover:bg-orange-600 transition-colors inline-flex items-center gap-1.5"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                </svg>
+                                                {action.label}
+                                            </a>
+                                        ) : (
+                                            <a
+                                                key={actionIndex}
+                                                href={action.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-lg hover:bg-orange-600 transition-colors inline-flex items-center gap-1.5"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                                {action.label}
+                                            </a>
+                                        )
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
-                {isLoading && (
+                {/* File upload progress indicator */}
+                {isUploading && uploadProgress && (
+                    <div className="flex justify-start">
+                        <div className="bg-gradient-to-r from-orange-50 to-orange-100 rounded-2xl px-4 py-3 shadow-sm border border-orange-200">
+                            <div className="flex items-center gap-3">
+                                <div className="flex space-x-1.5">
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-sm text-gray-700 font-medium">{uploadLoadingMessage}</span>
+                                    <span className="text-xs text-gray-600 mt-0.5">
+                                        {uploadProgress.fileName}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Regular chat/AI processing indicator */}
+                {(isLoading || isGeneratingReport) && !isUploading && (
                     <div className="flex justify-start">
                         <div className="bg-white rounded-2xl px-4 py-3 shadow-sm">
-                            <div className="flex space-x-2">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                            <div className="flex items-center gap-3">
+                                <div className="flex space-x-1.5">
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+                                </div>
+                                <span className="text-sm text-gray-600 font-medium">{loadingMessage}</span>
                             </div>
                         </div>
                     </div>
@@ -197,9 +564,130 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
-            <div className="p-5 bg-white border-t border-gray-100 shrink-0">
-                <div className="flex items-center gap-3 bg-white rounded-full px-5 py-2.5 border border-gray-200">
+            {/* Input + optional file upload */}
+            <div className="p-4 bg-white border-t border-gray-100 shrink-0 space-y-2.5">
+                {/* File chips - show uploaded files as badges */}
+                {uploadedFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pb-1">
+                        {uploadedFiles.map((file, index) => (
+                            <div
+                                key={index}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-50 to-orange-100 border border-orange-200 rounded-lg text-xs text-orange-800 shadow-sm hover:shadow transition-shadow"
+                            >
+                                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span className="max-w-[180px] truncate font-medium">{file.name}</span>
+                                <button
+                                    onClick={() => {
+                                        setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+                                    }}
+                                    className="ml-0.5 text-orange-600 hover:text-orange-800 hover:bg-orange-200 rounded p-0.5 transition-colors"
+                                    aria-label={`Remove ${file.name}`}
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Upload error message */}
+                {uploadError && (
+                    <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center justify-between">
+                        <span>{uploadError}</span>
+                        <button
+                            onClick={() => setUploadError(null)}
+                            className="text-red-500 hover:text-red-700"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                )}
+
+                {/* Hidden file input */}
+                {allowFileUploads && agentId && (
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                            const files = e.target.files;
+                            if (!files || files.length === 0 || !agentId) return;
+
+                            setUploadError(null);
+                            setIsUploading(true);
+                            const fileArray = Array.from(files);
+                            setUploadProgress({ current: 0, total: fileArray.length, fileName: `Processing ${fileArray.length} file${fileArray.length > 1 ? 's' : ''}...` });
+
+                            try {
+                                // Process all files in parallel for faster uploads
+                                const uploadPromises = fileArray.map(async (file, index) => {
+                                    const formData = new FormData();
+                                    formData.append('file', file);
+                                    formData.append('agentId', agentId);
+
+                                    const res = await fetch('/api/uploads', {
+                                        method: 'POST',
+                                        body: formData,
+                                    });
+                                    const data = await res.json();
+                                    if (!res.ok) {
+                                        throw new Error(data.error || `Failed to upload "${file.name}"`);
+                                    }
+                                    
+                                    // Update progress as each file completes
+                                    setUploadProgress(prev => prev ? {
+                                        current: prev.current + 1,
+                                        total: prev.total,
+                                        fileName: `${prev.current + 1} of ${prev.total} complete`
+                                    } : null);
+                                    
+                                    return { 
+                                        name: data.fileName || file.name, 
+                                        content: data.content,
+                                        mimeType: data.mimeType,
+                                        fileBufferBase64: data.fileBufferBase64, // Store original file buffer for Drive upload
+                                    };
+                                });
+
+                                // Wait for all uploads to complete
+                                const uploaded = await Promise.all(uploadPromises);
+                                setUploadedFiles(prev => [...prev, ...uploaded]);
+                            } catch (err: any) {
+                                console.error('Upload error:', err);
+                                setUploadError(err.message || 'An error occurred while uploading files.');
+                            } finally {
+                                setIsUploading(false);
+                                setUploadProgress(null);
+                                if (e.target) e.target.value = '';
+                            }
+                        }}
+                    />
+                )}
+
+                <div className="flex items-center gap-2.5 bg-gray-50 rounded-xl px-4 py-2.5 border border-gray-200 focus-within:border-orange-300 focus-within:ring-2 focus-within:ring-orange-100 transition-all">
+                    {/* File attachment button */}
+                    {allowFileUploads && agentId && (
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isLoading}
+                            className="p-1.5 text-gray-400 hover:text-orange-500 hover:bg-orange-50 disabled:text-gray-200 disabled:hover:bg-transparent rounded-lg transition-all"
+                            aria-label="Attach file"
+                            title="Attach files"
+                        >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                            </svg>
+                        </button>
+                    )}
                     <input
                         type="text"
                         value={input}
@@ -212,7 +700,7 @@ export default function ChatWindow({ refreshTrigger }: ChatWindowProps) {
                     <button
                         onClick={handleSend}
                         disabled={!input.trim() || isLoading}
-                        className="text-gray-300 hover:text-orange-500 disabled:text-gray-200 transition-colors"
+                        className="p-1.5 text-gray-300 hover:text-orange-500 hover:bg-orange-50 disabled:text-gray-200 disabled:hover:bg-transparent rounded-lg transition-all"
                         aria-label="Send message"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
