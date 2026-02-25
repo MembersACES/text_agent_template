@@ -77,7 +77,7 @@ export async function getPromptConfig(agentId?: string): Promise<PromptConfig> {
 
     try {
         const bucket = storage.bucket(BUCKET_NAME);
-        
+
         // Determine file path based on agentId
         let filePath: string;
         if (agentId) {
@@ -144,12 +144,12 @@ export async function savePromptConfig(data: PromptConfig, agentId?: string): Pr
     }
 
     const bucket = storage.bucket(BUCKET_NAME);
-    
+
     // Determine file path based on agentId
-    const filePath = agentId 
+    const filePath = agentId
         ? `${AGENTS_DIR}/${agentId}/settings.json`
         : SETTINGS_FILENAME;
-    
+
     const file = bucket.file(filePath);
 
     await file.save(JSON.stringify(data, null, 2), {
@@ -182,7 +182,7 @@ export async function listAgents(): Promise<string[]> {
     try {
         const bucket = storage.bucket(BUCKET_NAME);
         const [files] = await bucket.getFiles({ prefix: `${AGENTS_DIR}/` });
-        
+
         // Extract unique agent IDs from file paths
         const agentIds = new Set<string>();
         files.forEach(file => {
@@ -191,13 +191,51 @@ export async function listAgents(): Promise<string[]> {
                 agentIds.add(match[1]);
             }
         });
-        
+
         return Array.from(agentIds).sort();
     } catch (error) {
         console.error('Error listing agents:', error);
         return [];
     }
 }
+
+/**
+ * Delete all files belonging to a single agent (agents/{agentId}/).
+ * This is strictly scoped — it will ONLY delete files whose GCS path starts
+ * with `agents/{agentId}/`. Root-level files and other agents are never touched.
+ */
+export async function deleteAgent(agentId: string): Promise<{ deleted: string[] }> {
+    if (!BUCKET_NAME) {
+        throw new Error('GCS_BUCKET_NAME not configured');
+    }
+
+    if (!agentId || agentId.trim() === '') {
+        throw new Error('agentId is required');
+    }
+
+    // Strict prefix: only files under agents/{agentId}/
+    const prefix = `${AGENTS_DIR}/${agentId}/`;
+
+    const bucket = storage.bucket(BUCKET_NAME);
+    const [files] = await bucket.getFiles({ prefix });
+
+    const deleted: string[] = [];
+
+    for (const file of files) {
+        // Double-check the path starts with our exact prefix before deleting
+        if (!file.name.startsWith(prefix)) {
+            console.warn(`[deleteAgent] Skipping unexpected file outside prefix: ${file.name}`);
+            continue;
+        }
+        await file.delete();
+        deleted.push(file.name);
+        console.log(`[deleteAgent] Deleted: ${file.name}`);
+    }
+
+    console.log(`[deleteAgent] Removed ${deleted.length} file(s) for agent "${agentId}"`);
+    return { deleted };
+}
+
 
 // System Settings (Global prompt that applies to all agents)
 export interface SystemSettings {

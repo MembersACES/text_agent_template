@@ -11,9 +11,16 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const agentId = searchParams.get('agentId') || undefined;
 
-        // Prefer per-agent KB folder ID from config, fall back to global env
         const promptConfig = await getPromptConfig(agentId);
-        const folderId = promptConfig.config?.kbFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const rawFolderId = promptConfig.config?.kbFolderId;
+
+        // Three-way resolution:
+        //  - kbFolderId === ''  → new agent, explicitly no folder yet → return empty
+        //  - kbFolderId === undefined → existing agent with no per-agent setting → fall back to env
+        //  - kbFolderId is a real value → use it
+        const folderId = rawFolderId === ''
+            ? undefined
+            : (rawFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID);
 
         if (!folderId) {
             return NextResponse.json({ indexed: [], pending: [], removed: [] });
@@ -86,14 +93,26 @@ export async function POST(request: Request) {
             ? body.kbFolderId.trim()
             : undefined;
 
-        // Prefer KB folder ID sent in request body, then per-agent config, then global env
         const promptConfig = await getPromptConfig(agentId);
-        const folderId = explicitFolderId || promptConfig.config?.kbFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const rawFolderId = promptConfig.config?.kbFolderId;
+
+        // Three-way resolution (same logic as GET):
+        //  - kbFolderId === ''  → new agent, explicitly no folder yet
+        //  - kbFolderId === undefined → existing agent, fall back to env
+        //  - kbFolderId is a real value → use it
+        const configFolderId = rawFolderId === ''
+            ? undefined
+            : (rawFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID);
+        const folderId = explicitFolderId || configFolderId;
 
         if (!folderId) {
             return NextResponse.json(
-                { error: 'GOOGLE_DRIVE_FOLDER_ID not configured' },
-                { status: 500 }
+                {
+                    error: rawFolderId === ''
+                        ? 'No knowledge base folder configured for this agent. Set a Google Drive folder ID in the agent settings first.'
+                        : 'GOOGLE_DRIVE_FOLDER_ID not configured'
+                },
+                { status: 400 }
             );
         }
 
