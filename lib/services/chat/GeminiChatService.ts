@@ -4,14 +4,14 @@
  * Orchestrator for the chat pipeline. Coordinates the other services and
  * drives the two-turn Gemini function-calling flow:
  *
- *   Turn 1 → send the user prompt (+ tool declaration when files are present)
- *   Tool call? → execute InvoiceToolService, then send the result back
+ *   Turn 1 → send the user prompt (+ tool declarations for this agent)
+ *   Tool call? → find the matching AgentTool, execute it, send the result back
  *   Turn 2 → Gemini writes the final human-readable response
  *
  * Depends on:
+ *  - AgentToolRegistry           → resolves which tools are available per agent
  *  - ConversationHistoryService  → formats history
  *  - ContextService              → builds KB / file context
- *  - InvoiceToolService          → owns the tool declaration + execution
  *  - getSystemSettings / getPromptTemplate → agent prompt config
  *  - extractJsonFromResponse     → parses inline JSON from normal responses
  */
@@ -22,9 +22,10 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
+import { AgentTool } from './AgentTool';
+import { AgentToolRegistry } from './AgentToolRegistry';
 import { ConversationHistoryService, ConversationMessage } from './ConversationHistoryService';
 import { ContextService } from './ContextService';
-import { InvoiceToolService } from './InvoiceToolService';
 
 const logger = getLogger('GeminiChatService');
 
@@ -57,12 +58,10 @@ export class GeminiChatService {
 
     private readonly historyService: ConversationHistoryService;
     private readonly contextService: ContextService;
-    private readonly invoiceToolService: InvoiceToolService;
 
     constructor() {
         this.historyService = new ConversationHistoryService();
         this.contextService = new ContextService();
-        this.invoiceToolService = new InvoiceToolService(this.contextService);
     }
 
     // -------------------------------------------------------------------------
@@ -78,7 +77,7 @@ export class GeminiChatService {
             uploadedFiles = [],
         } = params;
 
-        const hasFiles = uploadedFiles.length > 0;
+        const tools = AgentToolRegistry.getTools(agentId, this.contextService);
 
         const historyContext = this.historyService.format(conversationHistory);
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
@@ -95,21 +94,23 @@ export class GeminiChatService {
 
         this.logPromptPreview(initialPrompt);
 
-        const model = this.createModel(hasFiles);
+        const model = this.createModel(tools);
         const contents: Content[] = [{ role: 'user', parts: [{ text: initialPrompt }] }];
 
         // Turn 1: send prompt
         const firstResult = await model.generateContent({ contents });
         const firstResponse = firstResult.response;
 
-        // Detect tool call
+        // Detect tool call from any registered tool
         const functionCallPart = firstResponse.candidates?.[0]?.content?.parts?.find(
-            (part: any) => part.functionCall?.name === 'process_invoices',
+            (part: any) => part.functionCall && tools.some((t) => t.canHandle(part.functionCall.name)),
         );
 
         if (functionCallPart?.functionCall) {
+            const tool = tools.find((t) => t.canHandle(functionCallPart.functionCall.name))!;
             return this.handleToolCall({
                 functionCallPart,
+                tool,
                 model,
                 contents,
                 uploadedFiles,
@@ -157,7 +158,7 @@ export class GeminiChatService {
     }): Promise<string> {
         const { message, agentPrompt, historyContext, fileContext, agentId } = options;
 
-        const { kbContext, fileListContext, similarChunks } =
+        const { kbContext, fileListContext } =
             await this.retrieveKBContext(message, agentId);
 
         const contextParts = [
@@ -194,7 +195,7 @@ export class GeminiChatService {
     // Model factory
     // -------------------------------------------------------------------------
 
-    private createModel(attachInvoiceTool: boolean): ReturnType<GoogleGenerativeAI['getGenerativeModel']> {
+    private createModel(tools: AgentTool[]): ReturnType<GoogleGenerativeAI['getGenerativeModel']> {
         const genAI = new GoogleGenerativeAI(settings.gemini.apiKey);
         const config: Parameters<typeof genAI.getGenerativeModel>[0] = {
             model: GeminiChatService.MODEL_ID,
@@ -204,9 +205,9 @@ export class GeminiChatService {
             },
         };
 
-        if (attachInvoiceTool) {
-            (config as any).tools = [this.invoiceToolService.declaration];
-            logger.info('process_invoices tool attached to model');
+        if (tools.length > 0) {
+            (config as any).tools = tools.map((t) => t.declaration);
+            logger.info(`Attached ${tools.length} tool(s) to model`);
         }
 
         return genAI.getGenerativeModel(config);
@@ -218,27 +219,26 @@ export class GeminiChatService {
 
     private async handleToolCall(options: {
         functionCallPart: any;
+        tool: AgentTool;
         model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>;
         contents: Content[];
         uploadedFiles: any[];
         agentId?: string;
         useKnowledgeBase: boolean;
     }): Promise<ChatResponse> {
-        const { functionCallPart, model, contents, uploadedFiles, agentId, useKnowledgeBase } = options;
-        const toolArgs = functionCallPart.functionCall.args as { instruction?: string };
+        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase } = options;
+        const functionName: string = functionCallPart.functionCall.name;
+        const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
-        logger.info(`Model invoked process_invoices with args: ${JSON.stringify(toolArgs)}`);
+        logger.info(`Model invoked "${functionName}" with args: ${JSON.stringify(args)}`);
 
-        // Execute the invoice extraction
-        const { extractedData, generateReport } = await this.invoiceToolService.execute(
+        const result = await tool.execute({
+            functionCallName: functionName,
+            args,
             uploadedFiles,
             agentId,
             useKnowledgeBase,
-        );
-
-        const toolResponse = extractedData
-            ? { status: 'success', invoices: extractedData }
-            : { status: 'error', message: 'No invoice data could be extracted from the uploaded files.' };
+        });
 
         // Turn 2: return the tool result to the model so it can write a human response
         const turn2Contents: Content[] = [
@@ -246,19 +246,19 @@ export class GeminiChatService {
             { role: 'model', parts: [{ functionCall: functionCallPart.functionCall }] },
             {
                 role: 'user',
-                parts: [{ functionResponse: { name: 'process_invoices', response: toolResponse } }],
+                parts: [{ functionResponse: { name: functionName, response: result.toolResponse } }],
             },
         ];
 
         const secondResult = await model.generateContent({ contents: turn2Contents });
         const responseText = this.cleanResponseText(secondResult.response.text());
 
-        logger.info(`Tool call completed — generateReport: ${generateReport}`);
+        logger.info(`Tool call "${functionName}" completed — generateReport: ${result.generateReport}`);
 
         return {
             response: responseText,
-            ...(extractedData && { extractedData }),
-            ...(generateReport && { generateReport }),
+            ...(result.extractedData && { extractedData: result.extractedData }),
+            ...(result.generateReport && { generateReport: result.generateReport }),
         };
     }
 

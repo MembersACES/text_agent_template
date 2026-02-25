@@ -1,6 +1,8 @@
 /**
  * InvoiceToolService
  *
+ * Implements AgentTool for the `process_invoices` Gemini function.
+ *
  * Single responsibility: own the Gemini function-calling declaration for the
  * `process_invoices` tool AND execute the actual invoice extraction when the
  * model decides to invoke it.
@@ -16,29 +18,35 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
+import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
 import { ContextService } from './ContextService';
 
 const logger = getLogger('InvoiceToolService');
 
-export interface InvoiceToolResult {
-    extractedData: any;
-    generateReport: boolean;
-}
-
-export class InvoiceToolService {
+export class InvoiceToolService implements AgentTool {
     private static readonly MODEL_ID = 'gemini-2.5-flash';
     private static readonly MAX_OUTPUT_TOKENS = 65_536;
 
     constructor(private readonly contextService: ContextService) { }
 
     // -------------------------------------------------------------------------
-    // Tool declaration (Gemini FunctionDeclaration)
+    // AgentTool: metadata
+    // -------------------------------------------------------------------------
+
+    get metadata(): ToolMetadata {
+        return {
+            name: 'Analyse Invoices',
+            description: 'Extracts and analyses structured data from utility invoice files',
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // AgentTool: declaration
     // -------------------------------------------------------------------------
 
     /**
-     * Returns the Gemini tool declaration that should be passed to the model
-     * when the user has uploaded files. The model uses the description to decide
-     * when to call this tool.
+     * Returns the Gemini tool declaration that should be passed to the model.
+     * The model uses the description to decide when to call this tool.
      */
     get declaration(): FunctionDeclarationsTool {
         return {
@@ -68,7 +76,15 @@ export class InvoiceToolService {
     }
 
     // -------------------------------------------------------------------------
-    // Tool execution
+    // AgentTool: canHandle
+    // -------------------------------------------------------------------------
+
+    canHandle(functionCallName: string): boolean {
+        return functionCallName === 'process_invoices';
+    }
+
+    // -------------------------------------------------------------------------
+    // AgentTool: execute
     // -------------------------------------------------------------------------
 
     /**
@@ -78,18 +94,16 @@ export class InvoiceToolService {
      *  3. Call Gemini to extract structured JSON.
      *  4. Parse and return the results.
      */
-    async execute(
-        uploadedFiles: any[],
-        agentId: string | undefined,
-        useKnowledgeBase: boolean,
-    ): Promise<InvoiceToolResult> {
+    async execute(params: ToolExecutionParams): Promise<ToolExecutionResult> {
+        const { uploadedFiles, agentId, useKnowledgeBase } = params;
+
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
-        const finalMessage = await this.buildExtractionPrompt(fileContext, agentId, useKnowledgeBase);
+        const extractionPrompt = await this.buildExtractionPrompt(fileContext, agentId, useKnowledgeBase);
 
-        logger.info(`Running extraction prompt (${finalMessage.length} chars)`);
+        logger.info(`Running extraction prompt (${extractionPrompt.length} chars)`);
 
-        const text = await this.runExtractionModel(finalMessage);
-        return this.parseExtractionResult(text, uploadedFiles.length);
+        const text = await this.runExtractionModel(extractionPrompt);
+        return this.buildToolResult(text, uploadedFiles.length);
     }
 
     // -------------------------------------------------------------------------
@@ -135,7 +149,7 @@ export class InvoiceToolService {
         return result.response.text();
     }
 
-    private parseExtractionResult(text: string, fileCount: number): InvoiceToolResult {
+    private buildToolResult(text: string, fileCount: number): ToolExecutionResult {
         const extractedJson = extractJsonFromResponse(text);
 
         const extractedData = extractedJson.length > 0
@@ -148,8 +162,13 @@ export class InvoiceToolService {
 
         this.logResults(extractedData, fileCount, extractedCount);
 
+        const toolResponse: Record<string, unknown> = extractedData
+            ? { status: 'success', invoices: extractedData }
+            : { status: 'error', message: 'No invoice data could be extracted from the uploaded files.' };
+
         return {
-            extractedData,
+            toolResponse,
+            ...(extractedData && { extractedData }),
             generateReport: extractedCount > 0,
         };
     }
