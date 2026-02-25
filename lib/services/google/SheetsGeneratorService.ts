@@ -1,0 +1,745 @@
+import { google } from 'googleapis';
+import { getLogger } from '@/lib/config/logger';
+import { settings } from '@/lib/config/settings';
+import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
+import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+
+const logger = getLogger('SheetsGeneratorService');
+
+const HEADER_BG_COLOR = { red: 0.212, green: 0.376, blue: 0.573 }; // #366092
+const TOTALS_BG_COLOR = { red: 1.0, green: 0.851, blue: 0.4 }; // #FFD966
+
+export class SheetsGeneratorService {
+    async createSheet(data: ReportData, folderId?: string): Promise<{ spreadsheetId: string; url: string }> {
+        const auth = googleAuthService.getWriteAuth();
+
+        // Ensure JWT client has valid token
+        await auth.authorize();
+
+        const sheets = google.sheets({ version: 'v4', auth });
+        const drive = google.drive({ version: 'v3', auth });
+
+        logger.info('JWT auth client created');
+        logger.info(`Service account email: ${settings.gcs.clientEmail}`);
+        logger.info(`Auth scopes: ${auth.scopes}`);
+        logger.info(`Auth credentials scope: ${auth.credentials?.scope || 'Not available'}`);
+
+        // Test auth and check quota info
+        try {
+            const about = await drive.about.get({ fields: 'user,storageQuota' });
+            logger.info(`Drive API test successful - authenticated as: ${about.data.user?.emailAddress}`);
+
+            if (about.data.storageQuota) {
+                const quota = about.data.storageQuota;
+                const limit = quota.limit ? parseInt(quota.limit, 10) : 0;
+                const usage = quota.usage ? parseInt(quota.usage, 10) : 0;
+                const usageInDrive = quota.usageInDrive ? parseInt(quota.usageInDrive, 10) : 0;
+                const limitMB = (limit / (1024 * 1024)).toFixed(2);
+                const usageMB = (usage / (1024 * 1024)).toFixed(2);
+                const usageInDriveMB = (usageInDrive / (1024 * 1024)).toFixed(2);
+
+                logger.info('Storage quota info:');
+                logger.info(`  - Limit: ${limitMB} MB (${limit} bytes)`);
+                logger.info(`  - Total Usage: ${usageMB} MB (${usage} bytes)`);
+                logger.info(`  - Usage in Drive: ${usageInDriveMB} MB (${usageInDrive} bytes)`);
+
+                if (limit > 0) {
+                    const percentUsed = ((usage / limit) * 100).toFixed(1);
+                    logger.info(`  - Percent Used: ${percentUsed}%`);
+                }
+            }
+        } catch (authTestError: any) {
+            logger.warn(`Drive API auth test failed: ${authTestError?.message || authTestError}`);
+            if (authTestError?.response) {
+                logger.warn(`Auth test error details: ${JSON.stringify(authTestError.response.data, null, 2)}`);
+            }
+        }
+
+        logger.info('Creating spreadsheet via Drive API...');
+        const spreadsheetTitle = `Base 1 Review - ${data.businessInfo.name} - ${new Date(data.generatedAt).toLocaleDateString()}`;
+        logger.info(`Spreadsheet title: ${spreadsheetTitle}`);
+
+        let spreadsheetId: string;
+        try {
+            const createRequest: any = {
+                requestBody: {
+                    name: spreadsheetTitle,
+                    mimeType: 'application/vnd.google-apps.spreadsheet',
+                },
+                fields: 'id',
+            };
+
+            if (folderId) {
+                createRequest.requestBody.parents = [folderId];
+                logger.info(`Creating spreadsheet directly in folder: ${folderId}`);
+            }
+
+            const file = await drive.files.create(createRequest);
+            spreadsheetId = file.data.id!;
+            logger.info(`Spreadsheet created successfully via Drive API: ${spreadsheetId}`);
+        } catch (createError: any) {
+            logger.error(`========== SPREADSHEET CREATION ERROR ==========`);
+            logger.error(`Error type: ${createError?.constructor?.name}`);
+            logger.error(`Error message: ${createError?.message}`);
+            logger.error(`Error code: ${createError?.code}`);
+            logger.error(`Error status: ${createError?.status}`);
+
+            if (createError?.response) {
+                logger.error(`Response status: ${createError.response.status}`);
+                logger.error(`Response statusText: ${createError.response.statusText}`);
+                logger.error(`Response data: ${JSON.stringify(createError.response.data, null, 2)}`);
+
+                if (createError.response.data?.error) {
+                    const errorData = createError.response.data.error;
+                    logger.error(`Error details: code=${errorData.code}, message=${errorData.message}`);
+                    if (errorData.errors) {
+                        logger.error(`Errors: ${JSON.stringify(errorData.errors, null, 2)}`);
+                    }
+                }
+            }
+
+            if (createError?.config) {
+                logger.error(`Request config: ${JSON.stringify({ method: createError.config.method, url: createError.config.url, headers: Object.keys(createError.config.headers || {}) })}`);
+            }
+
+            logger.error(`Full error object: ${JSON.stringify(createError, Object.getOwnPropertyNames(createError), 2)}`);
+
+            if (createError?.response?.data?.error?.errors?.[0]?.reason === 'storageQuotaExceeded') {
+                logger.error('========== QUOTA TROUBLESHOOTING ==========');
+                logger.error('Even though the file is created in a shared folder,');
+                logger.error('Google Drive checks the service account quota during creation.');
+                logger.error('Solutions: 1) Wait a few minutes after emptying trash, 2) Run cleanup endpoint, 3) Check folder owner space, 4) Request additional quota from Workspace admin');
+                logger.error('===========================================');
+            }
+
+            logger.error('===============================================');
+            throw createError;
+        }
+
+        // Get spreadsheet data to find default sheet ID
+        const spreadsheetData = await sheets.spreadsheets.get({ spreadsheetId });
+        const defaultSheetId = spreadsheetData.data.sheets?.[0]?.properties?.sheetId;
+        if (defaultSheetId !== undefined) {
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: {
+                    requests: [{ deleteSheet: { sheetId: defaultSheetId } }],
+                },
+            });
+        }
+
+        // Create all sheets
+        const sheetRequests = [
+            { title: 'Overview' },
+            { title: 'Electricity Data' },
+            { title: 'Gas Data' },
+            { title: 'Waste Data' },
+            { title: 'Water Data' },
+            { title: 'Oil Data' },
+            { title: 'Cost Summary' },
+            { title: 'Meter Details' },
+            { title: 'Base 1 Analysis' },
+        ];
+
+        const createSheetsResponse = await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: sheetRequests.map(title => ({
+                    addSheet: { properties: title },
+                })),
+            },
+        });
+
+        const sheetIds = createSheetsResponse.data.replies
+            ?.map((reply: any) => reply.addSheet?.properties?.sheetId)
+            .filter((id: number | undefined): id is number => id !== undefined) || [];
+
+        // Populate sheets with data
+        await this.populateOverviewSheet(sheets, spreadsheetId, sheetIds[0], data);
+
+        const electricityInvoices = data.invoices.filter(i => i.utility_type === 'Electricity');
+        const gasInvoices = data.invoices.filter(i => i.utility_type === 'Gas');
+        const wasteInvoices = data.invoices.filter(i => i.utility_type === 'Waste');
+        const waterInvoices = data.invoices.filter(i => i.utility_type === 'Water');
+        const oilInvoices = data.invoices.filter(i => i.utility_type === 'Oil');
+
+        await this.populateElectricitySheet(sheets, spreadsheetId, sheetIds[1], electricityInvoices);
+        await this.populateGasSheet(sheets, spreadsheetId, sheetIds[2], gasInvoices);
+        await this.populateWasteSheet(sheets, spreadsheetId, sheetIds[3], wasteInvoices);
+        await this.populateWaterSheet(sheets, spreadsheetId, sheetIds[4], waterInvoices);
+        await this.populateOilSheet(sheets, spreadsheetId, sheetIds[5], oilInvoices);
+        await this.populateCostSummarySheet(sheets, spreadsheetId, sheetIds[6], data.invoices);
+        await this.populateMeterDetailsSheet(sheets, spreadsheetId, sheetIds[7], data.invoices);
+        await this.populateBase1AnalysisSheet(sheets, spreadsheetId, sheetIds[8], data);
+
+        const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+        return { spreadsheetId, url };
+    }
+
+    private async populateOverviewSheet(sheets: any, spreadsheetId: string, sheetId: number, data: ReportData) {
+        const values = [
+            ['Base 1 Review Report'],
+            [],
+            ['Business Name:', data.businessInfo.name],
+            ...(data.businessInfo.address ? [['Address:', data.businessInfo.address]] : []),
+            ['Report Generated:', new Date(data.generatedAt).toLocaleString()],
+            ['Total Invoices Analyzed:', data.invoices.length.toString()],
+            [],
+            ['Summary'],
+        ];
+
+        const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
+        values.push(['Total Annual Cost (est):', `$${totalCost.toFixed(2)}`]);
+
+        if (data.savingsSummary) {
+            values.push(
+                ['Potential Savings (Conservative):', `$${data.savingsSummary.conservative.toFixed(2)}`],
+                ['Potential Savings (Moderate):', `$${data.savingsSummary.moderate.toFixed(2)}`],
+                ['Potential Savings (Optimistic):', `$${data.savingsSummary.optimistic.toFixed(2)}`]
+            );
+        }
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Overview!A1:B${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                        cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 16 } } },
+                        fields: 'userEnteredFormat.textFormat',
+                    },
+                }],
+            },
+        });
+    }
+
+    private async populateElectricitySheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        if (invoices.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'Electricity Data!A1',
+                valueInputOption: 'RAW',
+                requestBody: { values: [['No electricity invoices']] },
+            });
+            return;
+        }
+
+        const hasShoulder = invoices.some(inv =>
+            (inv.shoulder_usage_kwh !== null && inv.shoulder_usage_kwh !== undefined) ||
+            (inv.shoulder_rate_c_per_kwh !== null && inv.shoulder_rate_c_per_kwh !== undefined)
+        );
+
+        const headers = ['Invoice Date', 'Supplier', 'NMI', 'Site Address', 'Peak Usage (kWh)'];
+        if (hasShoulder) headers.push('Shoulder Usage (kWh)');
+        headers.push('Off-Peak Usage (kWh)', 'Peak Rate (c/kWh)');
+        if (hasShoulder) headers.push('Shoulder Rate (c/kWh)');
+        headers.push('Off-Peak Rate (c/kWh)', 'Daily Supply ($)', 'Total (inc GST)',
+            'Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)');
+
+        const values = [headers];
+        invoices.forEach(inv => {
+            const row: any[] = [
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.nmi || '',
+                inv.site_address || '',
+                (inv.peak_usage_kwh || 0).toString(),
+            ];
+
+            if (hasShoulder) row.push((inv.shoulder_usage_kwh || 0).toString());
+
+            row.push(
+                (inv.off_peak_usage_kwh || 0).toString(),
+                (inv.peak_rate_c_per_kwh ?? '').toString(),
+            );
+
+            if (hasShoulder) row.push((inv.shoulder_rate_c_per_kwh ?? '').toString());
+
+            row.push(
+                (inv.off_peak_rate_c_per_kwh ?? '').toString(),
+                (inv.daily_supply_charge ?? '').toString(),
+                (inv.total_inc_gst || 0).toString(),
+                (inv.demand_kw ?? '').toString(),
+                (inv.demand_charges ?? '').toString(),
+                (inv.meter_charges ?? '').toString(),
+                (inv.total_usage_kwh || 0).toString(),
+            );
+
+            values.push(row);
+        });
+
+        const totalRow: any[] = [
+            'TOTAL', '', '', '',
+            invoices.reduce((sum, inv) => sum + (inv.peak_usage_kwh || 0), 0).toString(),
+        ];
+
+        if (hasShoulder) totalRow.push(invoices.reduce((sum, inv) => sum + (inv.shoulder_usage_kwh || 0), 0).toString());
+
+        totalRow.push(
+            invoices.reduce((sum, inv) => sum + (inv.off_peak_usage_kwh || 0), 0).toString(),
+            '',
+        );
+
+        if (hasShoulder) totalRow.push('');
+
+        totalRow.push(
+            '',
+            invoices.reduce((sum, inv) => sum + (inv.daily_supply_charge || 0), 0).toString(),
+            invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toString(),
+        );
+
+        values.push(totalRow);
+
+        const lastCol = hasShoulder ? 'L' : 'J';
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Electricity Data!A1:${lastCol}${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateGasSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        if (invoices.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'Gas Data!A1',
+                valueInputOption: 'RAW',
+                requestBody: { values: [['No gas invoices']] },
+            });
+            return;
+        }
+
+        const headers = ['Invoice Date', 'Supplier', 'MRIN', 'Site Address', 'Usage (GJ)',
+            'Rate ($/GJ)', 'Daily Supply ($)', 'Total (inc GST)'];
+
+        const values = [headers];
+        invoices.forEach(inv => {
+            values.push([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.mrin || '',
+                inv.site_address || '',
+                (inv.total_usage_gj || 0).toString(),
+                (inv.gas_rate_per_gj ?? '').toString(),
+                (inv.daily_supply_charge ?? '').toString(),
+                (inv.total_inc_gst || 0).toString(),
+            ]);
+        });
+
+        values.push([
+            'TOTAL', '', '', '',
+            invoices.reduce((sum, inv) => sum + (inv.total_usage_gj || 0), 0).toString(),
+            '', '',
+            invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toString(),
+        ]);
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Gas Data!A1:H${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateWasteSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        if (invoices.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'Waste Data!A1',
+                valueInputOption: 'RAW',
+                requestBody: { values: [['No waste invoices']] },
+            });
+            return;
+        }
+
+        const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Frequency',
+            'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+
+        const values = [headers];
+        const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
+
+        if (hasServiceBreakdown) {
+            invoices.forEach(inv => {
+                if (inv.waste_services && inv.waste_services.length > 0) {
+                    inv.waste_services.forEach((service, index) => {
+                        const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                        const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+
+                        values.push([
+                            index === 0 ? (inv.invoice_date || '') : '',
+                            index === 0 ? (inv.supplier || '') : '',
+                            index === 0 ? (inv.site_address || '') : '',
+                            service.service_type || '',
+                            (service.frequency ?? '').toString(),
+                            (service.unit_cost ?? '').toString(),
+                            (service.total_cost ?? '').toString(),
+                            (gstAmount ?? '').toString(),
+                            (totalIncGst ?? '').toString(),
+                        ]);
+                    });
+                } else {
+                    values.push([
+                        inv.invoice_date || '',
+                        inv.supplier || '',
+                        inv.site_address || '',
+                        inv.tariff_type || '',
+                        '', '',
+                        (inv.total_charges_ex_gst ?? '').toString(),
+                        (inv.gst_amount ?? '').toString(),
+                        (inv.total_inc_gst || 0).toString(),
+                    ]);
+                }
+            });
+        } else {
+            invoices.forEach(inv => {
+                values.push([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '', '',
+                    (inv.total_charges_ex_gst ?? '').toString(),
+                    (inv.gst_amount ?? '').toString(),
+                    (inv.total_inc_gst || 0).toString(),
+                ]);
+            });
+        }
+
+        let totalExGst = 0, totalGst = 0, totalIncGst = 0;
+        invoices.forEach(inv => {
+            if (inv.waste_services && inv.waste_services.length > 0) {
+                inv.waste_services.forEach(service => {
+                    if (service.total_cost) {
+                        totalExGst += service.total_cost;
+                        totalGst += service.total_cost * 0.1;
+                        totalIncGst += service.total_cost * 1.1;
+                    }
+                });
+            } else {
+                totalExGst += inv.total_charges_ex_gst || 0;
+                totalGst += inv.gst_amount || 0;
+                totalIncGst += inv.total_inc_gst || 0;
+            }
+        });
+
+        values.push(['TOTAL', '', '', '', '', '', totalExGst.toString(), totalGst.toString(), totalIncGst.toString()]);
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Waste Data!A1:I${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateWaterSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        if (invoices.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'Water Data!A1',
+                valueInputOption: 'RAW',
+                requestBody: { values: [['No water invoices']] },
+            });
+            return;
+        }
+
+        const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Usage (kL)', 'Total (inc GST)'];
+        const values = [headers];
+
+        invoices.forEach(inv => {
+            values.push([
+                inv.invoice_date || '',
+                inv.supplier || '',
+                inv.site_address || '',
+                (inv.volume_m3 ? (inv.volume_m3 * 1000) : 0).toString(),
+                (inv.total_inc_gst || 0).toString(),
+            ]);
+        });
+
+        values.push([
+            'TOTAL', '', '', '',
+            invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toString(),
+        ]);
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Water Data!A1:E${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateOilSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        if (invoices.length === 0) {
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: 'Oil Data!A1',
+                valueInputOption: 'RAW',
+                requestBody: { values: [['No oil invoices']] },
+            });
+            return;
+        }
+
+        const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Quantity',
+            'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
+
+        const values = [headers];
+        const hasServiceBreakdown = invoices.some(inv => inv.oil_services && inv.oil_services.length > 0);
+
+        if (hasServiceBreakdown) {
+            invoices.forEach(inv => {
+                if (inv.oil_services && inv.oil_services.length > 0) {
+                    inv.oil_services.forEach((service, index) => {
+                        const gstAmount = service.total_cost ? service.total_cost * 0.1 : null;
+                        const totalIncGst = service.total_cost ? service.total_cost * 1.1 : null;
+
+                        values.push([
+                            index === 0 ? (inv.invoice_date || '') : '',
+                            index === 0 ? (inv.supplier || '') : '',
+                            index === 0 ? (inv.site_address || '') : '',
+                            service.service_type || '',
+                            (service.quantity ?? '').toString(),
+                            (service.unit_cost ?? '').toString(),
+                            (service.total_cost ?? '').toString(),
+                            (gstAmount ?? '').toString(),
+                            (totalIncGst ?? '').toString(),
+                        ]);
+                    });
+                } else {
+                    values.push([
+                        inv.invoice_date || '',
+                        inv.supplier || '',
+                        inv.site_address || '',
+                        inv.tariff_type || '',
+                        '', '',
+                        (inv.total_charges_ex_gst ?? '').toString(),
+                        (inv.gst_amount ?? '').toString(),
+                        (inv.total_inc_gst || 0).toString(),
+                    ]);
+                }
+            });
+        } else {
+            invoices.forEach(inv => {
+                values.push([
+                    inv.invoice_date || '',
+                    inv.supplier || '',
+                    inv.site_address || '',
+                    inv.tariff_type || '',
+                    '', '',
+                    (inv.total_charges_ex_gst ?? '').toString(),
+                    (inv.gst_amount ?? '').toString(),
+                    (inv.total_inc_gst || 0).toString(),
+                ]);
+            });
+        }
+
+        let totalExGst = 0, totalGst = 0, totalIncGst = 0;
+        invoices.forEach(inv => {
+            if (inv.oil_services && inv.oil_services.length > 0) {
+                inv.oil_services.forEach(service => {
+                    if (service.total_cost) {
+                        totalExGst += service.total_cost;
+                        totalGst += service.total_cost * 0.1;
+                        totalIncGst += service.total_cost * 1.1;
+                    }
+                });
+            } else {
+                totalExGst += inv.total_charges_ex_gst || 0;
+                totalGst += inv.gst_amount || 0;
+                totalIncGst += inv.total_inc_gst || 0;
+            }
+        });
+
+        values.push(['TOTAL', '', '', '', '', '', totalExGst.toString(), totalGst.toString(), totalIncGst.toString()]);
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Oil Data!A1:I${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateCostSummarySheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        const headers = ['Utility Type', 'Invoice Count', 'Total Cost (inc GST)'];
+        const values = [headers];
+
+        const byType = invoices.reduce((acc, inv) => {
+            const type = inv.utility_type;
+            if (!acc[type]) acc[type] = { count: 0, total: 0 };
+            acc[type].count++;
+            acc[type].total += inv.total_inc_gst || 0;
+            return acc;
+        }, {} as Record<string, { count: number; total: number }>);
+
+        Object.entries(byType).forEach(([type, data]) => {
+            values.push([type, data.count.toString(), data.total.toFixed(2)]);
+        });
+
+        values.push([
+            'TOTAL',
+            invoices.length.toString(),
+            invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0).toFixed(2),
+        ]);
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Cost Summary!A1:C${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeaderAndTotals(sheets, spreadsheetId, sheetId, values.length - 1);
+    }
+
+    private async populateMeterDetailsSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
+        const headers = ['Utility Type', 'Meter Number', 'NMI/MRIN', 'Site Address', 'Tariff Type'];
+        const values = [headers];
+
+        invoices.forEach(inv => {
+            values.push([
+                inv.utility_type,
+                inv.meter_number || '',
+                inv.nmi || inv.mrin || '',
+                inv.site_address || '',
+                inv.tariff_type || '',
+            ]);
+        });
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Meter Details!A1:E${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+    }
+
+    private async populateBase1AnalysisSheet(sheets: any, spreadsheetId: string, sheetId: number, data: ReportData) {
+        const values = [
+            ['Benchmarking Results'],
+            [],
+            ['Category', 'Issue Type', 'Flag', 'Current Rate/Cost', 'Market Benchmark', 'Potential Annual Savings'],
+        ];
+
+        data.invoices.forEach(inv => {
+            if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
+                inv.low_hanging_fruit.forEach(opp => {
+                    const flag = opp.severity === 'high' ? '🔴' : opp.severity === 'medium' ? '🟡' : '🟢';
+                    values.push([
+                        inv.utility_type,
+                        opp.type,
+                        flag,
+                        '', '',
+                        opp.potential_savings || '',
+                    ]);
+                });
+            }
+        });
+
+        values.push([]);
+        values.push(['Total Potential Savings']);
+
+        if (data.savingsSummary) {
+            values.push(
+                ['Conservative Estimate (70%):', `$${data.savingsSummary.conservative.toFixed(2)}`],
+                ['Moderate Estimate (85%):', `$${data.savingsSummary.moderate.toFixed(2)}`],
+                ['Optimistic Estimate (100%):', `$${data.savingsSummary.optimistic.toFixed(2)}`]
+            );
+        }
+
+        if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
+            values.push([]);
+            values.push(['🔴 CRITICAL ISSUES']);
+            data.savingsSummary.criticalIssues.forEach(issue => {
+                values.push([issue.issue, `$${issue.savings.toFixed(2)}/year`]);
+            });
+        }
+
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Base 1 Analysis!A1:B${values.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values },
+        });
+
+        await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+    }
+
+    private async formatSheetHeader(sheets: any, spreadsheetId: string, sheetId: number) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                        cell: {
+                            userEnteredFormat: {
+                                backgroundColor: HEADER_BG_COLOR,
+                                textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                                horizontalAlignment: 'CENTER',
+                            },
+                        },
+                        fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                    },
+                }],
+            },
+        });
+    }
+
+    private async formatSheetHeaderAndTotals(sheets: any, spreadsheetId: string, sheetId: number, totalsRowIndex: number) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: HEADER_BG_COLOR,
+                                    textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                                    horizontalAlignment: 'CENTER',
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                        },
+                    },
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: totalsRowIndex, endRowIndex: totalsRowIndex + 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: TOTALS_BG_COLOR,
+                                    textFormat: { bold: true },
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat)',
+                        },
+                    },
+                ],
+            },
+        });
+    }
+}
+
+export const sheetsGeneratorService = new SheetsGeneratorService();

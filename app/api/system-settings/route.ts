@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getSystemSettings, saveSystemSettings } from '@/lib/gcs-client';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 
 export async function GET() {
     try {
-        const settings = await getSystemSettings();
+        const settings = await gcsClient.getSystemSettings();
         return NextResponse.json(settings);
     } catch (error) {
         console.error('Error fetching system settings:', error);
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
             );
         }
 
-        await saveSystemSettings({ globalSystemPrompt });
+        await gcsClient.saveSystemSettings({ globalSystemPrompt });
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Error saving system settings:', error);

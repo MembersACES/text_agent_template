@@ -1,6 +1,8 @@
 
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
+import { settings } from '@/lib/config/settings';
+import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 
 export async function POST(request: Request) {
     try {
@@ -20,10 +22,8 @@ export async function POST(request: Request) {
         // 2. Check credentials
         const sheetId = process.env.GOOGLE_SHEET_ID;
         const sheetTab = process.env.GOOGLE_SHEET_TAB_NAME || 'Sheet1';
-        const clientEmail = process.env.GCP_CLIENT_EMAIL;
-        const privateKey = process.env.GCP_PRIVATE_KEY?.replace(/\\n/g, '\n'); // Fix newlines in env var
 
-        if (!sheetId || !clientEmail || !privateKey) {
+        if (!sheetId || !settings.gcs.clientEmail || !settings.gcs.privateKey) {
             console.warn('Google Sheets configuration missing. Logging to console instead.');
             console.log('--- CHAT REPORT (MOCK) ---');
             console.log('Time:', currentTime);
@@ -31,8 +31,6 @@ export async function POST(request: Request) {
             console.log('Messages:', formattedMessages);
             console.log('--------------------------');
 
-            // Return success even if sheets config is missing, to not break the UI flow.
-            // In production, you might want to return an error or alert the admin.
             return NextResponse.json({
                 success: true,
                 message: 'Chat report logged locally (Sheets credentials missing)'
@@ -40,13 +38,7 @@ export async function POST(request: Request) {
         }
 
         // 3. Initialize Google Sheets API
-        const auth = new google.auth.GoogleAuth({
-            credentials: {
-                client_email: clientEmail,
-                private_key: privateKey,
-            },
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
+        const auth = googleAuthService.getWriteAuth();
 
         const sheets = google.sheets({ version: 'v4', auth });
 

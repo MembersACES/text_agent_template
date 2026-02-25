@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { generateEmbedding } from '@/lib/embeddings';
-import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
-import { findSimilarChunks } from '@/lib/document-chunker';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+import { settings } from '@/lib/config/settings';
+import { embeddingService } from '@/lib/services/ai/EmbeddingService';
+import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
+import { findSimilarChunks } from '@/lib/utils/DocumentChunker';
 
 export async function POST(request: Request) {
     try {
@@ -18,7 +17,7 @@ export async function POST(request: Request) {
         }
 
         // 1. Load knowledge base (agent-specific or default)
-        const kb = await getCachedKnowledgeBase(agentId);
+        const kb = await knowledgeBaseStorage.getCached(agentId);
 
         if (!kb) {
             return NextResponse.json(
@@ -28,7 +27,7 @@ export async function POST(request: Request) {
         }
 
         // 2. Generate query embedding
-        const queryEmbedding = await generateEmbedding(query);
+        const queryEmbedding = await embeddingService.generateEmbedding(query);
 
         // 3. Find similar chunks
         const similarChunks = findSimilarChunks(queryEmbedding, kb.chunks, 3);
@@ -39,7 +38,7 @@ export async function POST(request: Request) {
             .join('\n\n---\n\n');
 
         // 5. Generate answer using Gemini
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = new GoogleGenerativeAI(settings.gemini.apiKey).getGenerativeModel({ model: settings.gemini.model });
 
         const prompt = `You are a helpful assistant answering questions based on the provided document context.
 

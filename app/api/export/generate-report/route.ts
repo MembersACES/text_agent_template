@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server';
-import { generateBase1Workbook } from '@/lib/excel-generator';
-import { getStorageClient } from '@/lib/google-auth';
-// import { uploadExcelToDrive, uploadFilesToDrive } from '@/lib/drive-uploader'; // Drive upload feature disabled
-import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/report-types';
-import { generateReportEmail } from '@/lib/email-generator';
-
-const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
+import { settings } from '@/lib/config/settings';
+import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
+import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
+import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
+import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/types/ReportTypes';
 
 export async function POST(request: Request) {
     try {
@@ -35,11 +33,11 @@ export async function POST(request: Request) {
         };
 
         // Generate Excel workbook
-        const excelBuffer = await generateBase1Workbook(reportData);
+        const excelBuffer = await excelGeneratorService.generateWorkbook(reportData);
 
         // Upload to GCS and get signed URL
-        const storage = getStorageClient();
-        const bucket = storage.bucket(BUCKET_NAME);
+        const storage = googleAuthService.getStorageClient();
+        const bucket = storage.bucket(settings.gcs.bucketName);
         const fileName = `base1-review-${businessInfo.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.xlsx`;
         const file = bucket.file(`reports/${fileName}`);
 
@@ -128,7 +126,7 @@ export async function POST(request: Request) {
         // }
 
         // Generate HTML email
-        const htmlEmail = generateReportEmail(reportData);
+        const htmlEmail = emailGeneratorService.generateEmail(reportData);
 
         return NextResponse.json({
             success: true,

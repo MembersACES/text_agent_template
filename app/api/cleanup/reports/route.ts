@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getStorageClient } from '@/lib/google-auth';
+import { settings } from '@/lib/config/settings';
+import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 
-const BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
 const RETENTION_HOURS = 48; // Delete files older than 2 days (48 hours)
 
 export async function POST(request: Request) {
     try {
-        const storage = getStorageClient();
-        const bucket = storage.bucket(BUCKET_NAME);
+        const storage = googleAuthService.getStorageClient();
+        const bucket = storage.bucket(settings.gcs.bucketName);
         
         // List all files in the reports/ prefix
         const [files] = await bucket.getFiles({ prefix: 'reports/' });
@@ -68,8 +68,8 @@ export async function POST(request: Request) {
 // GET endpoint to check status without deleting
 export async function GET() {
     try {
-        const storage = getStorageClient();
-        const bucket = storage.bucket(BUCKET_NAME);
+        const storage = googleAuthService.getStorageClient();
+        const bucket = storage.bucket(settings.gcs.bucketName);
         
         const [files] = await bucket.getFiles({ prefix: 'reports/' });
         

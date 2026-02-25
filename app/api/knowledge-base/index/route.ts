@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
-import { fetchGoogleDoc, fetchGoogleSheet, listFilesInFolder, getFolderMetadata } from '@/lib/document-fetcher';
-import { chunkDocument } from '@/lib/document-chunker';
-import { generateEmbeddings } from '@/lib/embeddings';
-import { saveKnowledgeBase, loadKnowledgeBase } from '@/lib/knowledge-base-storage';
-import { getPromptConfig } from '@/lib/gcs-client';
-import { cleanupOldReports } from '@/lib/report-cleanup';
+import { settings } from '@/lib/config/settings';
+import { documentFetcherService } from '@/lib/services/google/DocumentFetcherService';
+import { chunkDocument } from '@/lib/utils/DocumentChunker';
+import { embeddingService } from '@/lib/services/ai/EmbeddingService';
+import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
+import { reportCleanupService } from '@/lib/services/storage/ReportCleanupService';
 
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const agentId = searchParams.get('agentId') || undefined;
 
-        const promptConfig = await getPromptConfig(agentId);
+        const promptConfig = await gcsClient.getPromptConfig(agentId);
         const rawFolderId = promptConfig.config?.kbFolderId;
 
         // Three-way resolution:
@@ -20,17 +21,17 @@ export async function GET(request: Request) {
         //  - kbFolderId is a real value → use it
         const folderId = rawFolderId === ''
             ? undefined
-            : (rawFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID);
+            : (rawFolderId || settings.googleDrive.defaultFolderId);
 
         if (!folderId) {
             return NextResponse.json({ indexed: [], pending: [], removed: [] });
         }
 
         // Fetch current files from Drive
-        const driveFiles = await listFilesInFolder(folderId);
+        const driveFiles = await documentFetcherService.listFilesInFolder(folderId);
 
         // Load indexed metadata from storage (agent-specific or default)
-        const kbData = await loadKnowledgeBase(agentId);
+        const kbData = await knowledgeBaseStorage.load(agentId);
         const indexedMeta = kbData?.fileMetadata || {};
 
         const driveFileIds = new Set(driveFiles.map(f => f.id));
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
             ? body.kbFolderId.trim()
             : undefined;
 
-        const promptConfig = await getPromptConfig(agentId);
+        const promptConfig = await gcsClient.getPromptConfig(agentId);
         const rawFolderId = promptConfig.config?.kbFolderId;
 
         // Three-way resolution (same logic as GET):
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
         //  - kbFolderId is a real value → use it
         const configFolderId = rawFolderId === ''
             ? undefined
-            : (rawFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID);
+            : (rawFolderId || settings.googleDrive.defaultFolderId);
         const folderId = explicitFolderId || configFolderId;
 
         if (!folderId) {
@@ -119,7 +120,7 @@ export async function POST(request: Request) {
         console.log(`Starting knowledge base indexing for agent: ${agentId || 'default'}...`);
 
         // Load existing knowledge base to check for changes (agent-specific or default)
-        let existingKB = await loadKnowledgeBase(agentId);
+        let existingKB = await knowledgeBaseStorage.load(agentId);
 
         // If the stored KB was built from a different folder, ignore it and start fresh
         if (existingKB && existingKB.documentId !== folderId) {
@@ -145,11 +146,11 @@ export async function POST(request: Request) {
         console.log(`Processing folder: ${folderId}`);
 
         // Get folder metadata
-        const folderMeta = await getFolderMetadata(folderId);
+        const folderMeta = await documentFetcherService.getFolderMetadata(folderId);
         const kbName = folderMeta.name;
 
         // List all files in folder
-        const files = await listFilesInFolder(folderId);
+        const files = await documentFetcherService.listFilesInFolder(folderId);
         console.log(`Found ${files.length} documents in folder`);
 
         // Keep track of which files are still in the folder
@@ -194,9 +195,9 @@ export async function POST(request: Request) {
 
                 let text = '';
                 if (file.mimeType === 'application/vnd.google-apps.document') {
-                    text = await fetchGoogleDoc(file.id);
+                    text = await documentFetcherService.fetchDoc(file.id);
                 } else if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
-                    text = await fetchGoogleSheet(file.id);
+                    text = await documentFetcherService.fetchSheet(file.id);
                 } else {
                     // Unsupported type; skip
                     console.log(`Skipping unsupported file type: ${file.name} (${file.mimeType})`);
@@ -209,7 +210,7 @@ export async function POST(request: Request) {
                 }
 
                 const textChunks = chunkDocument(text);
-                const embeddings = await generateEmbeddings(textChunks);
+                const embeddings = await embeddingService.generateEmbeddings(textChunks);
 
                 const fileChunks = textChunks.map((chunkText, i) => ({
                     text: chunkText,
@@ -247,7 +248,7 @@ export async function POST(request: Request) {
 
         // Save to Cloud Storage (agent-specific or default)
         console.log(`Saving ${allChunks.length} chunks to Cloud Storage...`);
-        await saveKnowledgeBase({
+        await knowledgeBaseStorage.save({
             chunks: allChunks,
             documentId: folderId,
             documentName: kbName,
@@ -259,7 +260,7 @@ export async function POST(request: Request) {
         console.log('Indexing complete!');
 
         // Clean up old reports in background (non-blocking - don't await to avoid slowing down response)
-        cleanupOldReports()
+        reportCleanupService.cleanupOldReports()
             .then((cleanupStats) => {
                 if (cleanupStats && cleanupStats.deleted > 0) {
                     console.log(`[KB Index] Background cleanup: Deleted ${cleanupStats.deleted} old report(s)`);

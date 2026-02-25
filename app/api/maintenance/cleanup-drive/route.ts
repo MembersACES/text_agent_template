@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getGoogleAuthWrite } from '@/lib/google-auth';
 import { google } from 'googleapis';
+import { settings } from '@/lib/config/settings';
+import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 
 /**
  * Maintenance endpoint to clean up files owned by the service account in Google Drive
@@ -31,12 +32,12 @@ export async function POST(request: Request) {
 
 async function handleCleanup(dryRun: boolean) {
     try {
-        const auth = getGoogleAuthWrite();
+        const auth = googleAuthService.getWriteAuth();
         await auth.authorize();
         const drive = google.drive({ version: 'v3', auth });
 
         console.log('[Drive Cleanup] Starting cleanup...');
-        console.log('[Drive Cleanup] Service account:', process.env.GCP_CLIENT_EMAIL);
+        console.log('[Drive Cleanup] Service account:', settings.gcs.clientEmail);
         console.log('[Drive Cleanup] Dry run mode:', dryRun);
 
         // List all files owned by the service account (not in trash)
@@ -62,7 +63,7 @@ async function handleCleanup(dryRun: boolean) {
         console.log(`[Drive Cleanup] Found ${trashFiles.length} files in trash`);
 
         // Filter to only files owned by the service account
-        const serviceAccountEmail = process.env.GCP_CLIENT_EMAIL;
+        const serviceAccountEmail = settings.gcs.clientEmail;
         const ownedFiles = files.filter(file => 
             file.owners?.some(owner => owner.emailAddress === serviceAccountEmail)
         );

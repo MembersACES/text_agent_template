@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getPromptConfig, savePromptConfig, listAgents } from '@/lib/gcs-client';
-// Note: getPromptConfig is used in GET to resolve agent names; savePromptConfig is used in POST
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 
 /**
  * Hard-coded baseline agents.
@@ -26,13 +25,13 @@ export async function GET() {
     let agents = [...HARDCODED_AGENTS];
 
     try {
-        const gcsAgentIds = await listAgents();
+        const gcsAgentIds = await gcsClient.listAgents();
         const hardcodedIds = new Set(HARDCODED_AGENTS.map((a) => a.id));
 
         for (const id of gcsAgentIds) {
             if (!hardcodedIds.has(id)) {
                 // Fetch name / description from GCS settings
-                const config = await getPromptConfig(id);
+                const config = await gcsClient.getPromptConfig(id);
                 agents.push({
                     id,
                     name: config.agentName || id,
@@ -77,7 +76,7 @@ export async function POST(request: Request) {
         // Build a minimal config from scratch — intentionally do NOT read from the
         // default agent so that no kbFolderId or other inherited settings leak in.
         // The user must configure the knowledge base folder themselves after creation.
-        await savePromptConfig(
+        await gcsClient.savePromptConfig(
             {
                 systemPrompt: `You are a helpful AI assistant. Answer questions clearly, concisely, and accurately.
 

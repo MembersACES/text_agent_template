@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
+import { settings } from '@/lib/config/settings';
 
 export async function POST(req: Request) {
     try {
         const { password } = await req.json();
-        const correctPassword = process.env.SITE_PASSWORD;
+        const correctPassword = settings.auth.sitePassword;
 
         if (password === correctPassword) {
             return NextResponse.json({ success: true });
