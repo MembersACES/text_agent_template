@@ -89,6 +89,15 @@ export interface PromptConfig {
         language?: string;
         kbFolderId?: string;
         allowFileUploads?: boolean;
+        zohoDesk?: {
+            enabled: boolean;
+            portalConfigs: Array<{
+                portalId: string;
+                kbId: string;
+                allowedCategoryIds: string[];
+                kbName: string;
+            }>;
+        };
     };
 }
 
