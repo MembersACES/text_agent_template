@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { AgentToolRegistry } from '@/lib/services/chat/AgentToolRegistry';
+import { AgentToolRegistry } from '@/lib/services/tools/AgentToolRegistry';
 import { ContextService } from '@/lib/services/chat/ContextService';
 
 /**

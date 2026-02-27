@@ -19,7 +19,7 @@ import { settings } from '@/lib/config/settings';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
-import { ContextService } from './ContextService';
+import { ContextService } from '../chat/ContextService';
 
 const logger = getLogger('InvoiceToolService');
 

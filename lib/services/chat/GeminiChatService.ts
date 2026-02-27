@@ -22,8 +22,8 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
-import { AgentTool } from './AgentTool';
-import { AgentToolRegistry } from './AgentToolRegistry';
+import { AgentTool } from '../tools/AgentTool';
+import { AgentToolRegistry } from '../tools/AgentToolRegistry';
 import { ConversationHistoryService, ConversationMessage } from './ConversationHistoryService';
 import { ContextService } from './ContextService';
 

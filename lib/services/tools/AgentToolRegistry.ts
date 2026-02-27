@@ -11,7 +11,7 @@
 
 import { getLogger } from '@/lib/config/logger';
 import { AgentTool } from './AgentTool';
-import { ContextService } from './ContextService';
+import { ContextService } from '../chat/ContextService';
 import { InvoiceToolService } from './InvoiceToolService';
 
 const logger = getLogger('AgentToolRegistry');
