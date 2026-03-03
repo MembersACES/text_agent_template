@@ -18,6 +18,11 @@ const HARDCODED_AGENTS: { id: string; name: string; description?: string }[] = [
         name: 'Base 1 Review',
         description: 'Analyses utility invoices and generates an Excel savings report',
     },
+    {
+        id: 'honest-to-goodness',
+        name: 'Honest to Goodness',
+        description: 'Customer support agent backed by Zoho Desk knowledge base',
+    },
 ];
 
 export async function GET() {

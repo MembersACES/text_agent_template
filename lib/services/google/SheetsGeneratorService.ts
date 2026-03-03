@@ -8,6 +8,7 @@ const logger = getLogger('SheetsGeneratorService');
 
 const HEADER_BG_COLOR = { red: 0.212, green: 0.376, blue: 0.573 }; // #366092
 const TOTALS_BG_COLOR = { red: 1.0, green: 0.851, blue: 0.4 }; // #FFD966
+const OVERVIEW_SECTION_BG = { red: 0.906, green: 0.902, blue: 0.902 }; // #E7E6E6
 
 export class SheetsGeneratorService {
     async createSheet(data: ReportData, folderId?: string): Promise<{ spreadsheetId: string; url: string }> {
@@ -180,22 +181,22 @@ export class SheetsGeneratorService {
         const values = [
             ['Base 1 Review Report'],
             [],
-            ['Business Name:', data.businessInfo.name],
-            ...(data.businessInfo.address ? [['Address:', data.businessInfo.address]] : []),
-            ['Report Generated:', new Date(data.generatedAt).toLocaleString()],
-            ['Total Invoices Analyzed:', data.invoices.length.toString()],
+            ['Business', data.businessInfo.name],
+            ...(data.businessInfo.address ? [['Address', data.businessInfo.address]] : []),
+            ['Report generated', new Date(data.generatedAt).toLocaleString()],
+            ['Total invoices', data.invoices.length.toString()],
             [],
             ['Summary'],
+            [],
         ];
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        values.push(['Total Annual Cost (est):', `$${totalCost.toFixed(2)}`]);
-
+        values.push(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
         if (data.savingsSummary) {
             values.push(
-                ['Potential Savings (Conservative):', `$${data.savingsSummary.conservative.toFixed(2)}`],
-                ['Potential Savings (Moderate):', `$${data.savingsSummary.moderate.toFixed(2)}`],
-                ['Potential Savings (Optimistic):', `$${data.savingsSummary.optimistic.toFixed(2)}`]
+                ['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`],
+                ['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`],
+                ['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]
             );
         }
 
@@ -206,32 +207,66 @@ export class SheetsGeneratorService {
             requestBody: { values },
         });
 
+        const businessStartRow = 2;
+        const businessEndRow = data.businessInfo.address ? 5 : 4;
+        const summaryRowIndex = data.businessInfo.address ? 7 : 6;
+
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
             requestBody: {
-                requests: [{
-                    repeatCell: {
-                        range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
-                        cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 16 } } },
-                        fields: 'userEnteredFormat.textFormat',
+                requests: [
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: HEADER_BG_COLOR,
+                                    textFormat: { bold: true, fontSize: 18, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                                    horizontalAlignment: 'CENTER',
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                        },
                     },
-                }],
+                    {
+                        mergeCells: {
+                            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 2 },
+                            mergeType: 'MERGE_ALL',
+                        },
+                    },
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: businessStartRow, endRowIndex: businessEndRow + 1, startColumnIndex: 0, endColumnIndex: 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: OVERVIEW_SECTION_BG,
+                                    textFormat: { bold: true },
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat)',
+                        },
+                    },
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: summaryRowIndex, endRowIndex: summaryRowIndex + 1, startColumnIndex: 0, endColumnIndex: 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: OVERVIEW_SECTION_BG,
+                                    textFormat: { bold: true, fontSize: 12 },
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat)',
+                        },
+                    },
+                    { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 220 }, fields: 'pixelSize' } },
+                    { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 }, properties: { pixelSize: 120 }, fields: 'pixelSize' } },
+                ],
             },
         });
     }
 
     private async populateElectricitySheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: 'Electricity Data!A1',
-                valueInputOption: 'RAW',
-                requestBody: { values: [['No electricity invoices']] },
-            });
-            return;
-        }
-
-        const hasShoulder = invoices.some(inv =>
+        const hasShoulder = invoices.length > 0 && invoices.some(inv =>
             (inv.shoulder_usage_kwh !== null && inv.shoulder_usage_kwh !== undefined) ||
             (inv.shoulder_rate_c_per_kwh !== null && inv.shoulder_rate_c_per_kwh !== undefined)
         );
@@ -244,6 +279,18 @@ export class SheetsGeneratorService {
             'Demand (kW/kVA)', 'Demand Charges ($)', 'Meter Charges ($)', 'Total Usage (kWh)');
 
         const values = [headers];
+        if (invoices.length === 0) {
+            values.push(['No data']);
+            const lastCol = String.fromCharCode(65 + headers.length - 1);
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `Electricity Data!A1:${lastCol}${values.length}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values },
+            });
+            await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+            return;
+        }
         invoices.forEach(inv => {
             const row: any[] = [
                 inv.invoice_date || '',
@@ -309,20 +356,21 @@ export class SheetsGeneratorService {
     }
 
     private async populateGasSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: 'Gas Data!A1',
-                valueInputOption: 'RAW',
-                requestBody: { values: [['No gas invoices']] },
-            });
-            return;
-        }
-
         const headers = ['Invoice Date', 'Supplier', 'MRIN', 'Site Address', 'Usage (GJ)',
             'Rate ($/GJ)', 'Daily Supply ($)', 'Total (inc GST)'];
 
         const values = [headers];
+        if (invoices.length === 0) {
+            values.push(['No data']);
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `Gas Data!A1:H${values.length}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values },
+            });
+            await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+            return;
+        }
         invoices.forEach(inv => {
             values.push([
                 inv.invoice_date || '',
@@ -354,20 +402,22 @@ export class SheetsGeneratorService {
     }
 
     private async populateWasteSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: 'Waste Data!A1',
-                valueInputOption: 'RAW',
-                requestBody: { values: [['No waste invoices']] },
-            });
-            return;
-        }
-
         const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Frequency',
             'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
 
         const values = [headers];
+        if (invoices.length === 0) {
+            values.push(['No data']);
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `Waste Data!A1:I${values.length}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values },
+            });
+            await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+            return;
+        }
+
         const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
 
         if (hasServiceBreakdown) {
@@ -447,18 +497,19 @@ export class SheetsGeneratorService {
     }
 
     private async populateWaterSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: 'Water Data!A1',
-                valueInputOption: 'RAW',
-                requestBody: { values: [['No water invoices']] },
-            });
-            return;
-        }
-
         const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Usage (kL)', 'Total (inc GST)'];
         const values = [headers];
+        if (invoices.length === 0) {
+            values.push(['No data']);
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `Water Data!A1:E${values.length}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values },
+            });
+            await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+            return;
+        }
 
         invoices.forEach(inv => {
             values.push([
@@ -486,20 +537,22 @@ export class SheetsGeneratorService {
     }
 
     private async populateOilSheet(sheets: any, spreadsheetId: string, sheetId: number, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: 'Oil Data!A1',
-                valueInputOption: 'RAW',
-                requestBody: { values: [['No oil invoices']] },
-            });
-            return;
-        }
-
         const headers = ['Invoice Date', 'Supplier', 'Site Address', 'Service Type', 'Quantity',
             'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
 
         const values = [headers];
+        if (invoices.length === 0) {
+            values.push(['No data']);
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `Oil Data!A1:I${values.length}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values },
+            });
+            await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+            return;
+        }
+
         const hasServiceBreakdown = invoices.some(inv => inv.oil_services && inv.oil_services.length > 0);
 
         if (hasServiceBreakdown) {
@@ -635,54 +688,97 @@ export class SheetsGeneratorService {
     }
 
     private async populateBase1AnalysisSheet(sheets: any, spreadsheetId: string, sheetId: number, data: ReportData) {
-        const values = [
-            ['Benchmarking Results'],
-            [],
-            ['Category', 'Issue Type', 'Flag', 'Current Rate/Cost', 'Market Benchmark', 'Potential Annual Savings'],
-        ];
+        const rows: string[][] = [];
+        const maxCol = 6;
+        const pad = (arr: string[], len: number): string[] => [...arr, ...Array(Math.max(0, len - arr.length)).fill('')];
+
+        rows.push(pad(['Benchmarking results'], maxCol));
+        rows.push(pad([], maxCol));
+        rows.push(pad(['Category', 'Issue type', 'Flag', 'Current rate/cost', 'Market benchmark', 'Potential annual savings'], maxCol));
 
         data.invoices.forEach(inv => {
             if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
                 inv.low_hanging_fruit.forEach(opp => {
                     const flag = opp.severity === 'high' ? '🔴' : opp.severity === 'medium' ? '🟡' : '🟢';
-                    values.push([
-                        inv.utility_type,
-                        opp.type,
-                        flag,
-                        '', '',
-                        opp.potential_savings || '',
-                    ]);
+                    rows.push(pad([inv.utility_type, opp.type, flag, '', '', opp.potential_savings || ''], maxCol));
                 });
             }
         });
 
-        values.push([]);
-        values.push(['Total Potential Savings']);
-
+        rows.push(pad([], maxCol));
+        rows.push(pad([], maxCol));
+        rows.push(pad(['Total potential savings'], maxCol));
+        rows.push(pad([], maxCol));
         if (data.savingsSummary) {
-            values.push(
-                ['Conservative Estimate (70%):', `$${data.savingsSummary.conservative.toFixed(2)}`],
-                ['Moderate Estimate (85%):', `$${data.savingsSummary.moderate.toFixed(2)}`],
-                ['Optimistic Estimate (100%):', `$${data.savingsSummary.optimistic.toFixed(2)}`]
-            );
+            rows.push(pad(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`], maxCol));
+            rows.push(pad(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`], maxCol));
+            rows.push(pad(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`], maxCol));
         }
 
+        rows.push(pad([], maxCol));
+        rows.push(pad([], maxCol));
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
-            values.push([]);
-            values.push(['🔴 CRITICAL ISSUES']);
-            data.savingsSummary.criticalIssues.forEach(issue => {
-                values.push([issue.issue, `$${issue.savings.toFixed(2)}/year`]);
+            const issues = data.savingsSummary.criticalIssues;
+            const maxShow = 15;
+            const toShow = issues.slice(0, maxShow);
+            rows.push(pad(['Critical issues'], maxCol));
+            rows.push(pad([], maxCol));
+            rows.push(pad(['Issue', 'Est. savings per year'], maxCol));
+            toShow.forEach(issue => {
+                rows.push(pad([issue.issue, `$${issue.savings.toFixed(2)}`], maxCol));
             });
+            if (issues.length > maxShow) {
+                rows.push(pad([`Showing top ${maxShow} of ${issues.length} issues.`, ''], maxCol));
+            }
         }
 
+        const colLetter = (n: number) => {
+            let s = '';
+            while (n >= 0) {
+                s = String.fromCharCode(65 + (n % 26)) + s;
+                n = Math.floor(n / 26) - 1;
+            }
+            return s;
+        };
+        const range = `Base 1 Analysis!A1:${colLetter(maxCol - 1)}${rows.length}`;
         await sheets.spreadsheets.values.update({
             spreadsheetId,
-            range: `Base 1 Analysis!A1:B${values.length}`,
+            range,
             valueInputOption: 'USER_ENTERED',
-            requestBody: { values },
+            requestBody: { values: rows },
         });
 
-        await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                            cell: {
+                                userEnteredFormat: {
+                                    textFormat: { bold: true, fontSize: 14 },
+                                },
+                            },
+                            fields: 'userEnteredFormat.textFormat',
+                        },
+                    },
+                    {
+                        repeatCell: {
+                            range: { sheetId, startRowIndex: 2, endRowIndex: 3 },
+                            cell: {
+                                userEnteredFormat: {
+                                    backgroundColor: HEADER_BG_COLOR,
+                                    textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                                    horizontalAlignment: 'CENTER',
+                                },
+                            },
+                            fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                        },
+                    },
+                ],
+            },
+        });
     }
 
     private async formatSheetHeader(sheets: any, spreadsheetId: string, sheetId: number) {

@@ -3,6 +3,8 @@ import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
 
 const HEADER_BG_COLOR = '366092'; // Blue
 const TOTALS_BG_COLOR = 'FFD966'; // Yellow
+const OVERVIEW_TITLE_BG = '366092'; // Same blue as headers
+const OVERVIEW_SECTION_BG = 'E7E6E6'; // Light grey for business block
 
 export class ExcelGeneratorService {
     async generateWorkbook(data: ReportData): Promise<Buffer> {
@@ -40,38 +42,49 @@ export class ExcelGeneratorService {
     }
 
     private buildOverviewSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
+        // Title row - styled header
         sheet.addRow(['Base 1 Review Report']);
-        sheet.getRow(1).font = { bold: true, size: 16 };
+        const titleRow = sheet.getRow(1);
+        titleRow.font = { bold: true, size: 18, color: { argb: 'FFFFFF' } };
+        titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: OVERVIEW_TITLE_BG } };
+        titleRow.alignment = { horizontal: 'center' };
+        sheet.mergeCells('A1:B1');
         sheet.addRow([]);
 
-        sheet.addRow(['Business Name:', data.businessInfo.name]);
+        // Business info block
+        const businessStartRow = sheet.rowCount + 1;
+        sheet.addRow(['Business', data.businessInfo.name]);
         if (data.businessInfo.address) {
-            sheet.addRow(['Address:', data.businessInfo.address]);
+            sheet.addRow(['Address', data.businessInfo.address]);
         }
-        sheet.addRow(['Report Generated:', new Date(data.generatedAt).toLocaleString()]);
-        sheet.addRow(['Total Invoices Analyzed:', data.invoices.length]);
-
+        sheet.addRow(['Report generated', new Date(data.generatedAt).toLocaleString()]);
+        sheet.addRow(['Total invoices', data.invoices.length]);
+        const businessEndRow = sheet.rowCount;
+        for (let r = businessStartRow; r <= businessEndRow; r++) {
+            sheet.getRow(r).getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: OVERVIEW_SECTION_BG } };
+            sheet.getRow(r).getCell(1).font = { bold: true };
+        }
         sheet.addRow([]);
+
+        // Summary section
         sheet.addRow(['Summary']);
-        sheet.getRow(sheet.rowCount).font = { bold: true };
+        sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
+        sheet.getRow(sheet.rowCount).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: OVERVIEW_SECTION_BG } };
+        sheet.addRow([]);
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        sheet.addRow(['Total Annual Cost (est):', `$${totalCost.toFixed(2)}`]);
-
+        sheet.addRow(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
         if (data.savingsSummary) {
-            sheet.addRow(['Potential Savings (Conservative):', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Potential Savings (Moderate):', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Potential Savings (Optimistic):', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
+            sheet.addRow(['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
+            sheet.addRow(['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
+            sheet.addRow(['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
         }
+        sheet.getColumn(1).width = 32;
+        sheet.getColumn(2).width = 18;
     }
 
     private buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) {
-            sheet.addRow(['No electricity invoices']);
-            return;
-        }
-
-        const hasShoulder = invoices.some(inv =>
+        const hasShoulder = invoices.length > 0 && invoices.some(inv =>
             (inv.shoulder_usage_kwh !== null && inv.shoulder_usage_kwh !== undefined) ||
             (inv.shoulder_rate_c_per_kwh !== null && inv.shoulder_rate_c_per_kwh !== undefined)
         );
@@ -89,6 +102,11 @@ export class ExcelGeneratorService {
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         headerRow.alignment = { horizontal: 'center' };
+
+        if (invoices.length === 0) {
+            sheet.addRow(['No data']);
+            return;
+        }
 
         invoices.forEach(inv => {
             const billingDays = inv.billing_days || 0;
@@ -150,8 +168,6 @@ export class ExcelGeneratorService {
     }
 
     private buildGasSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) { sheet.addRow(['No gas invoices']); return; }
-
         const headers = ['Invoice Date', 'Supplier', 'MRIN', 'Site Address', 'Billing Days', 'Usage (GJ)',
             'Rate ($/GJ)', 'Daily Supply ($)', 'Total (inc GST)',
             'Estimated Monthly Usage (GJ)', 'Estimated Annual Usage (GJ)'];
@@ -160,6 +176,11 @@ export class ExcelGeneratorService {
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         headerRow.alignment = { horizontal: 'center' };
+
+        if (invoices.length === 0) {
+            sheet.addRow(['No data']);
+            return;
+        }
 
         invoices.forEach(inv => {
             const billingDays = inv.billing_days || 0;
@@ -195,8 +216,6 @@ export class ExcelGeneratorService {
     }
 
     private buildWasteSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) { sheet.addRow(['No waste invoices']); return; }
-
         const headers = ['Invoice Date', 'Invoice Number', 'Supplier', 'Site Address', 'Service Type', 'Frequency',
             'Pickup Date', 'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
         sheet.addRow(headers);
@@ -204,6 +223,11 @@ export class ExcelGeneratorService {
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         headerRow.alignment = { horizontal: 'center' };
+
+        if (invoices.length === 0) {
+            sheet.addRow(['No data']);
+            return;
+        }
 
         const hasServiceBreakdown = invoices.some(inv => inv.waste_services && inv.waste_services.length > 0);
 
@@ -298,12 +322,16 @@ export class ExcelGeneratorService {
     }
 
     private buildWaterSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) { sheet.addRow(['No water invoices']); return; }
-
         sheet.addRow(['Invoice Date', 'Supplier', 'Site Address', 'Usage (kL)', 'Total (inc GST)']);
         const headerRow = sheet.getRow(1);
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+        headerRow.alignment = { horizontal: 'center' };
+
+        if (invoices.length === 0) {
+            sheet.addRow(['No data']);
+            return;
+        }
 
         invoices.forEach(inv => {
             sheet.addRow([
@@ -322,8 +350,6 @@ export class ExcelGeneratorService {
     }
 
     private buildOilSheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
-        if (invoices.length === 0) { sheet.addRow(['No oil invoices']); return; }
-
         const headers = ['Invoice Date', 'Invoice Number', 'Supplier', 'Site Address', 'Service Type', 'Quantity',
             'Unit Cost', 'Total (ex GST)', 'GST', 'Total (inc GST)'];
         sheet.addRow(headers);
@@ -331,6 +357,11 @@ export class ExcelGeneratorService {
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         headerRow.alignment = { horizontal: 'center' };
+
+        if (invoices.length === 0) {
+            sheet.addRow(['No data']);
+            return;
+        }
 
         const hasServiceBreakdown = invoices.some(inv => inv.oil_services && inv.oil_services.length > 0);
 
@@ -441,13 +472,15 @@ export class ExcelGeneratorService {
     }
 
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
-        sheet.addRow(['Benchmarking Results']);
+        // Benchmarking Results section
+        sheet.addRow(['Benchmarking results']);
         sheet.getRow(1).font = { bold: true, size: 14 };
         sheet.addRow([]);
-        sheet.addRow(['Category', 'Issue Type', 'Flag', 'Current Rate/Cost', 'Market Benchmark', 'Potential Annual Savings']);
-        const headerRow = sheet.getRow(3);
-        headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-        headerRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+        sheet.addRow(['Category', 'Issue type', 'Flag', 'Current rate/cost', 'Market benchmark', 'Potential annual savings']);
+        const tableHeaderRow = sheet.getRow(3);
+        tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+        tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+        tableHeaderRow.alignment = { horizontal: 'center' };
 
         data.invoices.forEach(inv => {
             if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
@@ -474,24 +507,46 @@ export class ExcelGeneratorService {
         });
 
         sheet.addRow([]);
+        sheet.addRow([]);
 
+        // Total Potential Savings section
         if (data.savingsSummary) {
-            sheet.addRow(['Total Potential Savings']);
-            sheet.getRow(sheet.rowCount).font = { bold: true };
-            sheet.addRow(['Conservative Estimate (70%):', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Moderate Estimate (85%):', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Optimistic Estimate (100%):', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
+            sheet.addRow(['Total potential savings']);
+            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
+            sheet.addRow([]);
+            sheet.addRow(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
+            sheet.addRow(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
+            sheet.addRow(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
             sheet.getColumn(2).numFmt = '$#,##0.00';
         }
 
         sheet.addRow([]);
+        sheet.addRow([]);
 
+        // Critical issues – structured list, top 15, with wrap and column width
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
-            sheet.addRow(['🔴 CRITICAL ISSUES']);
-            sheet.getRow(sheet.rowCount).font = { bold: true, color: { argb: 'FF0000' } };
-            data.savingsSummary.criticalIssues.forEach(issue => {
-                sheet.addRow([issue.issue, `$${issue.savings.toFixed(2)}/year`]);
+            const issues = data.savingsSummary.criticalIssues;
+            const maxShow = 15;
+            const toShow = issues.slice(0, maxShow);
+
+            sheet.addRow(['Critical issues']);
+            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
+            sheet.addRow([]);
+            sheet.addRow(['Issue', 'Est. savings per year']);
+            const critHeaderRow = sheet.getRow(sheet.rowCount);
+            critHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+            critHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+
+            toShow.forEach(issue => {
+                const row = sheet.addRow([issue.issue, `$${issue.savings.toFixed(2)}`]);
+                row.getCell(1).alignment = { wrapText: true };
             });
+            if (issues.length > maxShow) {
+                sheet.addRow([`Showing top ${maxShow} of ${issues.length} issues.`, '']);
+            }
+            sheet.getColumn(1).width = 72;
+            sheet.getColumn(2).width = 18;
+            sheet.getColumn(2).numFmt = '$#,##0.00';
         }
     }
 }

@@ -18,4 +18,11 @@ export const settings = {
     auth: {
         sitePassword: process.env.SITE_PASSWORD!,
     },
+    zohoDesk: {
+        clientId: process.env.ZOHO_CLIENT_ID!,
+        clientSecret: process.env.ZOHO_CLIENT_SECRET!,
+        refreshToken: process.env.ZOHO_REFRESH_TOKEN!,
+        orgId: process.env.ZOHO_ORG_ID!,
+        datacenter: process.env.ZOHO_DATACENTER || 'com.au',
+    },
 };
