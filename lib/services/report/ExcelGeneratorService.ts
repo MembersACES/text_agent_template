@@ -472,46 +472,44 @@ export class ExcelGeneratorService {
     }
 
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
-        // Benchmarking Results section
-        sheet.addRow(['Benchmarking results']);
+        // Benchmarking summary – grouped by (Category, Issue type), one row per group
+        sheet.addRow(['Benchmarking summary']);
         sheet.getRow(1).font = { bold: true, size: 14 };
         sheet.addRow([]);
-        sheet.addRow(['Category', 'Issue type', 'Flag', 'Current rate/cost', 'Market benchmark', 'Potential annual savings']);
+        sheet.addRow(['Category', 'Issue type', 'Count', 'Est. total savings per year']);
         const tableHeaderRow = sheet.getRow(3);
         tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         tableHeaderRow.alignment = { horizontal: 'center' };
 
+        const groupKey = (u: string, t: string) => `${u}|${t}`;
+        const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
         data.invoices.forEach(inv => {
-            if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
-                inv.low_hanging_fruit.forEach(opp => {
-                    const flag = opp.severity === 'high' ? '🔴' : opp.severity === 'medium' ? '🟡' : '🟢';
-                    let currentRate = '';
-                    if (opp.type === 'High Peak Rate' && inv.peak_rate_c_per_kwh !== null) currentRate = `${inv.peak_rate_c_per_kwh.toFixed(2)} c/kWh`;
-                    else if (opp.type === 'High Shoulder Rate' && inv.shoulder_rate_c_per_kwh !== null) currentRate = `${inv.shoulder_rate_c_per_kwh.toFixed(2)} c/kWh`;
-                    else if (opp.type === 'High Off-Peak Rate' && inv.off_peak_rate_c_per_kwh !== null) currentRate = `${inv.off_peak_rate_c_per_kwh.toFixed(2)} c/kWh`;
-                    else if (opp.type === 'High Daily Supply' && inv.daily_supply_charge !== null) currentRate = `$${inv.daily_supply_charge.toFixed(2)}/day`;
-                    else if (opp.type === 'High Meter Charges' && inv.meter_charges !== null && inv.billing_days !== null) currentRate = `$${((inv.meter_charges / inv.billing_days) * 365).toFixed(2)}/year`;
-                    else if (opp.type === 'High Demand Charges' && inv.demand_charges !== null && inv.billing_days !== null) currentRate = `$${((inv.demand_charges / inv.billing_days) * 365).toFixed(2)}/year`;
-                    else if (opp.type === 'High Gas Rate' && inv.gas_rate_per_gj !== null) currentRate = `$${inv.gas_rate_per_gj.toFixed(2)}/GJ`;
-
-                    let benchmark = '';
-                    if (opp.message) {
-                        const m = opp.message.match(/(?:benchmark|threshold)\s+(?:of\s+)?([$]?[\d,]+\.?\d*\s*(?:\/year|\/day|\/GJ|c\/kWh)?)/i);
-                        if (m) benchmark = m[1];
-                    }
-
-                    sheet.addRow([inv.utility_type, opp.type, flag, currentRate, benchmark, opp.potential_savings || '']);
-                });
-            }
+            (inv.low_hanging_fruit || []).forEach(opp => {
+                const key = groupKey(inv.utility_type, opp.type);
+                if (!grouped.has(key)) {
+                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
+                }
+                const g = grouped.get(key)!;
+                g.count += 1;
+                if (opp.potential_savings) {
+                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
+                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
+                }
+            });
         });
+        const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
+        sortedGroups.forEach(g => {
+            sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? `$${g.savings.toFixed(2)}` : '']);
+        });
+        sheet.getColumn(4).numFmt = '$#,##0.00';
 
         sheet.addRow([]);
         sheet.addRow([]);
 
         // Total Potential Savings section
         if (data.savingsSummary) {
-            sheet.addRow(['Total potential savings']);
+            sheet.addRow(['Total potential savings (estimate)']);
             sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
             sheet.addRow([]);
             sheet.addRow(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
@@ -523,31 +521,40 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
         sheet.addRow([]);
 
-        // Critical issues – structured list, top 15, with wrap and column width
+        // Critical issues – top 5 only, one-line summary for client readability
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
             const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 15;
+            const maxShow = 5;
             const toShow = issues.slice(0, maxShow);
 
-            sheet.addRow(['Critical issues']);
+            sheet.addRow(['Critical issues (top items – see full report for detail)']);
             sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
             sheet.addRow([]);
-            sheet.addRow(['Issue', 'Est. savings per year']);
+            sheet.addRow(['Summary', 'Est. savings per year']);
             const critHeaderRow = sheet.getRow(sheet.rowCount);
             critHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
             critHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
 
             toShow.forEach(issue => {
-                const row = sheet.addRow([issue.issue, `$${issue.savings.toFixed(2)}`]);
+                const summary = this.shortIssueSummary(issue.issue);
+                const row = sheet.addRow([summary, `$${issue.savings.toFixed(2)}`]);
                 row.getCell(1).alignment = { wrapText: true };
             });
             if (issues.length > maxShow) {
-                sheet.addRow([`Showing top ${maxShow} of ${issues.length} issues.`, '']);
+                sheet.addRow([`${issues.length - maxShow} more issue(s) in full report.`, '']);
             }
-            sheet.getColumn(1).width = 72;
+            sheet.getColumn(1).width = 50;
             sheet.getColumn(2).width = 18;
             sheet.getColumn(2).numFmt = '$#,##0.00';
         }
+    }
+
+    /** One-line summary for client-facing sheets and email (Base 1 estimate). */
+    private shortIssueSummary(issue: string, maxLen = 80): string {
+        const trimmed = (issue || '').trim();
+        const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
+        if (firstSentence.length <= maxLen) return firstSentence;
+        return firstSentence.slice(0, maxLen).trim() + '…';
     }
 }
 

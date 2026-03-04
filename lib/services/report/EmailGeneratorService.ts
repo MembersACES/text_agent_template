@@ -1,5 +1,13 @@
 import { ReportData } from '@/lib/types/ReportTypes';
 
+/** One-line summary for client-facing email (Base 1 estimate). */
+function shortIssueSummary(issue: string, maxLen = 80): string {
+    const trimmed = (issue || '').trim();
+    const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
+    if (firstSentence.length <= maxLen) return firstSentence;
+    return firstSentence.slice(0, maxLen).trim() + '…';
+}
+
 export class EmailGeneratorService {
     generateEmail(data: ReportData): string {
         const { businessInfo, invoices, savingsSummary, generatedAt } = data;
@@ -13,11 +21,12 @@ export class EmailGeneratorService {
         }, {} as Record<string, { count: number; totalCost: number }>);
 
         const allOpportunities = invoices
-            .flatMap(inv => (inv.low_hanging_fruit || []).map(opp => ({ ...opp, utilityType: inv.utility_type })))
-            .sort((a, b) => {
-                const severityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-                return severityOrder[a.severity] - severityOrder[b.severity];
-            });
+            .flatMap(inv => (inv.low_hanging_fruit || []).map(opp => ({ ...opp, utilityType: inv.utility_type })));
+        const opportunityCount = allOpportunities.length;
+        const utilityTypesWithIssues = [...new Set(allOpportunities.map(o => o.utilityType))];
+        const summaryAreas = utilityTypesWithIssues.length > 0
+            ? utilityTypesWithIssues.slice(0, 4).join(', ') + (utilityTypesWithIssues.length > 4 ? ' and others' : '')
+            : 'your utilities';
 
         const formatCurrency = (amount: number) =>
             new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -36,24 +45,18 @@ export class EmailGeneratorService {
                 <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">${formatCurrency(stats.totalCost)}</td>
             </tr>`).join('');
 
-        const savingsRows = allOpportunities
-            .map(opp => `
-            <tr>
-                <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">
-                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ${opp.severity === 'high' ? '#d32f2f' : opp.severity === 'medium' ? '#f57c00' : '#388e3c'}; margin-right: 8px;"></span>
-                    ${opp.type}
-                </td>
-                <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${opp.message}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right; font-weight: bold;">${opp.potential_savings || 'N/A'}</td>
-            </tr>`).join('');
-
         const criticalIssues = savingsSummary?.criticalIssues || [];
-        const criticalIssuesList = criticalIssues.length > 0
-            ? criticalIssues.map(issue => `
-                <li style="margin-bottom: 12px; padding-left: 8px;">
-                    <strong>${issue.issue}</strong> - Potential savings: ${formatCurrency(issue.savings)}/year
+        const maxCriticalInEmail = 5;
+        const criticalToShow = criticalIssues.slice(0, maxCriticalInEmail);
+        const criticalIssuesList = criticalToShow.length > 0
+            ? criticalToShow.map(issue => `
+                <li style="margin-bottom: 8px; padding-left: 8px; font-size: 14px;">
+                    ${shortIssueSummary(issue.issue)} — ${formatCurrency(issue.savings)}/year
                 </li>`).join('')
-            : '<li style="margin-bottom: 12px; padding-left: 8px; color: #666;">No critical issues identified.</li>';
+            : '<li style="margin-bottom: 8px; padding-left: 8px; color: #666;">No critical issues identified.</li>';
+        const moreIssuesNote = criticalIssues.length > maxCriticalInEmail
+            ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Full details and ${criticalIssues.length - maxCriticalInEmail} additional item(s) are in the attached report.</p>`
+            : '';
 
         return `
 <!DOCTYPE html>
@@ -77,7 +80,7 @@ export class EmailGeneratorService {
                     <tr>
                         <td style="padding: 30px 40px 20px 40px;">
                             <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">Dear ${businessInfo.name},</p>
-                            <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.6; color: #333333;">Thank you for providing your utility invoices for analysis. We've completed a comprehensive review and identified several opportunities to reduce your utility costs.</p>
+                            <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.6; color: #333333;">Thank you for providing your utility invoices. Please find below a <strong>high-level Base 1 estimate</strong> and your attached report for full detail.</p>
                         </td>
                     </tr>
                     <tr>
@@ -95,20 +98,10 @@ export class EmailGeneratorService {
                             </table>
                         </td>
                     </tr>
-                    ${allOpportunities.length > 0 ? `
+                    ${opportunityCount > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
-                            <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #366092; border-bottom: 2px solid #366092; padding-bottom: 8px;">Savings Opportunities</h2>
-                            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-bottom: 24px;">
-                                <thead>
-                                    <tr style="background-color: #f5f5f5;">
-                                        <th style="padding: 12px 8px; text-align: left; border-bottom: 2px solid #366092; font-weight: bold; color: #333333;">Type</th>
-                                        <th style="padding: 12px 8px; text-align: left; border-bottom: 2px solid #366092; font-weight: bold; color: #333333;">Description</th>
-                                        <th style="padding: 12px 8px; text-align: right; border-bottom: 2px solid #366092; font-weight: bold; color: #333333;">Potential Savings</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${savingsRows}</tbody>
-                            </table>
+                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">We identified <strong>${opportunityCount} potential savings opportunities</strong> across ${summaryAreas}. The attached report contains the full breakdown; below is a high-level estimate and the main items to address.</p>
                         </td>
                     </tr>` : ''}
                     ${savingsSummary ? `
@@ -124,12 +117,12 @@ export class EmailGeneratorService {
                             </div>
                         </td>
                     </tr>` : ''}
-                    ${criticalIssues.length > 0 ? `
+                    ${criticalToShow.length > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
                             <div style="background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 20px; margin-bottom: 24px;">
-                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Critical Issues Requiring Attention</h3>
-                                <ul style="margin: 0; padding-left: 20px; color: #333333; font-size: 15px; line-height: 1.8;">${criticalIssuesList}</ul>
+                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Key items to address</h3>
+                                <ul style="margin: 0; padding-left: 20px; color: #333333; font-size: 15px; line-height: 1.6;">${criticalIssuesList}</ul>${moreIssuesNote}
                             </div>
                         </td>
                     </tr>` : ''}
