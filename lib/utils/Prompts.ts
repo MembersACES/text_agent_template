@@ -130,7 +130,7 @@ CRITICAL INSTRUCTIONS:
        {
          "type": "High Meter Charges" | "High Peak Rate" | "High Shoulder Rate" | "High Off-Peak Rate" | "High Daily Supply" | "High Demand Charges" | "High Gas Rate",
          "severity": "high" | "medium",
-         "message": "Descriptive message explaining the issue, including the actual KB benchmark threshold values (e.g., 'Annual meter charges $X/year exceed KB benchmark threshold of $Y/year')",
+         "message": "Descriptive message explaining the issue, including the actual KB benchmark threshold values (e.g., 'Annual meter charges $X/year exceed KB benchmark threshold of $Y/year'). Write as a short, client-friendly sentence so the first part can be used in the report summary and email (e.g. 'Peak rate above market benchmark' or 'Daily supply charge exceeds typical levels').",
          "potential_savings": "$X,XXX.XX/year" (calculated savings amount)
        }
      * Use severity: "high" for 🔴 threshold exceeded, "medium" for 🟡 threshold exceeded
@@ -223,7 +223,7 @@ CRITICAL FINAL INSTRUCTIONS:
    - A specific type (not "Benchmarking")
    - A severity of "high" or "medium" (not "low")
    - A calculated potential_savings value (not empty)
-   - A descriptive message that includes the ACTUAL KB threshold value (not a hardcoded one)
+   - A descriptive message that includes the ACTUAL KB threshold value (not a hardcoded one). Start with a short, client-friendly summary (e.g. "Peak rate above market benchmark") so the report and email stay readable.
 6. **If no benchmarks are exceeded OR if KB values cannot be found, set low_hanging_fruit to [] (empty array) or null**`;
 }
 

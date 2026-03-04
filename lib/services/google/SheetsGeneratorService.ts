@@ -699,7 +699,15 @@ export class SheetsGeneratorService {
         const maxCol = 4;
         const pad = (arr: string[], len: number): string[] => [...arr, ...Array(Math.max(0, len - arr.length)).fill('')];
 
-        // Benchmarking summary – grouped by (Category, Issue type)
+        // One-line savings at top (lead with the number)
+        if (data.savingsSummary) {
+            const c = data.savingsSummary.conservative;
+            const o = data.savingsSummary.optimistic;
+            rows.push(pad([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`], maxCol));
+            rows.push(pad([], maxCol));
+        }
+
+        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
         rows.push(pad(['Benchmarking summary'], maxCol));
         rows.push(pad([], maxCol));
         rows.push(pad(['Category', 'Issue type', 'Count', 'Est. total savings per year'], maxCol));
@@ -721,11 +729,15 @@ export class SheetsGeneratorService {
             });
         });
         const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
-        sortedGroups.forEach(g => {
+        const maxBenchmarkingRows = 8;
+        const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
+        toShowGroups.forEach(g => {
             rows.push(pad([g.category, g.type, g.count.toString(), g.savings > 0 ? `$${g.savings.toFixed(2)}` : ''], maxCol));
         });
+        if (sortedGroups.length > maxBenchmarkingRows) {
+            rows.push(pad([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', ''], maxCol));
+        }
 
-        rows.push(pad([], maxCol));
         rows.push(pad([], maxCol));
         rows.push(pad(['Total potential savings (estimate)'], maxCol));
         rows.push(pad([], maxCol));
@@ -736,10 +748,9 @@ export class SheetsGeneratorService {
         }
 
         rows.push(pad([], maxCol));
-        rows.push(pad([], maxCol));
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
             const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 5;
+            const maxShow = 3;
             const toShow = issues.slice(0, maxShow);
             rows.push(pad(['Critical issues (top items – see full report for detail)'], maxCol));
             rows.push(pad([], maxCol));
@@ -748,7 +759,7 @@ export class SheetsGeneratorService {
                 rows.push(pad([this.shortIssueSummary(issue.issue), `$${issue.savings.toFixed(2)}`], maxCol));
             });
             if (issues.length > maxShow) {
-                rows.push(pad([`${issues.length - maxShow} more issue(s) in full report.`, ''], maxCol));
+                rows.push(pad([`${issues.length - maxShow} more critical issue(s) in full report.`, ''], maxCol));
             }
         }
 
@@ -768,36 +779,61 @@ export class SheetsGeneratorService {
             requestBody: { values: rows },
         });
 
+        // Row index of table header (Category, Issue type, ...): with savings at top: 0,1,2,3,4 so header at 4. Without: 0,1,2 so header at 2.
+        const tableHeaderRowIndex = data.savingsSummary ? 4 : 2;
+        const benchmarkingTitleRowIndex = data.savingsSummary ? 2 : 0;
+        const requests: object[] = [
+            {
+                repeatCell: {
+                    range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                    cell: {
+                        userEnteredFormat: {
+                            textFormat: { bold: true, fontSize: 12 },
+                        },
+                    },
+                    fields: 'userEnteredFormat.textFormat',
+                },
+            },
+            {
+                repeatCell: {
+                    range: { sheetId, startRowIndex: benchmarkingTitleRowIndex, endRowIndex: benchmarkingTitleRowIndex + 1 },
+                    cell: {
+                        userEnteredFormat: {
+                            textFormat: { bold: true, fontSize: 14 },
+                        },
+                    },
+                    fields: 'userEnteredFormat.textFormat',
+                },
+            },
+            {
+                repeatCell: {
+                    range: { sheetId, startRowIndex: tableHeaderRowIndex, endRowIndex: tableHeaderRowIndex + 1 },
+                    cell: {
+                        userEnteredFormat: {
+                            backgroundColor: HEADER_BG_COLOR,
+                            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                            horizontalAlignment: 'CENTER',
+                        },
+                    },
+                    fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+                },
+            },
+            {
+                updateSheetProperties: {
+                    properties: {
+                        sheetId,
+                        gridProperties: {
+                            rowCount: Math.max(rows.length + 2, 50),
+                            frozenRowCount: data.savingsSummary ? 5 : 3,
+                        },
+                    },
+                    fields: 'gridProperties(rowCount,frozenRowCount)',
+                },
+            },
+        ];
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
-            requestBody: {
-                requests: [
-                    {
-                        repeatCell: {
-                            range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
-                            cell: {
-                                userEnteredFormat: {
-                                    textFormat: { bold: true, fontSize: 14 },
-                                },
-                            },
-                            fields: 'userEnteredFormat.textFormat',
-                        },
-                    },
-                    {
-                        repeatCell: {
-                            range: { sheetId, startRowIndex: 2, endRowIndex: 3 },
-                            cell: {
-                                userEnteredFormat: {
-                                    backgroundColor: HEADER_BG_COLOR,
-                                    textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
-                                    horizontalAlignment: 'CENTER',
-                                },
-                            },
-                            fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-                        },
-                    },
-                ],
-            },
+            requestBody: { requests },
         });
     }
 
