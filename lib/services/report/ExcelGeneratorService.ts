@@ -472,12 +472,21 @@ export class ExcelGeneratorService {
     }
 
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
-        // Benchmarking summary – grouped by (Category, Issue type), one row per group
+        // One-line savings highlight at top (lead with the number)
+        if (data.savingsSummary) {
+            const c = data.savingsSummary.conservative;
+            const o = data.savingsSummary.optimistic;
+            sheet.addRow([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`]);
+            sheet.getRow(1).font = { bold: true, size: 12 };
+            sheet.addRow([]);
+        }
+
+        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
         sheet.addRow(['Benchmarking summary']);
-        sheet.getRow(1).font = { bold: true, size: 14 };
+        sheet.getRow(sheet.rowCount).font = { bold: true, size: 14 };
         sheet.addRow([]);
         sheet.addRow(['Category', 'Issue type', 'Count', 'Est. total savings per year']);
-        const tableHeaderRow = sheet.getRow(3);
+        const tableHeaderRow = sheet.getRow(sheet.rowCount);
         tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
         tableHeaderRow.alignment = { horizontal: 'center' };
@@ -499,12 +508,16 @@ export class ExcelGeneratorService {
             });
         });
         const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
-        sortedGroups.forEach(g => {
+        const maxBenchmarkingRows = 8;
+        const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
+        toShowGroups.forEach(g => {
             sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? `$${g.savings.toFixed(2)}` : '']);
         });
+        if (sortedGroups.length > maxBenchmarkingRows) {
+            sheet.addRow([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', '']);
+        }
         sheet.getColumn(4).numFmt = '$#,##0.00';
 
-        sheet.addRow([]);
         sheet.addRow([]);
 
         // Total Potential Savings section
@@ -519,12 +532,11 @@ export class ExcelGeneratorService {
         }
 
         sheet.addRow([]);
-        sheet.addRow([]);
 
-        // Critical issues – top 5 only, one-line summary for client readability
+        // Critical issues – top 3 only, one-line summary
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
             const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 5;
+            const maxShow = 3;
             const toShow = issues.slice(0, maxShow);
 
             sheet.addRow(['Critical issues (top items – see full report for detail)']);
@@ -541,7 +553,7 @@ export class ExcelGeneratorService {
                 row.getCell(1).alignment = { wrapText: true };
             });
             if (issues.length > maxShow) {
-                sheet.addRow([`${issues.length - maxShow} more issue(s) in full report.`, '']);
+                sheet.addRow([`${issues.length - maxShow} more critical issue(s) in full report.`, '']);
             }
             sheet.getColumn(1).width = 50;
             sheet.getColumn(2).width = 18;

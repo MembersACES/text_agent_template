@@ -46,7 +46,7 @@ export class EmailGeneratorService {
             </tr>`).join('');
 
         const criticalIssues = savingsSummary?.criticalIssues || [];
-        const maxCriticalInEmail = 5;
+        const maxCriticalInEmail = 3;
         const criticalToShow = criticalIssues.slice(0, maxCriticalInEmail);
         const criticalIssuesList = criticalToShow.length > 0
             ? criticalToShow.map(issue => `
