@@ -687,27 +687,47 @@ export class SheetsGeneratorService {
         await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
     }
 
+    private shortIssueSummary(issue: string, maxLen = 80): string {
+        const trimmed = (issue || '').trim();
+        const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
+        if (firstSentence.length <= maxLen) return firstSentence;
+        return firstSentence.slice(0, maxLen).trim() + '…';
+    }
+
     private async populateBase1AnalysisSheet(sheets: any, spreadsheetId: string, sheetId: number, data: ReportData) {
         const rows: string[][] = [];
-        const maxCol = 6;
+        const maxCol = 4;
         const pad = (arr: string[], len: number): string[] => [...arr, ...Array(Math.max(0, len - arr.length)).fill('')];
 
-        rows.push(pad(['Benchmarking results'], maxCol));
+        // Benchmarking summary – grouped by (Category, Issue type)
+        rows.push(pad(['Benchmarking summary'], maxCol));
         rows.push(pad([], maxCol));
-        rows.push(pad(['Category', 'Issue type', 'Flag', 'Current rate/cost', 'Market benchmark', 'Potential annual savings'], maxCol));
+        rows.push(pad(['Category', 'Issue type', 'Count', 'Est. total savings per year'], maxCol));
 
+        const groupKey = (u: string, t: string) => `${u}|${t}`;
+        const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
         data.invoices.forEach(inv => {
-            if (inv.low_hanging_fruit && inv.low_hanging_fruit.length > 0) {
-                inv.low_hanging_fruit.forEach(opp => {
-                    const flag = opp.severity === 'high' ? '🔴' : opp.severity === 'medium' ? '🟡' : '🟢';
-                    rows.push(pad([inv.utility_type, opp.type, flag, '', '', opp.potential_savings || ''], maxCol));
-                });
-            }
+            (inv.low_hanging_fruit || []).forEach(opp => {
+                const key = groupKey(inv.utility_type, opp.type);
+                if (!grouped.has(key)) {
+                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
+                }
+                const g = grouped.get(key)!;
+                g.count += 1;
+                if (opp.potential_savings) {
+                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
+                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
+                }
+            });
+        });
+        const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
+        sortedGroups.forEach(g => {
+            rows.push(pad([g.category, g.type, g.count.toString(), g.savings > 0 ? `$${g.savings.toFixed(2)}` : ''], maxCol));
         });
 
         rows.push(pad([], maxCol));
         rows.push(pad([], maxCol));
-        rows.push(pad(['Total potential savings'], maxCol));
+        rows.push(pad(['Total potential savings (estimate)'], maxCol));
         rows.push(pad([], maxCol));
         if (data.savingsSummary) {
             rows.push(pad(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`], maxCol));
@@ -719,16 +739,16 @@ export class SheetsGeneratorService {
         rows.push(pad([], maxCol));
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
             const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 15;
+            const maxShow = 5;
             const toShow = issues.slice(0, maxShow);
-            rows.push(pad(['Critical issues'], maxCol));
+            rows.push(pad(['Critical issues (top items – see full report for detail)'], maxCol));
             rows.push(pad([], maxCol));
-            rows.push(pad(['Issue', 'Est. savings per year'], maxCol));
+            rows.push(pad(['Summary', 'Est. savings per year'], maxCol));
             toShow.forEach(issue => {
-                rows.push(pad([issue.issue, `$${issue.savings.toFixed(2)}`], maxCol));
+                rows.push(pad([this.shortIssueSummary(issue.issue), `$${issue.savings.toFixed(2)}`], maxCol));
             });
             if (issues.length > maxShow) {
-                rows.push(pad([`Showing top ${maxShow} of ${issues.length} issues.`, ''], maxCol));
+                rows.push(pad([`${issues.length - maxShow} more issue(s) in full report.`, ''], maxCol));
             }
         }
 
