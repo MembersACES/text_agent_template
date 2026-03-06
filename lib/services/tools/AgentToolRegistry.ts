@@ -21,7 +21,7 @@ type ToolFactory = (contextService: ContextService) => AgentTool;
 
 /** Tools available to every agent regardless of agent ID. */
 const GLOBAL_TOOLS: ToolFactory[] = [
-    () => new ZohoKbToolService(),
+    (ctx) => new ZohoKbToolService(ctx),
 ];
 
 const AGENT_TOOLS: Record<string, ToolFactory[]> = {

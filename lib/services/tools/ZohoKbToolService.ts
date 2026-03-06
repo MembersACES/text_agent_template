@@ -1,15 +1,17 @@
 import { FunctionDeclarationsTool, SchemaType } from '@google/generative-ai';
 import { getLogger } from '@/lib/config/logger';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
+import { ContextService } from '../chat/ContextService';
 import { ZohoDeskClient } from '../zoho/ZohoDeskClient';
 
 const logger = getLogger('ZohoKbToolService');
 
 export class ZohoKbToolService implements AgentTool {
-    private readonly client: ZohoDeskClient;
+    private readonly publicClient: ZohoDeskClient;
 
-    constructor() {
-        this.client = new ZohoDeskClient();
+    constructor(private readonly contextService: ContextService) {
+        this.publicClient = new ZohoDeskClient();
     }
 
     get metadata(): ToolMetadata {
@@ -33,9 +35,7 @@ export class ZohoKbToolService implements AgentTool {
                         properties: {
                             query: {
                                 type: SchemaType.STRING,
-                                description:
-                                    'The search query to use when looking up articles. ' +
-                                    'Use concise keywords that describe what the user needs help with.',
+                                description: 'Keywords describing what the user needs help with.',
                             },
                         },
                         required: ['query'],
@@ -54,14 +54,27 @@ export class ZohoKbToolService implements AgentTool {
 
         if (!query) {
             logger.warn('search_knowledge_base called with empty query');
-            return {
-                toolResponse: { status: 'error', message: 'No search query provided.' },
-            };
+            return { toolResponse: { status: 'error', message: 'No search query provided.' } };
         }
 
         logger.info(`Executing search_knowledge_base with query: "${query}"`);
 
-        const articles = await this.client.searchArticles(query);
+        // Use the OAuth-authenticated service if the agent has zohoConfig
+        const agentConfig = await gcsClient.getPromptConfig(params.agentId);
+        const zohoConfig = (agentConfig as any).config?.zohoDesk;
+
+        if (zohoConfig?.enabled) {
+            logger.info('Using OAuth Zoho KB search');
+            const { kbContext } = await this.contextService.buildZohoDeskKBContext(query, zohoConfig);
+            if (kbContext) {
+                return { toolResponse: { status: 'success', content: kbContext } };
+            }
+            logger.info('OAuth search returned no results, falling back to public API');
+        }
+
+        // Fallback: public portal API
+        logger.info('Using public Zoho portal API search');
+        const articles = await this.publicClient.searchArticles(query);
 
         if (articles.length === 0) {
             return {
