@@ -13,10 +13,16 @@ import { getLogger } from '@/lib/config/logger';
 import { AgentTool } from './AgentTool';
 import { ContextService } from '../chat/ContextService';
 import { InvoiceToolService } from './InvoiceToolService';
+import { ZohoKbToolService } from './ZohoKbToolService';
 
 const logger = getLogger('AgentToolRegistry');
 
 type ToolFactory = (contextService: ContextService) => AgentTool;
+
+/** Tools available to every agent regardless of agent ID. */
+const GLOBAL_TOOLS: ToolFactory[] = [
+    () => new ZohoKbToolService(),
+];
 
 const AGENT_TOOLS: Record<string, ToolFactory[]> = {
     'base-1-review': [
@@ -27,8 +33,9 @@ const AGENT_TOOLS: Record<string, ToolFactory[]> = {
 export class AgentToolRegistry {
     static getTools(agentId: string | undefined, contextService: ContextService): AgentTool[] {
         if (!agentId) return [];
-        const factories = AGENT_TOOLS[agentId] ?? [];
-        logger.info(`Loaded ${factories.length} tool(s) for agent "${agentId}"`);
-        return factories.map((factory) => factory(contextService));
+        const agentSpecific = AGENT_TOOLS[agentId] ?? [];
+        const all = [...GLOBAL_TOOLS, ...agentSpecific].map((factory) => factory(contextService));
+        logger.info(`Loaded ${all.length} tool(s) for agent "${agentId}"`);
+        return all;
     }
 }

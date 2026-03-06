@@ -116,6 +116,7 @@ export class GeminiChatService {
                 uploadedFiles,
                 agentId,
                 useKnowledgeBase,
+                userMessage: message,
             });
         }
 
@@ -230,8 +231,9 @@ export class GeminiChatService {
         uploadedFiles: any[];
         agentId?: string;
         useKnowledgeBase: boolean;
+        userMessage: string;
     }): Promise<ChatResponse> {
-        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase } = options;
+        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase, userMessage } = options;
         const functionName: string = functionCallPart.functionCall.name;
         const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
@@ -243,6 +245,7 @@ export class GeminiChatService {
             uploadedFiles,
             agentId,
             useKnowledgeBase,
+            userMessage,
         });
 
         // Turn 2: return the tool result to the model so it can write a human response

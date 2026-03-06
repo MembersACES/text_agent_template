@@ -13,6 +13,7 @@ export interface ToolExecutionParams {
     uploadedFiles: any[];
     agentId?: string;
     useKnowledgeBase: boolean;
+    userMessage?: string;
 }
 
 export interface ToolExecutionResult {
