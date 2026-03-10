@@ -1,5 +1,4 @@
 import { getLogger } from '@/lib/config/logger';
-import { settings } from '@/lib/config/settings';
 
 const logger = getLogger('ZohoDeskClient');
 
@@ -14,15 +13,9 @@ export interface ZohoArticle {
 }
 
 export class ZohoDeskClient {
-    private readonly portalId: string;
-
-    constructor() {
-        this.portalId = settings.zohoDesk.portalId;
-    }
-
-    async searchArticles(query: string): Promise<ZohoArticle[]> {
+    async searchArticles(query: string, portalId: string): Promise<ZohoArticle[]> {
         const url = new URL(`${BASE_URL}/kbArticles/search`);
-        url.searchParams.set('portalId', this.portalId);
+        url.searchParams.set('portalId', portalId);
         url.searchParams.set('searchStr', query);
         url.searchParams.set('limit', String(MAX_RESULTS));
 

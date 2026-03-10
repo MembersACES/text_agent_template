@@ -248,10 +248,16 @@ export class GeminiChatService {
             userMessage,
         });
 
-        // Turn 2: return the tool result to the model so it can write a human response
+        // Turn 2: return the tool result to the model so it can write a human response.
+        // If the tool overrides args (e.g. used userMessage instead of model-generated query),
+        // use those so Turn 2 sees a consistent picture of what was searched and found.
+        const recordedFunctionCall = result.actualArgs
+            ? { ...functionCallPart.functionCall, args: result.actualArgs }
+            : functionCallPart.functionCall;
+
         const turn2Contents: Content[] = [
             ...contents,
-            { role: 'model', parts: [{ functionCall: functionCallPart.functionCall }] },
+            { role: 'model', parts: [{ functionCall: recordedFunctionCall }] },
             {
                 role: 'user',
                 parts: [{ functionResponse: { name: functionName, response: result.toolResponse } }],

@@ -23,6 +23,12 @@ export interface ToolExecutionResult {
     extractedData?: any;
     /** Whether to trigger report generation in the frontend. */
     generateReport?: boolean;
+    /**
+     * If provided, overrides the function call args recorded in Turn 2 history.
+     * Use this when the tool executed with different args than the model supplied
+     * (e.g. using the user's actual message instead of a model-generated query).
+     */
+    actualArgs?: Record<string, unknown>;
 }
 
 export interface AgentTool {
