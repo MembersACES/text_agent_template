@@ -13,6 +13,6 @@ export async function GET(
     { params }: { params: Promise<{ agentId: string }> },
 ) {
     const { agentId } = await params;
-    const tools = AgentToolRegistry.getTools(agentId, new ContextService());
+    const tools = await AgentToolRegistry.getTools(agentId, new ContextService());
     return NextResponse.json({ tools: tools.map((t) => t.metadata) });
 }
