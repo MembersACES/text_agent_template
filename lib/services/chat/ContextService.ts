@@ -9,9 +9,7 @@
 import { getLogger } from '@/lib/config/logger';
 import { embeddingService } from '@/lib/services/ai/EmbeddingService';
 import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
-import { zohoDeskKBService } from '@/lib/services/zoho/ZohoDeskKBService';
 import { findSimilarChunks } from '@/lib/utils/DocumentChunker';
-import type { ZohoKBConfig } from '@/lib/services/zoho/types';
 
 const logger = getLogger('ContextService');
 
@@ -154,43 +152,6 @@ export class ContextService {
         }
 
         return combined;
-    }
-
-    /**
-     * Search Zoho Desk KB articles and return formatted context.
-     * Replaces the Google Drive KB path for agents with Zoho enabled.
-     */
-    async buildZohoDeskKBContext(message: string, zohoConfig: ZohoKBConfig): Promise<KnowledgeBaseContextResult> {
-        const searchResults = await zohoDeskKBService.searchArticles(message, zohoConfig);
-
-        if (searchResults.length === 0) {
-            logger.info('No Zoho KB articles found for query');
-            return { kbContext: '', fileListContext: '', similarChunks: [] };
-        }
-
-        // Fetch full content for the top 5 results
-        const topResults = searchResults.slice(0, 5);
-        const articles = await Promise.all(
-            topResults.map((result) => zohoDeskKBService.getArticle(result.id, result.kbName)),
-        );
-        const validArticles = articles.filter(Boolean);
-
-        logger.info(`Fetched full content for ${validArticles.length} Zoho KB article(s)`);
-
-        const kbContext = validArticles
-            .map((article, i) => {
-                const header = `[Source ${i + 1} (${article!.kbName})]`;
-                const title = `Title: ${article!.title}`;
-                const body = article!.bodyText || article!.snippet || '';
-                return `${header}:\n${title}\n${body}`;
-            })
-            .join('\n\n---\n\n');
-
-        const fileListContext = validArticles.length > 0
-            ? `ZOHO KB ARTICLES AVAILABLE:\n${validArticles.map((a) => `- ${a!.title} (${a!.kbName})`).join('\n')}\n\n`
-            : '';
-
-        return { kbContext, fileListContext, similarChunks: [] };
     }
 
     // -------------------------------------------------------------------------

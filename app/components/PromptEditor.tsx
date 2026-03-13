@@ -8,6 +8,10 @@ type AgentConfig = {
     language?: string;
     kbFolderId?: string;
     allowFileUploads?: boolean;
+    zohoDesk?: {
+        enabled: boolean;
+        publicPortalIds?: string[];
+    };
 };
 
 export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess?: () => void; agentId?: string }) {
@@ -27,7 +31,10 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
 
     // Accordion state - only one open at a time
     // Default: all sections collapsed when the agent page first loads
-    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'agent' | null>(null);
+    const [expandedSection, setExpandedSection] = useState<'prompt' | 'kb' | 'zoho' | 'agent' | null>(null);
+
+    // Zoho portal ID input
+    const [newPortalId, setNewPortalId] = useState('');
 
     // KB Data
     interface KBFile {
@@ -350,6 +357,124 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                                 <span>Note: {kbData.removed.length} documents in memory are no longer in Drive. Update to sync.</span>
                             </div>
                         )}
+                    </div>
+                )}
+            </div>
+
+            {/* Zoho Knowledge Base Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div
+                    className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 bg-white border-b border-gray-100 transition-colors"
+                    onClick={() => setExpandedSection(expandedSection === 'zoho' ? null : 'zoho')}
+                >
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transform transition-transform duration-200 ${expandedSection === 'zoho' ? 'rotate-90' : ''}`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        Zoho Knowledge Base
+                    </h3>
+                    {config.zohoDesk?.enabled && (
+                        <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded uppercase tracking-wider">Enabled</span>
+                    )}
+                </div>
+
+                {expandedSection === 'zoho' && (
+                    <div className="p-6 bg-gray-50/30 animate-slide-down flex flex-col gap-6">
+                        {/* Enable toggle */}
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setConfig(prev => ({
+                                    ...prev,
+                                    zohoDesk: {
+                                        enabled: !prev.zohoDesk?.enabled,
+                                        publicPortalIds: prev.zohoDesk?.publicPortalIds ?? [],
+                                    },
+                                }))}
+                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${config.zohoDesk?.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                            >
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${config.zohoDesk?.enabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                            </button>
+                            <span className="text-xs text-gray-600">
+                                {config.zohoDesk?.enabled ? 'Enabled: this agent will search Zoho Help Center.' : 'Disabled: Zoho KB tool will not be available for this agent.'}
+                            </span>
+                        </div>
+
+                        {/* Portal IDs list */}
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                Public Portal IDs
+                            </label>
+                            <div className="flex flex-col gap-2 mb-3">
+                                {(config.zohoDesk?.publicPortalIds ?? []).map((id, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                                        <span className="flex-1 text-xs font-mono text-gray-700">{id}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfig(prev => ({
+                                                ...prev,
+                                                zohoDesk: {
+                                                    ...prev.zohoDesk!,
+                                                    publicPortalIds: (prev.zohoDesk?.publicPortalIds ?? []).filter((_, i) => i !== idx),
+                                                },
+                                            }))}
+                                            className="text-gray-300 hover:text-red-500 transition-colors"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newPortalId}
+                                    onChange={(e) => setNewPortalId(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && newPortalId.trim()) {
+                                            setConfig(prev => ({
+                                                ...prev,
+                                                zohoDesk: {
+                                                    enabled: prev.zohoDesk?.enabled ?? false,
+                                                    publicPortalIds: [...(prev.zohoDesk?.publicPortalIds ?? []), newPortalId.trim()],
+                                                },
+                                            }));
+                                            setNewPortalId('');
+                                        }
+                                    }}
+                                    className="flex-1 p-2.5 bg-white border border-gray-200 rounded-lg text-xs font-mono text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 shadow-sm transition-all"
+                                    placeholder="Enter portal ID..."
+                                />
+                                <button
+                                    type="button"
+                                    disabled={!newPortalId.trim()}
+                                    onClick={() => {
+                                        if (!newPortalId.trim()) return;
+                                        setConfig(prev => ({
+                                            ...prev,
+                                            zohoDesk: {
+                                                enabled: prev.zohoDesk?.enabled ?? false,
+                                                publicPortalIds: [...(prev.zohoDesk?.publicPortalIds ?? []), newPortalId.trim()],
+                                            },
+                                        }));
+                                        setNewPortalId('');
+                                    }}
+                                    className="px-4 py-2 bg-black text-white text-xs font-bold rounded-lg shadow-sm hover:bg-gray-800 transition-all disabled:opacity-30"
+                                >
+                                    Add
+                                </button>
+                            </div>
+                            <p className="mt-2 text-[11px] text-gray-500">
+                                Portal IDs used for public Zoho Help Center searches. The first ID is the primary portal; if it returns no relevant results, the second is tried as a fallback.
+                            </p>
+                        </div>
                     </div>
                 )}
             </div>

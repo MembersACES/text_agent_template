@@ -77,7 +77,7 @@ export class GeminiChatService {
             uploadedFiles = [],
         } = params;
 
-        const tools = AgentToolRegistry.getTools(agentId, this.contextService);
+        const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
 
         const historyContext = this.historyService.format(conversationHistory);
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
@@ -159,13 +159,7 @@ export class GeminiChatService {
     }): Promise<string> {
         const { message, agentPrompt, historyContext, fileContext, agentId } = options;
 
-        // Check if this agent uses Zoho Desk KB instead of Google Drive KB
-        const agentConfig = await gcsClient.getPromptConfig(agentId);
-        const zohoConfig = agentConfig.config?.zohoDesk;
-
-        const { kbContext, fileListContext } = zohoConfig?.enabled
-            ? await this.contextService.buildZohoDeskKBContext(message, zohoConfig)
-            : await this.retrieveKBContext(message, agentId);
+        const { kbContext, fileListContext } = await this.retrieveKBContext(message, agentId);
 
         const contextParts = [
             historyContext,

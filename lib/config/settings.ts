@@ -24,7 +24,5 @@ export const settings = {
         refreshToken: process.env.ZOHO_REFRESH_TOKEN!,
         orgId: process.env.ZOHO_ORG_ID!,
         datacenter: process.env.ZOHO_DATACENTER || 'com.au',
-        portalId: process.env.ZOHO_PORTAL_ID!,
-        portalId2: process.env.ZOHO_PORTAL_ID_2,
     },
 };

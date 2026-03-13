@@ -3,7 +3,6 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
-import { ContextService } from '../chat/ContextService';
 import { ZohoDeskClient } from '../zoho/ZohoDeskClient';
 
 const logger = getLogger('ZohoKbToolService');
@@ -11,7 +10,7 @@ const logger = getLogger('ZohoKbToolService');
 export class ZohoKbToolService implements AgentTool {
     private readonly publicClient: ZohoDeskClient;
 
-    constructor(private readonly contextService: ContextService) {
+    constructor() {
         this.publicClient = new ZohoDeskClient();
     }
 
@@ -62,27 +61,27 @@ export class ZohoKbToolService implements AgentTool {
         logger.info(`Executing search_knowledge_base with query: "${query}"`);
 
         const agentConfig = await gcsClient.getPromptConfig(params.agentId);
-        const zohoConfig = (agentConfig as any).config?.zohoDesk;
+        const zohoConfig = agentConfig.config?.zohoDesk;
 
         const actualArgs = { query };
 
-        if (zohoConfig?.enabled) {
-            logger.info('Using OAuth Zoho KB search');
-            const { kbContext } = await this.contextService.buildZohoDeskKBContext(query, zohoConfig);
-            if (kbContext) {
-                return { toolResponse: { status: 'success', content: kbContext }, actualArgs };
-            }
-            logger.info('OAuth search returned no results, falling back to public API');
+        const [portalId, portalId2] = zohoConfig?.publicPortalIds ?? [];
+
+        if (!portalId) {
+            return {
+                toolResponse: { status: 'no_results', message: `No knowledge base articles found for "${query}".` },
+                actualArgs,
+            };
         }
 
         logger.info('Using public Zoho portal API search');
-        let articles = await this.publicClient.searchArticles(query, settings.zohoDesk.portalId);
+        let articles = await this.publicClient.searchArticles(query, portalId);
 
-        if (settings.zohoDesk.portalId2) {
+        if (portalId2) {
             const relevant = articles.length > 0 && await this.articlesAnswerQuery(query, articles);
             if (!relevant) {
                 logger.info('Portal 1 did not answer the question, trying portal 2');
-                const articles2 = await this.publicClient.searchArticles(query, settings.zohoDesk.portalId2);
+                const articles2 = await this.publicClient.searchArticles(query, portalId2);
                 if (articles2.length > 0) {
                     articles = articles2;
                 }
