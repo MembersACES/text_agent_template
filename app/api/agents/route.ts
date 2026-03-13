@@ -1,47 +1,22 @@
 import { NextResponse } from 'next/server';
-import { getPromptConfig, savePromptConfig, listAgents } from '@/lib/gcs-client';
-// Note: getPromptConfig is used in GET to resolve agent names; savePromptConfig is used in POST
-
-/**
- * Hard-coded baseline agents.
- * To add a new permanent agent to the list, add an entry here.
- * Agents can also be created dynamically via POST /api/agents and are
- * stored in GCS under agents/{id}/settings.json.
- */
-const HARDCODED_AGENTS: { id: string; name: string; description?: string }[] = [
-    {
-        id: 'pudu-chatbot-test',
-        name: 'Pudu Chatbot Test Agent',
-        description: 'Test agent for the Pudu chatbot integration',
-    },
-    {
-        id: 'base-1-review',
-        name: 'Base 1 Review',
-        description: 'Analyses utility invoices and generates an Excel savings report',
-    },
-];
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 
 export async function GET() {
-    // Merge hard-coded agents with any agents stored in GCS
-    let agents = [...HARDCODED_AGENTS];
+    let agents: { id: string; name: string; description?: string }[] = [];
 
     try {
-        const gcsAgentIds = await listAgents();
-        const hardcodedIds = new Set(HARDCODED_AGENTS.map((a) => a.id));
+        const gcsAgentIds = await gcsClient.listAgents();
 
         for (const id of gcsAgentIds) {
-            if (!hardcodedIds.has(id)) {
-                // Fetch name / description from GCS settings
-                const config = await getPromptConfig(id);
-                agents.push({
-                    id,
-                    name: config.agentName || id,
-                    description: undefined,
-                });
-            }
+            const config = await gcsClient.getPromptConfig(id);
+            agents.push({
+                id,
+                name: config.agentName || id,
+                description: undefined,
+            });
         }
     } catch (err) {
-        console.warn('[Agents API] Could not list GCS agents, returning hard-coded list only.', err);
+        console.warn('[Agents API] Could not list GCS agents.', err);
     }
 
     return NextResponse.json({ agents });
@@ -77,7 +52,7 @@ export async function POST(request: Request) {
         // Build a minimal config from scratch — intentionally do NOT read from the
         // default agent so that no kbFolderId or other inherited settings leak in.
         // The user must configure the knowledge base folder themselves after creation.
-        await savePromptConfig(
+        await gcsClient.savePromptConfig(
             {
                 systemPrompt: `You are a helpful AI assistant. Answer questions clearly, concisely, and accurately.
 

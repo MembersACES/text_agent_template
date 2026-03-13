@@ -1,12 +1,12 @@
 
 import { NextResponse } from 'next/server';
-import { getPromptConfig, savePromptConfig, PromptConfig } from '@/lib/gcs-client';
+import { gcsClient, PromptConfig } from '@/lib/services/storage/GcsClient';
 
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const agentId = searchParams.get('agentId') || undefined;
-        const config = await getPromptConfig(agentId || undefined);
+        const config = await gcsClient.getPromptConfig(agentId || undefined);
         return NextResponse.json(config);
     } catch (error) {
         console.error('Error fetching prompt config:', error);
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
             config: data.config
         };
 
-        await savePromptConfig(config, agentId);
+        await gcsClient.savePromptConfig(config, agentId);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Error saving prompt config:', error);

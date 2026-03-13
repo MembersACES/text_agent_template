@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getPromptConfig } from '@/lib/gcs-client';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { settings } from '@/lib/config/settings';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 
 export async function POST(request: Request) {
     try {
@@ -13,7 +14,7 @@ export async function POST(request: Request) {
         }
 
         // Check agent configuration for upload permission
-        const config = await getPromptConfig(agentId);
+        const config = await gcsClient.getPromptConfig(agentId);
         const allowUploads = config.config?.allowFileUploads === true;
 
         if (!allowUploads) {
@@ -61,18 +62,12 @@ export async function POST(request: Request) {
             console.log(`[Upload API] Text file processed in <1s`);
         } else {
             // Binary files (PDF, images, Word, Excel): use Gemini Vision to extract text
-            const apiKey = process.env.GEMINI_API_KEY;
-            if (!apiKey) {
-                return NextResponse.json({ error: 'GEMINI_API_KEY not configured' }, { status: 500 });
-            }
-
             try {
                 const startTime = Date.now();
                 const base64Data = fileBuffer.toString('base64');
                 console.log(`[Upload API] Base64 encoding complete (${((Date.now() - startTime) / 1000).toFixed(2)}s)`);
-                
-                const genAI = new GoogleGenerativeAI(apiKey);
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+                const model = new GoogleGenerativeAI(settings.gemini.apiKey).getGenerativeModel({ model: settings.gemini.model });
                 
                 const visionStartTime = Date.now();
                 console.log(`[Upload API] Sending to Gemini Vision API...`);

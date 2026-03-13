@@ -20,6 +20,11 @@ interface ExtractedInvoice {
     [key: string]: any;
 }
 
+interface ToolMetadata {
+    name: string;
+    description: string;
+}
+
 interface ChatWindowProps {
     refreshTrigger?: number;
     agentId?: string;
@@ -35,6 +40,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
     const [agentName, setAgentName] = useState("Text Agent");
     const [allowFileUploads, setAllowFileUploads] = useState(false);
+    const [agentTools, setAgentTools] = useState<ToolMetadata[]>([]);
     const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string; mimeType?: string; fileBufferBase64?: string }[]>([]);
     const [extractedInvoices, setExtractedInvoices] = useState<ExtractedInvoice[]>([]);
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -86,7 +92,20 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 }]);
             }
         };
+
+        const fetchTools = async () => {
+            if (!agentId) return;
+            try {
+                const res = await fetch(`/api/agents/${agentId}/tools`);
+                const data = await res.json();
+                setAgentTools(data.tools ?? []);
+            } catch {
+                setAgentTools([]);
+            }
+        };
+
         fetchConfig();
+        fetchTools();
     }, [refreshTrigger, agentId]);
 
     const scrollToBottom = () => {
@@ -483,6 +502,27 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     </button>
                 </div>
             </div>
+
+            {/* Tools strip */}
+            {agentTools.length > 0 && (
+                <div className="px-5 py-2 bg-orange-50 border-b border-orange-100 flex items-center gap-2.5 shrink-0">
+                    <svg className="w-3.5 h-3.5 text-orange-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <div className="flex flex-wrap gap-1.5">
+                        {agentTools.map((tool, i) => (
+                            <span
+                                key={i}
+                                title={tool.description}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-orange-200 rounded-full text-xs text-orange-700 font-medium shadow-sm"
+                            >
+                                {tool.name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">

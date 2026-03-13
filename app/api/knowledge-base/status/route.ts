@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
+import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
 
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const agentId = searchParams.get('agentId') || undefined;
 
-        const kb = await getCachedKnowledgeBase(agentId);
+        const kb = await knowledgeBaseStorage.getCached(agentId);
 
         if (!kb) {
             return NextResponse.json({

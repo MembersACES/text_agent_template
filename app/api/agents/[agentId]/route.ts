@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { deleteAgent } from '@/lib/gcs-client';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
 
 /**
  * DELETE /api/agents/[agentId]
@@ -18,7 +18,7 @@ export async function DELETE(
     }
 
     try {
-        const result = await deleteAgent(agentId);
+        const result = await gcsClient.deleteAgent(agentId);
         return NextResponse.json({
             success: true,
             agentId,

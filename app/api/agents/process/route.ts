@@ -71,21 +71,15 @@
 
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { generateBase1Workbook } from '@/lib/excel-generator';
-import { generateReportEmail } from '@/lib/email-generator';
-import { getPromptConfig } from '@/lib/gcs-client';
-import { getSystemSettings } from '@/lib/gcs-client';
-import { getPromptTemplate } from '@/lib/gcs-client';
-import { getCachedKnowledgeBase } from '@/lib/knowledge-base-storage';
-import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/report-types';
-import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/prompts';
-import { extractJsonFromResponse } from '@/lib/json-parser';
-import {
-    listFilesInFolder,
-    downloadDriveFile,
-    fetchGoogleDoc,
-    fetchGoogleSheet
-} from '@/lib/document-fetcher';
+import { settings } from '@/lib/config/settings';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
+import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
+import { documentFetcherService } from '@/lib/services/google/DocumentFetcherService';
+import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
+import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
+import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/types/ReportTypes';
+import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
+import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
 
 interface ProcessedFile {
     name: string;
@@ -134,11 +128,6 @@ async function processFile(file: File, model?: any): Promise<ProcessedFile> {
         content = fileBuffer.toString('utf-8');
     } else {
         // Binary files: use Gemini Vision to extract text
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            throw new Error('GEMINI_API_KEY not configured');
-        }
-
         // Check file size (Gemini has limits - base64 increases size by ~33%)
         const fileSizeMB = fileBuffer.length / (1024 * 1024);
         const maxSizeMB = 20; // Gemini typically supports up to 20MB files
@@ -151,7 +140,7 @@ async function processFile(file: File, model?: any): Promise<ProcessedFile> {
         // Use shared model if provided, otherwise create a new one
         let geminiModel = model;
         if (!geminiModel) {
-            const genAI = new GoogleGenerativeAI(apiKey);
+            const genAI = new GoogleGenerativeAI(settings.gemini.apiKey);
             geminiModel = genAI.getGenerativeModel({ 
                 model: 'gemini-2.5-flash',
                 generationConfig: {
@@ -242,11 +231,6 @@ async function processInvoicesWithChat(
     files: ProcessedFile[],
     agentId?: string
 ): Promise<ExtractedInvoice[]> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        throw new Error('GEMINI_API_KEY not configured');
-    }
-
     // Build file context from uploaded files
     const TOTAL_FILE_BUDGET = 200000; // 200K chars for all uploaded files combined
     const maxLengthPerFile = Math.max(
@@ -265,8 +249,8 @@ async function processInvoicesWithChat(
         .join('\n\n---\n\n');
 
     // Get system prompt and agent-specific prompt
-    const systemSettings = await getSystemSettings();
-    const agentPrompt = await getPromptTemplate(agentId);
+    const systemSettings = await gcsClient.getSystemSettings();
+    const agentPrompt = await gcsClient.getPromptTemplate(agentId);
     const fullPrompt = `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
 
     // Always use KB if available
@@ -276,7 +260,7 @@ async function processInvoicesWithChat(
     let kbContext = '';
 
     if (useKnowledgeBase) {
-        const kb = await getCachedKnowledgeBase(agentId);
+        const kb = await knowledgeBaseStorage.getCached(agentId);
         if (kb) {
             // Use guide documents directly (like chat API) to ensure benchmark sections are included
             const guideDocuments = ['ELECTRICITY_GUIDE', 'GAS_GUIDE', 'WATER_GUIDE', 'WASTE_GUIDE', 'OIL_GUIDE'];
@@ -376,12 +360,12 @@ async function processInvoicesWithChat(
     }
 
     // Initialize Gemini AI
-    const genAI = new GoogleGenerativeAI(apiKey);
+    const genAI = new GoogleGenerativeAI(settings.gemini.apiKey);
     const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
+        model: settings.gemini.model,
         generationConfig: {
-            maxOutputTokens: 65536,
-            temperature: 0.1,
+            maxOutputTokens: settings.gemini.maxOutputTokens,
+            temperature: settings.gemini.temperature,
         },
     });
 
@@ -578,7 +562,7 @@ export async function POST(request: Request) {
 
         // Check agent configuration for upload permission BEFORE processing files
         if (agentId) {
-            const config = await getPromptConfig(agentId);
+            const config = await gcsClient.getPromptConfig(agentId);
             const allowUploads = config.config?.allowFileUploads === true;
 
             if (!allowUploads) {
@@ -593,20 +577,20 @@ export async function POST(request: Request) {
         if (googleDriveFolderId) {
             console.log(`[Agent Process API] Fetching files from Google Drive folder: ${googleDriveFolderId}`);
             try {
-                const driveFiles = await listFilesInFolder(googleDriveFolderId);
+                const driveFiles = await documentFetcherService.listFilesInFolder(googleDriveFolderId);
                 console.log(`[Agent Process API] Found ${driveFiles.length} files in folder`);
 
                 const fetchedFiles = await Promise.all(driveFiles.map(async (f) => {
                     try {
                         if (f.mimeType === 'application/vnd.google-apps.document') {
-                            const text = await fetchGoogleDoc(f.id);
+                            const text = await documentFetcherService.fetchDoc(f.id);
                             return new File([text], f.name, { type: 'text/plain' });
                         } else if (f.mimeType === 'application/vnd.google-apps.spreadsheet') {
-                            const text = await fetchGoogleSheet(f.id);
+                            const text = await documentFetcherService.fetchSheet(f.id);
                             return new File([text], f.name, { type: 'text/plain' });
                         } else {
                             // Binary file (PDF, Image, etc.)
-                            const { buffer, mimeType } = await downloadDriveFile(f.id);
+                            const { buffer, mimeType } = await documentFetcherService.downloadFile(f.id);
                             return new File([new Uint8Array(buffer)], f.name, { type: mimeType });
                         }
                     } catch (err: any) {
@@ -638,30 +622,23 @@ export async function POST(request: Request) {
         console.log(`[Agent Process API] Processing ${files.length} file(s) for agent: ${agentId || 'default'}`);
 
         // Create shared Gemini model instance for file processing (if needed for binary files)
-        const apiKey = process.env.GEMINI_API_KEY;
         let sharedModel: any = undefined;
-        if (apiKey) {
-            // Check if we have any binary files that need Gemini Vision
-            const hasBinaryFiles = files.some(file => {
-                const mimeType = file.type || 'application/octet-stream';
-                return !mimeType.startsWith('text/') && 
-                       mimeType !== 'application/json' && 
-                       !file.name.endsWith('.md') && 
-                       !file.name.endsWith('.txt') && 
-                       !file.name.endsWith('.csv') && 
-                       !file.name.endsWith('.json');
+        // Check if we have any binary files that need Gemini Vision
+        const hasBinaryFiles = files.some(file => {
+            const mimeType = file.type || 'application/octet-stream';
+            return !mimeType.startsWith('text/') &&
+                   mimeType !== 'application/json' &&
+                   !file.name.endsWith('.md') &&
+                   !file.name.endsWith('.txt') &&
+                   !file.name.endsWith('.csv') &&
+                   !file.name.endsWith('.json');
+        });
+
+        if (hasBinaryFiles) {
+            sharedModel = new GoogleGenerativeAI(settings.gemini.apiKey).getGenerativeModel({
+                model: settings.gemini.model,
+                generationConfig: { maxOutputTokens: 8192, temperature: settings.gemini.temperature },
             });
-            
-            if (hasBinaryFiles) {
-                const genAI = new GoogleGenerativeAI(apiKey);
-                sharedModel = genAI.getGenerativeModel({ 
-                    model: 'gemini-2.5-flash',
-                    generationConfig: {
-                        maxOutputTokens: 8192,
-                        temperature: 0.1,
-                    },
-                });
-            }
         }
 
         // Process all files in parallel
@@ -712,7 +689,7 @@ export async function POST(request: Request) {
 
         // Generate Excel workbook
         console.log(`[Agent Process API] Generating Excel report...`);
-        const excelBuffer = await generateBase1Workbook(reportData);
+        const excelBuffer = await excelGeneratorService.generateWorkbook(reportData);
 
         // Check if additional metadata is requested (query param or Accept header)
         const url = new URL(request.url);
@@ -726,7 +703,7 @@ export async function POST(request: Request) {
         // If metadata requested, return JSON with Excel as base64 + HTML email + metadata
         // Note: Using base64 for n8n compatibility (multipart is not easily parsed by n8n)
         if (includeMetadata) {
-            const htmlEmail = generateReportEmail(reportData);
+            const htmlEmail = emailGeneratorService.generateEmail(reportData);
             const excelBase64 = excelBuffer.toString('base64');
 
             return NextResponse.json({
