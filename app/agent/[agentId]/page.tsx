@@ -123,31 +123,39 @@ export default function AgentPage() {
     <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
       {/* Header */}
       <header className="frosted-header sticky top-0 z-20 flex shrink-0 items-center">
-        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4">
-          <div className="flex items-center gap-2 py-1.5">
-            <img src="/Logo3.png" alt="ACES Logo" className="h-5" />
-            <div className="mx-1 h-4 w-px bg-gray-200/80" />
-            <span className="text-[13px] font-semibold tracking-tight text-gray-900">
-              Agent console
-            </span>
-            <span className="rounded-full border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-              Agent: {agentId}
-            </span>
+        <div className="mx-auto flex h-20 w-full max-w-7xl items-center justify-center px-5">
+          <div className="flex flex-col items-center gap-2 py-2 text-center">
+            <div className="flex items-center gap-2">
+              <img src="/Logo3.png" alt="ACES Logo" className="h-8" />
+              <div className="mx-1.5 h-5 w-px bg-gray-200/80" />
+              <span className="text-[15px] font-semibold tracking-tight text-gray-900">
+                Agent console
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-[11px] text-gray-500">
+                Configuring <span className="font-mono text-gray-700">{agentId}</span>
+              </span>
+            </div>
           </div>
-          <button
-            onClick={() => router.push('/')}
-            className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-          >
-            ← Back to dashboard
-          </button>
         </div>
       </header>
 
       {/* Main Split View */}
       <main className="gradient-mesh flex flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
         <div className="mx-auto flex w-full max-w-7xl flex-1 min-h-0 gap-0 px-4 pb-4 pt-3">
-          <div className="flex w-[52%] max-w-[720px] min-h-0 flex-col overflow-y-auto rounded-2xl border border-gray-200/60 bg-gray-50/60">
-            <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
+          <div className="flex w-[52%] max-w-[720px] min-h-0 flex-col rounded-2xl border border-gray-200/60 bg-gray-50/60">
+            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+              <button
+                onClick={() => router.push('/')}
+                className="rounded-full border border-gray-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+              >
+                ← Back to dashboard
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
+            </div>
           </div>
           <div className="mx-3 my-2 w-px bg-gray-200/60" />
           <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
