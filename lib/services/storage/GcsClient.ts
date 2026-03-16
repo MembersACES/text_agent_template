@@ -87,6 +87,7 @@ export interface PromptConfig {
         model?: string;
         language?: string;
         kbFolderId?: string;
+        description?: string;
         allowFileUploads?: boolean;
         zohoDesk?: {
             enabled: boolean;

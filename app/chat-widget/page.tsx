@@ -18,7 +18,7 @@ export default function ChatWidgetPage() {
   if (checking) {
     return (
       <div className="h-screen w-full bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
       </div>
     );
   }
@@ -27,8 +27,8 @@ export default function ChatWidgetPage() {
     return (
       <div className="h-screen w-full bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
-          <p className="text-gray-600 mb-4">Authentication required</p>
-          <p className="text-sm text-gray-400">Please authenticate in the main application first.</p>
+          <p className="mb-1 text-[13px] font-semibold text-gray-800">Authentication required</p>
+          <p className="text-[12px] text-gray-500">Please authenticate in the main application first.</p>
         </div>
       </div>
     );

@@ -56,35 +56,35 @@ export default function SystemPromptEditor() {
 
     if (loading) {
         return (
-            <div className="flex flex-col h-full items-center justify-center p-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+            <div className="flex h-full flex-col items-center justify-center p-8">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
             </div>
         );
     }
 
     return (
-        <div className="w-full flex flex-col gap-6">
+        <div className="flex w-full flex-col gap-4">
             {/* Header with Save button */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="mb-1 flex items-center justify-between">
                 <div>
-                    <h3 className="text-lg font-bold text-gray-900 tracking-tight">Global System Prompt</h3>
-                    <p className="text-sm text-gray-500 mt-1">
+                    <h3 className="text-[15px] font-semibold tracking-tight text-gray-900">Global system prompt</h3>
+                    <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
                         These rules apply to all agents. Agent-specific prompts are added below this.
                     </p>
-                    <p className="text-xs text-gray-400 mt-1 italic">
+                    <p className="mt-1 text-[11px] italic text-gray-400">
                         Note: If no saved settings exist, the default from code is shown. Click Save to persist your changes.
                     </p>
                 </div>
                 <div className="flex items-center gap-4">
                     {message && (
-                        <span className={`text-sm font-medium ${message.type === 'success' ? 'text-green-600' : 'text-red-500'} animate-fade-in`}>
+                        <span className={`text-[13px] font-medium ${message.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
                             {message.text}
                         </span>
                     )}
                     <button
                         onClick={handleSave}
                         disabled={saving}
-                        className="px-6 py-2 bg-black text-white text-sm font-bold rounded-lg shadow-sm hover:bg-gray-800 transition-all disabled:opacity-50"
+                        className="btn-primary"
                     >
                         {saving ? 'Saving...' : 'Save'}
                     </button>
@@ -92,11 +92,11 @@ export default function SystemPromptEditor() {
             </div>
 
             {/* Editor */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
                 <textarea
                     value={globalSystemPrompt}
                     onChange={(e) => setGlobalSystemPrompt(e.target.value)}
-                    className="w-full h-[500px] p-6 border-none outline-none resize-none font-mono text-sm leading-relaxed text-gray-800 placeholder-gray-300 bg-gray-50/30 focus:bg-white transition-colors"
+                    className="h-[420px] w-full resize-none border-none bg-gray-50/40 p-5 font-mono text-[13px] leading-relaxed text-gray-800 outline-none placeholder-gray-300 focus:bg-white"
                     placeholder="Enter global system prompt that applies to all agents..."
                     spellCheck={false}
                 />

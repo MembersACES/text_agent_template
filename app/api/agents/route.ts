@@ -12,7 +12,7 @@ export async function GET() {
             agents.push({
                 id,
                 name: config.agentName || id,
-                description: undefined,
+                description: config.config?.description,
             });
         }
     } catch (err) {
