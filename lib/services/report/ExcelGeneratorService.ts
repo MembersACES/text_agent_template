@@ -10,29 +10,42 @@ export class ExcelGeneratorService {
     async generateWorkbook(data: ReportData): Promise<Buffer> {
         const workbook = new ExcelJS.Workbook();
 
-        const overviewSheet = workbook.addWorksheet('Overview');
-        const electricitySheet = workbook.addWorksheet('Electricity Data');
-        const gasSheet = workbook.addWorksheet('Gas Data');
-        const wasteSheet = workbook.addWorksheet('Waste Data');
-        const waterSheet = workbook.addWorksheet('Water Data');
-        const oilSheet = workbook.addWorksheet('Oil Data');
-        const costSummarySheet = workbook.addWorksheet('Cost Summary');
-        const meterDetailsSheet = workbook.addWorksheet('Meter Details');
-        const base1AnalysisSheet = workbook.addWorksheet('Base 1 Analysis');
-
-        this.buildOverviewSheet(overviewSheet, data);
-
         const electricityInvoices = data.invoices.filter(i => i.utility_type === 'Electricity');
         const gasInvoices = data.invoices.filter(i => i.utility_type === 'Gas');
         const wasteInvoices = data.invoices.filter(i => i.utility_type === 'Waste');
         const waterInvoices = data.invoices.filter(i => i.utility_type === 'Water');
         const oilInvoices = data.invoices.filter(i => i.utility_type === 'Oil');
 
-        this.buildElectricitySheet(electricitySheet, electricityInvoices);
-        this.buildGasSheet(gasSheet, gasInvoices);
-        this.buildWasteSheet(wasteSheet, wasteInvoices);
-        this.buildWaterSheet(waterSheet, waterInvoices);
-        this.buildOilSheet(oilSheet, oilInvoices);
+        const utilitySheets: { name: string; invoices: ExtractedInvoice[]; build: (s: ExcelJS.Worksheet, inv: ExtractedInvoice[]) => void }[] = [
+            { name: 'Electricity Data', invoices: electricityInvoices, build: this.buildElectricitySheet.bind(this) },
+            { name: 'Gas Data', invoices: gasInvoices, build: this.buildGasSheet.bind(this) },
+            { name: 'Waste Data', invoices: wasteInvoices, build: this.buildWasteSheet.bind(this) },
+            { name: 'Water Data', invoices: waterInvoices, build: this.buildWaterSheet.bind(this) },
+            { name: 'Oil Data', invoices: oilInvoices, build: this.buildOilSheet.bind(this) },
+        ];
+
+        // 1. Overview always first
+        const overviewSheet = workbook.addWorksheet('Overview');
+        this.buildOverviewSheet(overviewSheet, data);
+
+        // 2. Tabs with data (so data tabs appear 2nd, 3rd, … after Overview)
+        for (const { name, invoices, build } of utilitySheets) {
+            if (invoices.length > 0) {
+                const sheet = workbook.addWorksheet(name);
+                build(sheet, invoices);
+            }
+        }
+        // 3. Empty utility tabs after data tabs
+        for (const { name, invoices, build } of utilitySheets) {
+            if (invoices.length === 0) {
+                const sheet = workbook.addWorksheet(name);
+                build(sheet, []);
+            }
+        }
+        // 4. Cost Summary, Meter Details, Base 1 Analysis
+        const costSummarySheet = workbook.addWorksheet('Cost Summary');
+        const meterDetailsSheet = workbook.addWorksheet('Meter Details');
+        const base1AnalysisSheet = workbook.addWorksheet('Base 1 Analysis');
         this.buildCostSummarySheet(costSummarySheet, data.invoices);
         this.buildMeterDetailsSheet(meterDetailsSheet, data.invoices);
         this.buildBase1AnalysisSheet(base1AnalysisSheet, data);
@@ -75,12 +88,23 @@ export class ExcelGeneratorService {
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
         sheet.addRow(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
         if (data.savingsSummary) {
-            sheet.addRow(['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
+            sheet.addRow([
+                'Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`,
+                'Our costs – conservative (1st month savings)', `$${(data.savingsSummary.conservative / 12).toFixed(2)}`
+            ]);
+            sheet.addRow([
+                'Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`,
+                'Our costs – moderate (1st month savings)', `$${(data.savingsSummary.moderate / 12).toFixed(2)}`
+            ]);
+            sheet.addRow([
+                'Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`,
+                'Our costs – optimistic (1st month savings)', `$${(data.savingsSummary.optimistic / 12).toFixed(2)}`
+            ]);
         }
         sheet.getColumn(1).width = 32;
         sheet.getColumn(2).width = 18;
+        sheet.getColumn(3).width = 42;
+        sheet.getColumn(4).width = 18;
     }
 
     private buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -525,10 +549,20 @@ export class ExcelGeneratorService {
             sheet.addRow(['Total potential savings (estimate)']);
             sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
             sheet.addRow([]);
-            sheet.addRow(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
+            sheet.addRow([
+                'Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`,
+                'Our costs – conservative (1st month savings)', `$${(data.savingsSummary.conservative / 12).toFixed(2)}`
+            ]);
+            sheet.addRow([
+                'Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`,
+                'Our costs – moderate (1st month savings)', `$${(data.savingsSummary.moderate / 12).toFixed(2)}`
+            ]);
+            sheet.addRow([
+                'Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`,
+                'Our costs – optimistic (1st month savings)', `$${(data.savingsSummary.optimistic / 12).toFixed(2)}`
+            ]);
             sheet.getColumn(2).numFmt = '$#,##0.00';
+            sheet.getColumn(4).numFmt = '$#,##0.00';
         }
 
         sheet.addRow([]);
