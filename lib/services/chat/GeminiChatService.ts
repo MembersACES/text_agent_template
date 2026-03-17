@@ -80,6 +80,10 @@ export class GeminiChatService {
 
             const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
 
+            // If a tool handles KB search (e.g. Zoho), skip the GCS vector retrieval —
+            // the model will call the tool instead.
+            const hasKbTool = tools.some((t) => t.canHandle('search_knowledge_base'));
+
             const historyContext = this.historyService.format(conversationHistory);
             const fileContext = this.contextService.buildFileContext(uploadedFiles);
             const agentPrompt = await this.buildAgentPrompt(agentId);
@@ -89,7 +93,7 @@ export class GeminiChatService {
                 agentPrompt,
                 historyContext,
                 fileContext,
-                useKnowledgeBase,
+                useKnowledgeBase: useKnowledgeBase && !hasKbTool,
                 agentId,
             });
 
