@@ -10,7 +10,7 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { zohoAuthService } from './ZohoAuthService';
 import { zohoArticleSanitizer } from './ZohoArticleSanitizer';
-import type { ZohoArticle, ZohoCategory, ZohoKBConfig } from './types';
+import type { ZohoArticle, ZohoCategory } from './types';
 
 const logger = getLogger('ZohoDeskKBService');
 
@@ -58,43 +58,6 @@ export class ZohoDeskKBService {
             name: cat.name ?? '',
             kbId,
         }));
-    }
-
-    /**
-     * Search for articles across the configured portals, scoped to the
-     * allow-listed categories. Returns normalised articles sorted by
-     * Zoho's relevance ranking.
-     */
-    async searchArticles(query: string, config: ZohoKBConfig): Promise<ZohoArticle[]> {
-        const allArticles: ZohoArticle[] = [];
-
-        for (const portal of config.portalConfigs) {
-            const categoryParam = portal.allowedCategoryIds.join(',');
-            const params = new URLSearchParams({
-                searchStr: query,
-                categoryIds: categoryParam,
-                limit: '10',
-                sortBy: 'relevance',
-            });
-
-            try {
-                const data = await this.request(`/articles/search?${params.toString()}`);
-                const raw: any[] = data?.data ?? [];
-
-                for (const item of raw) {
-                    const article = this.normaliseArticle(item, portal.kbName);
-                    if (this.isAllowed(article, portal.allowedCategoryIds)) {
-                        allArticles.push(article);
-                    }
-                }
-            } catch (error) {
-                logger.error(`Search failed for KB "${portal.kbName}": ${error}`);
-                // Continue with other portals
-            }
-        }
-
-        logger.info(`Search for "${query}" returned ${allArticles.length} article(s)`);
-        return allArticles;
     }
 
     /**

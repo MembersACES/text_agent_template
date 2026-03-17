@@ -20,14 +20,7 @@ export interface ZohoCategory {
     kbId: string;
 }
 
-export interface ZohoPortalConfig {
-    portalId: string;
-    kbId: string;
-    allowedCategoryIds: string[];
-    kbName: string;
-}
-
 export interface ZohoKBConfig {
     enabled: boolean;
-    portalConfigs: ZohoPortalConfig[];
+    publicPortalIds?: string[];
 }

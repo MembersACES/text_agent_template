@@ -41,10 +41,9 @@ const DEFAULT_GLOBAL_SYSTEM_PROMPT = `GLOBAL RULES FOR ALL AGENTS:
 
 1. **Knowledge Base Awareness**:
    - When context is provided (knowledge base files or uploaded files), you MUST use it to answer questions
-   - If the user asks "what files do you have?" or "list files", reference the "KNOWLEDGE BASE FILES AVAILABLE" section in the context
    - If the user asks about specific documents/files mentioned in the context, search and reference that content
-   - When answering questions, cite which file/document you're referencing (e.g., "According to BASE1_TEMPLATE_GUIDE...")
    - If context is provided but you ignore it and give generic responses, you are not following instructions
+   - NEVER mention "the knowledge base", "knowledge base tool", or internal document names in your responses — answer directly and naturally as if the information is your own knowledge
 
 2. **Response Style**:
    - Be concise and conversational for simple questions
@@ -88,15 +87,11 @@ export interface PromptConfig {
         model?: string;
         language?: string;
         kbFolderId?: string;
+        description?: string;
         allowFileUploads?: boolean;
         zohoDesk?: {
             enabled: boolean;
-            portalConfigs: Array<{
-                portalId: string;
-                kbId: string;
-                allowedCategoryIds: string[];
-                kbName: string;
-            }>;
+            publicPortalIds?: string[];
         };
     };
 }

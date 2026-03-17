@@ -34,8 +34,7 @@ function LockScreen({ onUnlock }: LockScreenProps) {
         setError(true);
         setTimeout(() => setError(false), 2000);
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       setError(true);
       setTimeout(() => setError(false), 2000);
     }
@@ -45,17 +44,34 @@ function LockScreen({ onUnlock }: LockScreenProps) {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="auth-icon-wrapper"><LockIcon /></div>
-          <div className="auth-title">ACCESS RESTRICTED</div>
+          <div className="auth-icon-wrapper">
+            <LockIcon />
+          </div>
+          <div className="auth-title">Restricted workspace</div>
+          <p className="text-[11px] text-gray-400">Enter the shared passphrase to continue.</p>
         </div>
-        <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <input type="password" className="auth-input" placeholder="ENTER PASSWORD"
-            value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
-          {error && <div className="error-msg">ACCESS DENIED</div>}
-          <button type="submit" className="auth-btn">UNLOCK</button>
+        <form
+          onSubmit={handleSubmit}
+          className="w-full flex flex-col gap-4"
+        >
+          <input
+            type="password"
+            className="auth-input"
+            placeholder="Enter password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+          />
+          {error && <div className="error-msg">Incorrect password. Try again.</div>}
+          <button type="submit" className="auth-btn">
+            Unlock workspace
+          </button>
         </form>
+        <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gray-50 px-2.5 py-1 text-[10px] font-medium text-gray-500 border border-gray-200/70">
+          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-gray-400 animate-subtle-pulse" />
+          Locked for authorized teams only
+        </div>
       </div>
-      <div style={{ marginTop: '2rem', color: '#888', fontSize: '0.75rem' }}>AUTHORIZED PERSONNEL ONLY</div>
     </div>
   );
 }
@@ -79,21 +95,24 @@ export default function AgentPage() {
   if (!isAuthorized) {
     return (
       <>
-        <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 z-50 flex items-center justify-between px-4 shadow-sm">
+        <header className="frosted-header fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
-            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">TEXT AGENT v1.1</div>
+            <div className="text-[13px] font-semibold tracking-tight text-gray-900">ACES</div>
+            <div className="rounded-full border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+              Text Agent · v1.1
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-100 uppercase tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>Locked
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200/80 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-subtle-pulse" />
+              Locked
             </span>
           </div>
         </header>
         <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
           <LockScreen onUnlock={() => { sessionStorage.setItem('app-auth', 'true'); setIsAuthorized(true); }} />
         </main>
-        <footer className="fixed bottom-0 left-0 right-0 h-8 bg-white border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400">
+        <footer className="fixed bottom-0 left-0 right-0 flex h-8 items-center justify-center border-t border-gray-200/60 bg-white/90 text-[10px] text-gray-400 backdrop-blur">
           © Prograde IP Holdings 2026
         </footer>
       </>
@@ -101,36 +120,51 @@ export default function AgentPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
       {/* Header */}
-      <header className="sticky top-0 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20 shrink-0">
-        <div className="flex items-center gap-2 py-3">
-          <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
-          <div className="w-px h-4 bg-gray-200 mx-1"></div>
-          <div className="text-gray-900 font-bold tracking-tight">ACES</div>
-          <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">
-            Agent: {agentId}
+      <header className="frosted-header sticky top-0 z-20 flex shrink-0 items-center">
+        <div className="mx-auto flex h-20 w-full max-w-7xl items-center justify-center px-5">
+          <div className="flex flex-col items-center gap-2 py-2 text-center">
+            <div className="flex items-center gap-2">
+              <img src="/Logo3.png" alt="ACES Logo" className="h-8" />
+              <div className="mx-1.5 h-5 w-px bg-gray-200/80" />
+              <span className="text-[15px] font-semibold tracking-tight text-gray-900">
+                Agent console
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-[11px] text-gray-500">
+                Configuring <span className="font-mono text-gray-700">{agentId}</span>
+              </span>
+            </div>
           </div>
         </div>
-        <button
-          onClick={() => router.push('/')}
-          className="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-        >
-          ← Back
-        </button>
       </header>
 
       {/* Main Split View */}
-      <main className="flex-1 flex overflow-hidden min-h-0">
-        <div className="w-1/2 min-w-[400px] h-full overflow-y-auto border-r border-gray-200">
-          <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
-        </div>
-        <div className="flex-1 h-full bg-white relative overflow-hidden flex flex-col min-h-0">
-          <ChatWindow agentId={agentId} refreshTrigger={refreshTrigger} />
+      <main className="gradient-mesh flex flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-7xl flex-1 min-h-0 gap-0 px-4 pb-4 pt-3">
+          <div className="flex w-[52%] max-w-[720px] min-h-0 flex-col rounded-2xl border border-gray-200/60 bg-gray-50/60">
+            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+              <button
+                onClick={() => router.push('/')}
+                className="rounded-full border border-gray-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+              >
+                ← Back to dashboard
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
+            </div>
+          </div>
+          <div className="mx-3 my-2 w-px bg-gray-200/60" />
+          <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
+            <ChatWindow agentId={agentId} refreshTrigger={refreshTrigger} />
+          </div>
         </div>
       </main>
 
-      <footer className="h-8 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white shrink-0">
+      <footer className="flex h-8 shrink-0 items-center justify-center border-t border-gray-200/60 bg-white/95 text-[10px] text-gray-400 backdrop-blur">
         © Prograde IP Holdings 2026
       </footer>
     </div>

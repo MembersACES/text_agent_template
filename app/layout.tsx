@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Design AI - Your Architect AI Assistant",
-  description: "Chat with Design AI powered by Gemini to help design your life",
+  title: "Agent Console - Your Multi-agent Workspace",
+  description: "Chat with your agents to help you with your work & manage your client requests",
 };
 
 export default function RootLayout({

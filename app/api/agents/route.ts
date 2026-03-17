@@ -1,51 +1,22 @@
 import { NextResponse } from 'next/server';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 
-/**
- * Hard-coded baseline agents.
- * To add a new permanent agent to the list, add an entry here.
- * Agents can also be created dynamically via POST /api/agents and are
- * stored in GCS under agents/{id}/settings.json.
- */
-const HARDCODED_AGENTS: { id: string; name: string; description?: string }[] = [
-    {
-        id: 'pudu-chatbot-test',
-        name: 'Pudu Chatbot Test Agent',
-        description: 'Test agent for the Pudu chatbot integration',
-    },
-    {
-        id: 'base-1-review',
-        name: 'Base 1 Review',
-        description: 'Analyses utility invoices and generates an Excel savings report',
-    },
-    {
-        id: 'honest-to-goodness',
-        name: 'Honest to Goodness',
-        description: 'Customer support agent backed by Zoho Desk knowledge base',
-    },
-];
-
 export async function GET() {
-    // Merge hard-coded agents with any agents stored in GCS
-    let agents = [...HARDCODED_AGENTS];
+    let agents: { id: string; name: string; description?: string }[] = [];
 
     try {
         const gcsAgentIds = await gcsClient.listAgents();
-        const hardcodedIds = new Set(HARDCODED_AGENTS.map((a) => a.id));
 
         for (const id of gcsAgentIds) {
-            if (!hardcodedIds.has(id)) {
-                // Fetch name / description from GCS settings
-                const config = await gcsClient.getPromptConfig(id);
-                agents.push({
-                    id,
-                    name: config.agentName || id,
-                    description: undefined,
-                });
-            }
+            const config = await gcsClient.getPromptConfig(id);
+            agents.push({
+                id,
+                name: config.agentName || id,
+                description: config.config?.description,
+            });
         }
     } catch (err) {
-        console.warn('[Agents API] Could not list GCS agents, returning hard-coded list only.', err);
+        console.warn('[Agents API] Could not list GCS agents.', err);
     }
 
     return NextResponse.json({ agents });
