@@ -3,7 +3,8 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
-import { ZohoDeskClient } from '../zoho/ZohoDeskClient';
+import { ZohoDeskClient, ZohoArticle } from '../zoho/ZohoDeskClient';
+import { traceable } from 'langsmith/traceable';
 
 const logger = getLogger('ZohoKbToolService');
 
@@ -13,6 +14,14 @@ export class ZohoKbToolService implements AgentTool {
     constructor() {
         this.publicClient = new ZohoDeskClient();
     }
+
+    /** Zoho article search wrapped in a LangSmith traceable span. */
+    private readonly searchArticlesTraceable = traceable(
+        async (query: string, portalId: string): Promise<ZohoArticle[]> => {
+            return this.publicClient.searchArticles(query, portalId);
+        },
+        { name: 'retrieve_zoho_kb_articles' },
+    );
 
     get metadata(): ToolMetadata {
         return {
@@ -75,13 +84,13 @@ export class ZohoKbToolService implements AgentTool {
         }
 
         logger.info('Using public Zoho portal API search');
-        let articles = await this.publicClient.searchArticles(query, portalId);
+        let articles = await this.searchArticlesTraceable(query, portalId);
 
         if (portalId2) {
             const relevant = articles.length > 0 && await this.articlesAnswerQuery(query, articles);
             if (!relevant) {
                 logger.info('Portal 1 did not answer the question, trying portal 2');
-                const articles2 = await this.publicClient.searchArticles(query, portalId2);
+                const articles2 = await this.searchArticlesTraceable(query, portalId2);
                 if (articles2.length > 0) {
                     articles = articles2;
                 }
@@ -101,7 +110,7 @@ export class ZohoKbToolService implements AgentTool {
         return {
             toolResponse: {
                 status: 'success',
-                articles: articles.map((a) => ({
+                articles: articles.map((a: ZohoArticle) => ({
                     title: a.title,
                     summary: a.summary,
                     url: a.permalink,

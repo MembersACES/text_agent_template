@@ -65,63 +65,66 @@ export class GeminiChatService {
     }
 
     // -------------------------------------------------------------------------
-    // Public entry point
+    // Public entry point — root LangSmith trace
     // -------------------------------------------------------------------------
 
-    async chat(params: ChatParams): Promise<ChatResponse> {
-        const {
-            message,
-            conversationHistory = [],
-            useKnowledgeBase = false,
-            agentId,
-            uploadedFiles = [],
-        } = params;
-
-        const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
-
-        const historyContext = this.historyService.format(conversationHistory);
-        const fileContext = this.contextService.buildFileContext(uploadedFiles);
-        const agentPrompt = await this.buildAgentPrompt(agentId);
-
-        const initialPrompt = await this.buildInitialPrompt({
-            message,
-            agentPrompt,
-            historyContext,
-            fileContext,
-            useKnowledgeBase,
-            agentId,
-        });
-
-        this.logPromptPreview(initialPrompt);
-
-        const model = this.createModel(tools);
-        const contents: Content[] = [{ role: 'user', parts: [{ text: initialPrompt }] }];
-
-        // Turn 1: send prompt
-        const firstResult = await model.generateContent({ contents });
-        const firstResponse = firstResult.response;
-
-        // Detect tool call from any registered tool
-        const functionCallPart = firstResponse.candidates?.[0]?.content?.parts?.find(
-            (part: any) => part.functionCall && tools.some((t) => t.canHandle(part.functionCall.name)),
-        );
-
-        if (functionCallPart?.functionCall) {
-            const tool = tools.find((t) => t.canHandle(functionCallPart.functionCall.name))!;
-            return this.handleToolCall({
-                functionCallPart,
-                tool,
-                model,
-                contents,
-                uploadedFiles,
+    readonly chat = traceable(
+        async (params: ChatParams): Promise<ChatResponse> => {
+            const {
+                message,
+                conversationHistory = [],
+                useKnowledgeBase = false,
                 agentId,
-                useKnowledgeBase,
-                userMessage: message,
-            });
-        }
+                uploadedFiles = [],
+            } = params;
 
-        return this.handleNormalResponse(firstResponse.text(), message);
-    }
+            const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
+
+            const historyContext = this.historyService.format(conversationHistory);
+            const fileContext = this.contextService.buildFileContext(uploadedFiles);
+            const agentPrompt = await this.buildAgentPrompt(agentId);
+
+            const initialPrompt = await this.buildInitialPrompt({
+                message,
+                agentPrompt,
+                historyContext,
+                fileContext,
+                useKnowledgeBase,
+                agentId,
+            });
+
+            this.logPromptPreview(initialPrompt);
+
+            const model = this.createModel(tools);
+            const contents: Content[] = [{ role: 'user', parts: [{ text: initialPrompt }] }];
+
+            // Turn 1: send prompt
+            const firstResult = await this.generateTurn1(model, contents);
+            const firstResponse = firstResult.response;
+
+            // Detect tool call from any registered tool
+            const functionCallPart = firstResponse.candidates?.[0]?.content?.parts?.find(
+                (part: any) => part.functionCall && tools.some((t) => t.canHandle(part.functionCall.name)),
+            );
+
+            if (functionCallPart?.functionCall) {
+                const tool = tools.find((t) => t.canHandle(functionCallPart.functionCall.name))!;
+                return this.handleToolCall({
+                    functionCallPart,
+                    tool,
+                    model,
+                    contents,
+                    uploadedFiles,
+                    agentId,
+                    useKnowledgeBase,
+                    userMessage: message,
+                });
+            }
+
+            return this.handleNormalResponse(firstResponse.text(), message);
+        },
+        { name: 'chat', run_type: 'chain' },
+    );
 
     // -------------------------------------------------------------------------
     // Turn 1 prompt builder
@@ -258,7 +261,7 @@ export class GeminiChatService {
             },
         ];
 
-        const secondResult = await model.generateContent({ contents: turn2Contents });
+        const secondResult = await this.generateTurn2(model, turn2Contents);
         const responseText = this.cleanResponseText(secondResult.response.text());
 
         logger.info(`Tool call "${functionName}" completed — generateReport: ${result.generateReport}`);
@@ -349,12 +352,28 @@ export class GeminiChatService {
         return `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
     }
 
-    /** KB retrieval wrapped in a langsmith traceable span. */
+    /** KB retrieval wrapped in a LangSmith traceable span. */
     private readonly retrieveKBContext = traceable(
         async (message: string, agentId?: string) => {
             return this.contextService.buildKnowledgeBaseContext(message, agentId);
         },
         { name: 'retrieve_documents' },
+    );
+
+    /** Turn 1 Gemini generation wrapped in a LangSmith traceable span. */
+    private readonly generateTurn1 = traceable(
+        async (model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>, contents: Content[]) => {
+            return model.generateContent({ contents });
+        },
+        { name: 'generate_turn_1', run_type: 'llm' },
+    );
+
+    /** Turn 2 Gemini generation (after tool result) wrapped in a LangSmith traceable span. */
+    private readonly generateTurn2 = traceable(
+        async (model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>, contents: Content[]) => {
+            return model.generateContent({ contents });
+        },
+        { name: 'generate_turn_2_with_tool_result', run_type: 'llm' },
     );
 
     // -------------------------------------------------------------------------
