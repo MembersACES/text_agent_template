@@ -41,6 +41,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
     ]);
     const [welcomeMessage, setWelcomeMessage] = useState("Hello!\n\nI'm your AI assistant. How can I help you today?");
     const [agentName, setAgentName] = useState("Text Agent");
+    const [agentSubtitle, setAgentSubtitle] = useState('');
+    const [agentDescription, setAgentDescription] = useState('');
     const [allowFileUploads, setAllowFileUploads] = useState(false);
     const [agentTools, setAgentTools] = useState<ToolMetadata[]>([]);
     const [uploadedFiles, setUploadedFiles] = useState<{ name: string; content: string; mimeType?: string; fileBufferBase64?: string }[]>([]);
@@ -81,6 +83,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 if (data.agentName) {
                     setAgentName(data.agentName);
                 }
+                setAgentSubtitle(data.config?.subtitle ?? '');
+                setAgentDescription(data.config?.description ?? '');
                 if (data.config && data.config.allowFileUploads) {
                     setAllowFileUploads(true);
                 } else {
@@ -92,6 +96,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     role: 'assistant',
                     content: "Hello!\n\nI'm your AI assistant. How can I help you today?"
                 }]);
+                setAgentSubtitle('');
+                setAgentDescription('');
             }
         };
 
@@ -494,10 +500,20 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                     </div>
                     <div className="flex flex-col">
                         <span className="text-[13px] font-semibold tracking-tight text-gray-900">{agentName}</span>
+                        {agentSubtitle && (
+                            <p className="mt-0.5 line-clamp-1 text-[12px] font-medium leading-snug text-gray-600">
+                                {agentSubtitle}
+                            </p>
+                        )}
                         <div className="mt-0.5 inline-flex items-center gap-1.5">
                             <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-subtle-pulse" />
                             <span className="text-[11px] font-medium text-gray-500">Online</span>
                         </div>
+                        {agentDescription && (
+                            <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-gray-500">
+                                {agentDescription}
+                            </p>
+                        )}
                     </div>
                 </div>
                 <div className="flex items-center gap-1.5">

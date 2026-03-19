@@ -43,6 +43,10 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
     // Zoho portal ID input
     const [newPortalId, setNewPortalId] = useState('');
 
+    // Zoho portal IDs: tool uses only the first two IDs (index 0 then index 1)
+    const ZOHO_PORTAL_URL_GROUP = 'https://support.group.goodness.com.au/portal/en/kb/group-goodness';
+    const ZOHO_PORTAL_URL_SUPPORT = 'https://support.goodness.com.au/portal/en/kb/contact-us-faqs';
+
     // KB Data
     interface KBFile {
         id: string;
@@ -272,7 +276,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
             </div>
 
             {/* Prompt Config Section (Step 1 · Prompt) */}
-            <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
+            <div className="rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
                     onClick={() => setExpandedSection(expandedSection === 'prompt' ? null : 'prompt')}
@@ -300,11 +304,11 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </div>
 
                 {expandedSection === 'prompt' && (
-                    <div className="animate-slide-down p-0">
+                    <div className="animate-slide-down h-[360px] max-h-[70vh] overflow-y-auto p-0">
                         <textarea
                             value={systemPrompt}
                             onChange={(e) => setSystemPrompt(e.target.value)}
-                            className="h-[360px] w-full resize-none border-none bg-gray-50/40 p-5 font-mono text-[13px] leading-relaxed text-gray-800 outline-none placeholder-gray-300 focus:bg-white"
+                            className="h-full w-full resize-none border-none bg-gray-50/40 p-5 font-mono text-[13px] leading-relaxed text-gray-800 outline-none placeholder-gray-300 focus:bg-white"
                             placeholder="Enter system prompt..."
                             spellCheck={false}
                         />
@@ -313,7 +317,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
             </div>
 
             {/* Knowledge & Tools Section (Step 2 · Knowledge & tools) */}
-            <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
+            <div className="rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
                     onClick={() => setExpandedSection(expandedSection === 'knowledge' ? null : 'knowledge')}
@@ -342,7 +346,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </div>
 
                 {expandedSection === 'knowledge' && (
-                    <div className="animate-slide-down flex flex-col gap-4 bg-gray-50/40 p-4 max-h-[70vh] overflow-y-auto">
+                    <div className="animate-slide-down flex h-[360px] max-h-[70vh] flex-col gap-4 bg-gray-50/40 p-4 pb-16 overflow-y-auto">
                         {/* Knowledge base type selector */}
                         <div>
                             <label className="mb-2 block text-[11px] font-semibold text-gray-500">
@@ -564,26 +568,52 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                                     Public portal IDs
                                 </label>
                                 <div className="mb-3 flex flex-col gap-2">
-                                    {(config.zohoDesk?.publicPortalIds ?? []).map((id, idx) => (
-                                        <div key={idx} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                                            <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-gray-700">{id}</span>
-                                            <button
-                                                type="button"
-                                                onClick={() => setConfig(prev => ({
-                                                    ...prev,
-                                                    zohoDesk: {
-                                                        ...prev.zohoDesk!,
-                                                        publicPortalIds: (prev.zohoDesk?.publicPortalIds ?? []).filter((_, i) => i !== idx),
-                                                    },
-                                                }))}
-                                                className="text-gray-300 transition-colors hover:text-red-500"
+                                    {(config.zohoDesk?.publicPortalIds ?? []).map((id, idx) => {
+                                        const showOpen = idx === 0 || idx === 1;
+                                        const url = idx === 0 ? ZOHO_PORTAL_URL_GROUP : ZOHO_PORTAL_URL_SUPPORT;
+
+                                        return (
+                                            <div
+                                                key={idx}
+                                                className="grid grid-cols-2 items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
                                             >
-                                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    ))}
+                                                <div className="min-w-0">
+                                                    <span className="block truncate font-mono text-[12px] text-gray-700">{id}</span>
+                                                </div>
+
+                                                <div className="flex items-center justify-end gap-2">
+                                                    {showOpen && (
+                                                        <a
+                                                            href={url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                                                            title="Open corresponding Zoho help center portal"
+                                                        >
+                                                            Open
+                                                        </a>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setConfig(prev => ({
+                                                                ...prev,
+                                                                zohoDesk: {
+                                                                    ...prev.zohoDesk!,
+                                                                    publicPortalIds: (prev.zohoDesk?.publicPortalIds ?? []).filter((_, i) => i !== idx),
+                                                                },
+                                                            }))
+                                                        }
+                                                        className="text-gray-300 transition-colors hover:text-red-500"
+                                                    >
+                                                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                                 <div className="flex gap-2">
                                     <input
@@ -625,8 +655,8 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                                     </button>
                                 </div>
                                 <p className="mt-2 text-[11px] text-gray-500">
-                                    Portal IDs used for public Zoho Help Center searches. The first ID is the primary portal; if it returns no relevant
-                                    results, the second is tried as a fallback.
+                                    Portal IDs used for public Zoho Help Center searches. The tool checks ID #1 first, then ID #2 if ID #1 returns no relevant
+                                    results.
                                 </p>
                             </div>
                         </div>
@@ -636,7 +666,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
             </div>
 
             {/* Agent Settings Section (Step 3 · Behaviour & uploads) */}
-            <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
+            <div className="rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
                     onClick={() => setExpandedSection(expandedSection === 'agent' ? null : 'agent')}
@@ -665,7 +695,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </div>
 
                 {expandedSection === 'agent' && (
-                    <div className="animate-slide-down max-h-[70vh] overflow-y-auto bg-gray-50/40 p-4">
+                    <div className="animate-slide-down h-[360px] max-h-[70vh] overflow-y-auto bg-gray-50/40 p-4">
                         <div className="flex flex-col gap-5 pb-16">
                             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-end">
                                 <div>
