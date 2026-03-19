@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import ChatWindow from '../../components/ChatWindow';
-import PromptEditor from '../../components/PromptEditor';
+import ChatWindow from '../components/ChatWindow';
+import PromptEditor from '../components/PromptEditor';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -76,10 +75,9 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   );
 }
 
-export default function AgentPage() {
-  const params = useParams();
-  const router = useRouter();
-  const agentId = params.agentId as string;
+const HTG_AGENT_ID = 'honest-to-goodness-agent';
+
+export default function HonestToGoodnessStandalonePage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -119,6 +117,8 @@ export default function AgentPage() {
     );
   }
 
+  const agentId = HTG_AGENT_ID;
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
       {/* Header */}
@@ -134,12 +134,7 @@ export default function AgentPage() {
             </div>
             <div className="flex flex-col items-center gap-1">
               <span className="text-[11px] text-gray-500">
-                Configuring <span className="font-mono text-gray-700">{agentId}</span>
-              </span>
-              <span className="text-[11px] text-gray-500">
-                {agentId === 'honest-to-goodness-agent'
-                  ? 'Configure your Honest to Goodness support agent.'
-                  : 'Configure this agent’s behaviour, knowledge, and tools.'}
+                Honest to Goodness support agent
               </span>
             </div>
           </div>
@@ -151,12 +146,9 @@ export default function AgentPage() {
         <div className="mx-auto flex w-full max-w-7xl flex-1 min-h-0 gap-0 px-4 pb-4 pt-3">
           <div className="flex w-[52%] max-w-[720px] min-h-0 flex-col rounded-2xl border border-gray-200/60 bg-gray-50/60">
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
-              <button
-                onClick={() => router.push('/')}
-                className="rounded-full border border-gray-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-              >
-                ← Back to dashboard
-              </button>
+              <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-gray-600">
+                Honest to Goodness configuration
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               <PromptEditor agentId={agentId} onSaveSuccess={() => setRefreshTrigger(prev => prev + 1)} />
@@ -175,3 +167,4 @@ export default function AgentPage() {
     </div>
   );
 }
+

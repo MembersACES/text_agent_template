@@ -210,9 +210,16 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
         <div className="relative flex h-full min-h-0 w-full flex-col gap-4 p-4">
 
             {/* Header with primary name + Save button */}
-            <div className="flex items-end justify-between gap-4">
-                <div className="flex flex-1 flex-col gap-1.5">
-                    <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">Agent configuration</h2>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+                <div className="flex flex-1 flex-col gap-2 min-w-[220px]">
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                                Step 1 · Agent configuration
+                            </span>
+                            <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">Agent configuration</h2>
+                        </div>
+                    </div>
                     <div>
                         <label className="mb-1 block text-[11px] font-semibold text-gray-500">Agent name</label>
                         <input
@@ -224,18 +231,18 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                         />
                     </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
                     {message && (
-                        <span className={`text-[13px] font-medium ${message.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                        <span className={`text-[11px] font-medium ${message.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
                             {message.text}
                         </span>
                     )}
                     <button
                         onClick={handleSave}
                         disabled={saving || loading}
-                        className="btn-primary"
+                        className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-[12px] font-medium text-gray-800 shadow-sm transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
                     >
-                        {saving ? 'Saving...' : 'Save'}
+                        {saving ? 'Saving…' : 'Save changes'}
                     </button>
                 </div>
             </div>
@@ -264,7 +271,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </span>
             </div>
 
-            {/* Prompt Config Section */}
+            {/* Prompt Config Section (Step 1 · Prompt) */}
             <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
@@ -280,6 +287,9 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                         <div>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                                Step 1
+                            </p>
                             <h3 className="text-[13px] font-semibold tracking-tight text-gray-900">Agent-Specific Prompt</h3>
                             <p className="mt-0.5 text-[11px] text-gray-500">Added below the global system prompt.</p>
                         </div>
@@ -302,7 +312,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 )}
             </div>
 
-            {/* Knowledge & Tools Section */}
+            {/* Knowledge & Tools Section (Step 2 · Knowledge & tools) */}
             <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
@@ -317,9 +327,14 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        <h3 className="text-[13px] font-semibold tracking-tight text-gray-900">
-                            Knowledge & Tools
-                        </h3>
+                        <div className="flex flex-col">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                                Step 2
+                            </p>
+                            <h3 className="text-[13px] font-semibold tracking-tight text-gray-900">
+                                Knowledge & Tools
+                            </h3>
+                        </div>
                     </div>
                     <span className="mr-2 rounded-md bg-gray-50 px-2 py-0.5 text-[11px] font-semibold text-gray-500">
                         {knowledgeSummary}
@@ -327,7 +342,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </div>
 
                 {expandedSection === 'knowledge' && (
-                    <div className="animate-slide-down flex flex-col gap-4 bg-gray-50/40 p-4">
+                    <div className="animate-slide-down flex flex-col gap-4 bg-gray-50/40 p-4 max-h-[70vh] overflow-y-auto">
                         {/* Knowledge base type selector */}
                         <div>
                             <label className="mb-2 block text-[11px] font-semibold text-gray-500">
@@ -620,7 +635,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 )}
             </div>
 
-            {/* Agent Settings Section */}
+            {/* Agent Settings Section (Step 3 · Behaviour & uploads) */}
             <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
                 <div
                     className="group flex cursor-pointer items-center justify-between border-b border-gray-100/80 bg-white/90 px-4 py-3 transition-colors hover:bg-gray-50"
@@ -635,9 +650,14 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        <h3 className="text-[13px] font-semibold tracking-tight text-gray-900">
-                            Agent Settings
-                        </h3>
+                        <div className="flex flex-col">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                                Step 3
+                            </p>
+                            <h3 className="text-[13px] font-semibold tracking-tight text-gray-900">
+                                Agent Settings
+                            </h3>
+                        </div>
                     </div>
                     <span className="rounded-md bg-gray-50 px-2 py-0.5 text-[11px] font-semibold text-gray-500">
                         {uploadsSummary}
@@ -645,7 +665,7 @@ export default function PromptEditor({ onSaveSuccess, agentId }: { onSaveSuccess
                 </div>
 
                 {expandedSection === 'agent' && (
-                    <div className="animate-slide-down max-h-[460px] overflow-y-auto bg-gray-50/40 p-4">
+                    <div className="animate-slide-down max-h-[70vh] overflow-y-auto bg-gray-50/40 p-4">
                         <div className="flex flex-col gap-5 pb-16">
                             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-end">
                                 <div>

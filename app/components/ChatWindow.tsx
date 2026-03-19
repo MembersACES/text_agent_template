@@ -2,6 +2,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { getBranchLogoUrl } from '@/lib/branch-logos';
+import Image from 'next/image';
 
 interface Message {
     role: 'user' | 'assistant';
@@ -487,10 +489,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             {/* Header */}
             <div className="frosted-header flex shrink-0 items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50">
-                        <svg className="h-4 w-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                        </svg>
+                    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80">
+                        <Image src={getBranchLogoUrl(agentId)} alt="" width={32} height={32} className="h-full w-full object-cover" />
                     </div>
                     <div className="flex flex-col">
                         <span className="text-[13px] font-semibold tracking-tight text-gray-900">{agentName}</span>
@@ -538,7 +538,12 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
             {/* Messages */}
             <div className="flex-1 space-y-4 overflow-y-auto bg-gray-50 px-4 py-5">
                 {messages.map((message, index) => (
-                    <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-start gap-2`}>
+                        {message.role === 'assistant' && (
+                            <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80 mt-0.5">
+                                <Image src={getBranchLogoUrl(agentId)} alt="" width={32} height={32} className="h-full w-full object-cover" />
+                            </div>
+                        )}
                         <div
                             className={`max-w-[75%] px-4 py-2.5 text-[13px] leading-relaxed ${
                                 message.role === 'user'
@@ -582,6 +587,17 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                         </div>
                     </div>
                 ))}
+                {/* HTG-specific empty state hint */}
+                {agentId === 'honest-to-goodness-agent' &&
+                    messages.length === 1 &&
+                    messages[0]?.role === 'assistant' &&
+                    !messages.some(m => m.role === 'user') && (
+                        <div className="pl-10 pr-6">
+                            <p className="text-[11px] text-gray-500">
+                                Try asking about orders, products, ingredients, or store policies to see how the agent responds.
+                            </p>
+                        </div>
+                    )}
                 {/* File upload progress indicator */}
                 {isUploading && uploadProgress && (
                     <div className="flex justify-start">
@@ -761,7 +777,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                         className="rounded-lg p-1.5 text-gray-300 transition-all hover:bg-gray-100 hover:text-gray-900 disabled:text-gray-200 disabled:hover:bg-transparent"
                         aria-label="Send message"
                     >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="h-5 w-5 rotate-[-45deg]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                         </svg>
                     </button>
