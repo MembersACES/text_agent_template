@@ -13,8 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Agent Console - Your Multi-agent Workspace",
+  title: "Agent Console – AI Support Workspace",
   description: "Chat with your agents to help you with your work & manage your client requests",
+  icons: {
+    icon: "/Logo3.png",
+    shortcut: "/Logo3.png",
+    apple: "/Logo3.png",
+  },
 };
 
 export default function RootLayout({
