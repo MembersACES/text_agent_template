@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "health:chat": "node ./scripts/chat-health-check.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",

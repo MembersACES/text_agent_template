@@ -83,41 +83,62 @@ export class ZohoKbToolService implements AgentTool {
             };
         }
 
-        logger.info('Using public Zoho portal API search');
-        let articles = await this.searchArticlesTraceable(query, portalId);
+        try {
+            logger.info('Using public Zoho portal API search');
+            let articles = await this.searchArticlesTraceable(query, portalId);
 
-        if (portalId2) {
-            const relevant = articles.length > 0 && await this.articlesAnswerQuery(query, articles);
-            if (!relevant) {
-                logger.info('Portal 1 did not answer the question, trying portal 2');
-                const articles2 = await this.searchArticlesTraceable(query, portalId2);
-                if (articles2.length > 0) {
-                    articles = articles2;
+            if (portalId2) {
+                const relevant = articles.length > 0 && await this.articlesAnswerQuery(query, articles);
+                if (!relevant) {
+                    logger.info('Portal 1 did not answer the question, trying portal 2');
+                    const articles2 = await this.searchArticlesTraceable(query, portalId2);
+                    if (articles2.length > 0) {
+                        articles = articles2;
+                    }
                 }
             }
-        }
 
-        if (articles.length === 0) {
+            if (articles.length === 0) {
+                return {
+                    toolResponse: {
+                        status: 'no_results',
+                        message: `No knowledge base articles found for "${query}".`,
+                    },
+                    actualArgs,
+                };
+            }
+
             return {
                 toolResponse: {
-                    status: 'no_results',
-                    message: `No knowledge base articles found for "${query}".`,
+                    status: 'success',
+                    bestArticle: {
+                        title: articles[0].title,
+                        summary: articles[0].summary,
+                        url: articles[0].permalink,
+                    },
+                    relatedArticles: articles.slice(1, 3).map((a: ZohoArticle) => ({
+                        title: a.title,
+                        summary: a.summary,
+                        url: a.permalink,
+                    })),
+                    articles: articles.map((a: ZohoArticle) => ({
+                        title: a.title,
+                        summary: a.summary,
+                        url: a.permalink,
+                    })),
+                },
+                actualArgs,
+            };
+        } catch (error) {
+            logger.error(`Zoho KB search failed for query "${query}": ${error}`);
+            return {
+                toolResponse: {
+                    status: 'error',
+                    message: 'Failed to query knowledge base articles.',
                 },
                 actualArgs,
             };
         }
-
-        return {
-            toolResponse: {
-                status: 'success',
-                articles: articles.map((a: ZohoArticle) => ({
-                    title: a.title,
-                    summary: a.summary,
-                    url: a.permalink,
-                })),
-            },
-            actualArgs,
-        };
     }
 
     private async articlesAnswerQuery(query: string, articles: { title: string; summary: string }[]): Promise<boolean> {

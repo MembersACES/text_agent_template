@@ -61,7 +61,7 @@ const DEFAULT_GLOBAL_SYSTEM_PROMPT = `GLOBAL RULES FOR ALL AGENTS:
 4. **Uncertainty Handling**:
    - If you don't know something or the data is incomplete, clearly state that
    - Never fabricate information
-   - If asked about something not in your knowledge base, say so explicitly
+   - When a tool returns successful content, use it to answer directly instead of saying information was not found
 
 5. **Professional Tone**:
    - Be friendly, supportive, and professional

@@ -113,7 +113,7 @@ export default function AgentPage() {
           <LockScreen onUnlock={() => { sessionStorage.setItem('app-auth', 'true'); setIsAuthorized(true); }} />
         </main>
         <footer className="fixed bottom-0 left-0 right-0 flex h-8 items-center justify-center border-t border-gray-200/60 bg-white/90 text-[10px] text-gray-400 backdrop-blur">
-          © Prograde IP Holdings 2026
+          © Prograde IP Holdings & Carbon Zero Australasia 2026
         </footer>
       </>
     );
@@ -129,7 +129,7 @@ export default function AgentPage() {
               <img src="/Logo3.png" alt="ACES Logo" className="h-8" />
               <div className="mx-1.5 h-5 w-px bg-gray-200/80" />
               <span className="text-[15px] font-semibold tracking-tight text-gray-900">
-                Agent console
+                Agent Console
               </span>
             </div>
             <div className="flex flex-col items-center gap-1">
@@ -170,7 +170,7 @@ export default function AgentPage() {
       </main>
 
       <footer className="flex h-8 shrink-0 items-center justify-center border-t border-gray-200/60 bg-white/95 text-[10px] text-gray-400 backdrop-blur">
-        © Prograde IP Holdings 2026
+        © Prograde IP Holdings & Carbon Zero Australasia 2026
       </footer>
     </div>
   );

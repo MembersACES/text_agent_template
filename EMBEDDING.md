@@ -24,7 +24,7 @@ The easiest way to embed the entire application is using an iframe. This works f
 
 ```html
 <iframe 
-  src="https://your-domain.com/chat-widget" 
+  src="https://your-domain.com/chat-widget?agentId=honest-to-goodness-agent" 
   width="100%" 
   height="600px" 
   frameborder="0"
@@ -67,27 +67,17 @@ If you only want to embed the chat interface (without the prompt editor), you ca
 
 ### Create a Chat-Only Route
 
-Create `app/chat-widget/page.tsx`:
+The `chat-widget` route is available without session pre-auth and accepts an `agentId` query param:
 
 ```tsx
-'use client';
-
-import ChatWindow from '../components/ChatWindow';
-
-export default function ChatWidgetPage() {
-  return (
-    <div className="h-screen w-full bg-gray-50">
-      <ChatWindow />
-    </div>
-  );
-}
+https://your-domain.com/chat-widget?agentId=honest-to-goodness-agent
 ```
 
 Then embed just the chat:
 
 ```html
 <iframe 
-  src="https://your-domain.com/chat-widget" 
+  src="https://your-domain.com/chat-widget?agentId=honest-to-goodness-agent" 
   width="100%" 
   height="600px"
   frameborder="0"
@@ -123,7 +113,7 @@ export default function MyPage() {
 
 ## Option 4: Standalone Widget Script
 
-For maximum flexibility, you can create a widget that can be embedded via a script tag.
+For maximum flexibility, you can embed a fixed widget via a script tag.
 
 ### Create Widget Script
 
@@ -134,11 +124,14 @@ Create `public/widget.js`:
   const widgetId = 'text-agent-widget-' + Date.now();
   const container = document.createElement('div');
   container.id = widgetId;
-  container.style.cssText = 'position: fixed; bottom: 20px; right: 20px; width: 400px; height: 600px; z-index: 9999; border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.15); border-radius: 12px; overflow: hidden;';
+  container.style.cssText = 'position: fixed; bottom: 20px; right: 20px; width: min(380px, calc(100vw - 24px)); height: min(640px, calc(100vh - 24px)); z-index: 9999; border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.15); border-radius: 12px; overflow: hidden;';
   
   const iframe = document.createElement('iframe');
-  iframe.src = 'https://your-domain.com/chat-widget';
-  iframe.style.cssText = 'width: 100%; height: 100%; border: none;';
+  iframe.src = 'https://your-domain.com/chat-widget?agentId=honest-to-goodness-agent';
+  iframe.style.cssText = 'width: 100%; height: 100%; border: none; background: transparent;';
+  iframe.title = 'Support chat';
+  iframe.loading = 'lazy';
+  iframe.allow = 'clipboard-write';
   container.appendChild(iframe);
   
   document.body.appendChild(container);
@@ -157,12 +150,40 @@ Create `public/widget.js`:
    - Remove or configure `X-Frame-Options` header
    - Consider using `Content-Security-Policy: frame-ancestors`
 
-2. **Authentication**: The embedded version will still require authentication. Consider:
-   - Creating a public chat endpoint
-   - Passing authentication tokens via URL parameters (if secure)
-   - Using postMessage API for cross-origin communication
+2. **Authentication**: `chat-widget` is designed for public embedding. Keep the main workspace routes (`/`, `/agent/[agentId]`, `/htg-agent`) behind auth.
+   - If you need to lock embed access, add server-side validation on the widget route or API requests.
+   - Avoid exposing admin/editor routes to external iframes.
 
 3. **API Routes**: Ensure your API routes are accessible from the embedded context.
+
+## BigCommerce Script Manager
+
+For sandbox deployment, use Script Manager with:
+
+- Location: `Footer`
+- Pages: `All pages`
+
+Path: `Storefront -> Script Manager -> Create a Script`
+
+Paste this snippet as-is:
+
+```html
+<script>
+  (function() {
+    var iframe = document.createElement('iframe');
+    iframe.src = 'https://aces-honest-to-goodness-agent-672026052958.australia-southeast2.run.app/chat-widget?agentId=honest-to-goodness-agent';
+    iframe.style.position = 'fixed';
+    iframe.style.bottom = '20px';
+    iframe.style.right = '20px';
+    iframe.style.width = '380px';
+    iframe.style.height = '640px';
+    iframe.style.border = '0';
+    iframe.style.zIndex = '9999';
+    iframe.setAttribute('title', 'Honest to Goodness support chat');
+    document.body.appendChild(iframe);
+  })();
+</script>
+```
 
 ## Customization
 

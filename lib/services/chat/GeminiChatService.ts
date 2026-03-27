@@ -28,6 +28,16 @@ import { ConversationHistoryService, ConversationMessage } from './ConversationH
 import { ContextService } from './ContextService';
 
 const logger = getLogger('GeminiChatService');
+const NO_RESULTS_FALLBACK_MESSAGE = "I couldn't find an article that directly answers this in the help center. You can still contact Honest to Goodness support via phone, email or web forms if you'd like more help.";
+const KB_UNAVAILABLE_FALLBACK_MESSAGE = "I'm having trouble reaching the help center right now. Please try again in a moment or contact support via phone, email or web forms.";
+const HEALTH_FORCE_NO_RESULTS_TOKEN = '__HEALTH_FORCE_NO_RESULTS__';
+const HEALTH_FORCE_ERROR_TOKEN = '__HEALTH_FORCE_ERROR__';
+const KB_SUCCESS_INSTRUCTION = [
+    'Tool result policy:',
+    '- If tool status is "success", answer using bestArticle first and optionally relatedArticles.',
+    '- Do not output no-results or KB-unavailable fallback text when status is "success".',
+    '- Use no-results fallback only for status "no_results".',
+].join('\n');
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -78,6 +88,15 @@ export class GeminiChatService {
                 uploadedFiles = [],
             } = params;
 
+            if (message.startsWith(HEALTH_FORCE_NO_RESULTS_TOKEN)) {
+                logger.info('Health check forced no_results fallback path');
+                return { response: NO_RESULTS_FALLBACK_MESSAGE };
+            }
+            if (message.startsWith(HEALTH_FORCE_ERROR_TOKEN)) {
+                logger.info('Health check forced error fallback path');
+                return { response: KB_UNAVAILABLE_FALLBACK_MESSAGE };
+            }
+
             const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
 
             // If a tool handles KB search (e.g. Zoho), skip the GCS vector retrieval —
@@ -123,6 +142,11 @@ export class GeminiChatService {
                     useKnowledgeBase,
                     userMessage: message,
                 });
+            }
+
+            if (hasKbTool) {
+                logger.warn('Model did not call knowledge-base tool; returning KB unavailable fallback.');
+                return { response: KB_UNAVAILABLE_FALLBACK_MESSAGE };
             }
 
             return this.handleNormalResponse(firstResponse.text(), message);
@@ -261,14 +285,41 @@ export class GeminiChatService {
             { role: 'model', parts: [{ functionCall: recordedFunctionCall }] },
             {
                 role: 'user',
-                parts: [{ functionResponse: { name: functionName, response: result.toolResponse } }],
+                parts: functionName === 'search_knowledge_base'
+                    ? [
+                        { text: KB_SUCCESS_INSTRUCTION },
+                        { functionResponse: { name: functionName, response: result.toolResponse } },
+                    ]
+                    : [{ functionResponse: { name: functionName, response: result.toolResponse } }],
             },
         ];
 
         const secondResult = await this.generateTurn2(model, turn2Contents);
-        const responseText = this.cleanResponseText(secondResult.response.text());
+        const status = result.toolResponse.status;
 
-        logger.info(`Tool call "${functionName}" completed — generateReport: ${result.generateReport}`);
+        if (functionName === 'search_knowledge_base') {
+            if (status === 'no_results') {
+                return { response: NO_RESULTS_FALLBACK_MESSAGE };
+            }
+            if (status === 'error') {
+                return { response: KB_UNAVAILABLE_FALLBACK_MESSAGE };
+            }
+        }
+
+        const responseText = this.cleanResponseText(secondResult.response.text());
+        if (
+            functionName === 'search_knowledge_base' &&
+            status === 'success' &&
+            this.isInvalidSuccessKbResponse(responseText)
+        ) {
+            logger.warn('Invalid KB success response detected; replacing with best article template.');
+            return { response: this.buildBestArticleResponse(result.toolResponse) };
+        }
+
+        const reportSuffix = result.generateReport === undefined
+            ? ''
+            : ` — generateReport: ${result.generateReport}`;
+        logger.info(`Tool call "${functionName}" completed${reportSuffix}`);
 
         return {
             response: responseText,
@@ -316,6 +367,51 @@ export class GeminiChatService {
         return text.replace(/\[GENERATE_REPORT\]/gi, '').trim();
     }
 
+    private isInvalidSuccessKbResponse(text: string): boolean {
+        const normalized = text.toLowerCase();
+        return normalized.includes("i couldn't find an article that directly answers this in the help center")
+            || normalized.includes("i'm having trouble reaching the help center right now")
+            || normalized.includes('i cannot find any information about')
+            || normalized.includes('in the available knowledge bases');
+    }
+
+    private buildBestArticleResponse(toolResponse: Record<string, unknown>): string {
+        const bestArticle = toolResponse.bestArticle as { title?: string; summary?: string; url?: string } | undefined;
+        if (!bestArticle?.title) {
+            return KB_UNAVAILABLE_FALLBACK_MESSAGE;
+        }
+
+        const rawSummary = (bestArticle.summary || 'I found a relevant help article for your question.').trim();
+        const summary = this.truncateSummary(rawSummary);
+        const url = bestArticle.url ? `\n\nRead more: ${bestArticle.url}` : '';
+        return `${summary}${url}`;
+    }
+
+    private truncateSummary(summary: string): string {
+        const cleaned = summary.replace(/\s+/g, ' ').trim();
+        if (!cleaned) return 'I found a relevant help article for your question.';
+
+        // Prefer a natural 1-2 sentence cut before hard character slicing.
+        const sentenceMatches = cleaned.match(/[^.!?]+[.!?]+/g) ?? [];
+        if (sentenceMatches.length >= 2) {
+            const twoSentences = `${sentenceMatches[0].trim()} ${sentenceMatches[1].trim()}`.trim();
+            if (twoSentences.length <= 320) return twoSentences;
+        }
+
+        if (sentenceMatches.length >= 1) {
+            const oneSentence = sentenceMatches[0].trim();
+            if (oneSentence.length <= 320) return oneSentence;
+        }
+
+        if (cleaned.length <= 320) return cleaned;
+
+        const softLimit = 300;
+        const windowed = cleaned.slice(0, softLimit);
+        const lastSpace = windowed.lastIndexOf(' ');
+        const clipped = (lastSpace > 200 ? windowed.slice(0, lastSpace) : windowed).trim();
+        return `${clipped}...`;
+    }
+
     /**
      * Aggressively remove JSON code blocks and fragments that were part of a
      * structured extraction response but should not appear in the chat UI.
@@ -353,7 +449,19 @@ export class GeminiChatService {
             gcsClient.getSystemSettings(),
             gcsClient.getPromptTemplate(agentId),
         ]);
-        return `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
+        return `${systemSettings.globalSystemPrompt}
+
+---
+
+${agentPrompt}
+
+---
+
+KNOWLEDGE BASE TOOL OVERRIDES:
+- If search_knowledge_base status is "success", you must answer using the returned article content.
+- Only use the no-results fallback when status is "no_results".
+- Only use KB unavailable messaging when status is "error" or the tool was unavailable.
+- Never claim no information is available when status is "success".`;
     }
 
     /** KB retrieval wrapped in a LangSmith traceable span. */

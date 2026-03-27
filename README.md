@@ -43,6 +43,27 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### 3.1 First-Turn Chat Health Check
+
+After deployment, run the single-turn suite:
+
+```bash
+CHAT_HEALTH_BASE_URL=https://your-domain.com npm run health:chat
+```
+
+Optional agent override:
+
+```bash
+CHAT_HEALTH_BASE_URL=https://your-domain.com CHAT_HEALTH_AGENT_ID=honest-to-goodness-agent npm run health:chat
+```
+
+This suite validates:
+
+- HTG and Group Goodness first-turn FAQs return non-empty responses.
+- Success paths do not return fallback phrases.
+- Out-of-scope prompts return the no-results fallback.
+- Forced fallback checks validate exact `no_results` and `error` fallback messages.
+
 ### 4. Use the Chatbot
 
 1. Click the orange chat button in the bottom right corner

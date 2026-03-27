@@ -129,7 +129,7 @@ export default function HonestToGoodnessStandalonePage() {
               <img src="/Logo3.png" alt="ACES Logo" className="h-8" />
               <div className="mx-1.5 h-5 w-px bg-gray-200/80" />
               <span className="text-[15px] font-semibold tracking-tight text-gray-900">
-                Agent console
+                Agent Console
               </span>
             </div>
             <div className="flex flex-col items-center gap-1">

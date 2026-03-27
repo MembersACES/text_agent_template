@@ -567,7 +567,7 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                                     : 'rounded-2xl rounded-bl-md border border-gray-100 bg-white text-gray-800'
                             }`}
                         >
-                            <p className="whitespace-pre-line">{message.content}</p>
+                            <p className="whitespace-pre-line break-words pr-1">{message.content}</p>
                             {message.actions && message.actions.length > 0 && (
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {message.actions.map((action, actionIndex) => (
