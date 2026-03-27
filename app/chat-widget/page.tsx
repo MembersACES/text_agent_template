@@ -1,10 +1,18 @@
 'use client';
 
-import { useMemo } from 'react';
+import { Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import ChatWindow from '../components/ChatWindow';
 
 export default function ChatWidgetPage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatWidgetPageContent />
+    </Suspense>
+  );
+}
+
+function ChatWidgetPageContent() {
   const searchParams = useSearchParams();
   const agentId = useMemo(() => searchParams.get('agentId') ?? undefined, [searchParams]);
 

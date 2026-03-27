@@ -394,13 +394,20 @@ export class GeminiChatService {
         // Prefer a natural 1-2 sentence cut before hard character slicing.
         const sentenceMatches = cleaned.match(/[^.!?]+[.!?]+/g) ?? [];
         if (sentenceMatches.length >= 2) {
-            const twoSentences = `${sentenceMatches[0].trim()} ${sentenceMatches[1].trim()}`.trim();
-            if (twoSentences.length <= 320) return twoSentences;
+            const firstSentence = sentenceMatches[0];
+            const secondSentence = sentenceMatches[1];
+            if (firstSentence && secondSentence) {
+                const twoSentences = `${firstSentence.trim()} ${secondSentence.trim()}`.trim();
+                if (twoSentences.length <= 320) return twoSentences;
+            }
         }
 
         if (sentenceMatches.length >= 1) {
-            const oneSentence = sentenceMatches[0].trim();
-            if (oneSentence.length <= 320) return oneSentence;
+            const firstSentence = sentenceMatches[0];
+            if (firstSentence) {
+                const oneSentence = firstSentence.trim();
+                if (oneSentence.length <= 320) return oneSentence;
+            }
         }
 
         if (cleaned.length <= 320) return cleaned;

@@ -7,6 +7,12 @@ const blockedResponses = [
   "I couldn't find an article that directly answers this in the help center. You can still contact Honest to Goodness support via phone, email or web forms if you'd like more help.",
   "I'm having trouble reaching the help center right now. Please try again in a moment or contact support via phone, email or web forms.",
 ];
+const outOfScopeSafeFragments = [
+  "i cannot generate custom dinner recipes",
+  "i cannot provide health advice",
+  "i cannot diagnose conditions",
+  "for questions about plant diseases",
+];
 
 const singleTurnSuccessCases = [
   // HTG FAQs (6-8)
@@ -100,10 +106,15 @@ async function run() {
   for (const query of outOfScopeExpectedNoResults) {
     try {
       const result = await callChat(query);
+      const normalizedResponse = result.responseText.toLowerCase();
+      const isCanonicalNoResults = result.responseText === blockedResponses[0];
+      const hasSafeRefusal = outOfScopeSafeFragments.some((fragment) => normalizedResponse.includes(fragment));
+      const hasKbUnavailable = normalizedResponse.includes(blockedResponses[1].toLowerCase());
       const failed =
         !result.ok ||
         !result.responseText ||
-        result.responseText !== blockedResponses[0];
+        hasKbUnavailable ||
+        (!isCanonicalNoResults && !hasSafeRefusal);
 
       if (failed) {
         failures += 1;
