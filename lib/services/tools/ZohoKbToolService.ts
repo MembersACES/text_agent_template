@@ -85,21 +85,52 @@ export class ZohoKbToolService implements AgentTool {
 
         try {
             logger.info('Using public Zoho portal API search');
-            let articles = await this.searchArticlesTraceable(query, portalId);
-            let relevant = articles.length > 0 && await this.isRelevantToQuery(query, articles);
+            const paymentFallbackQueries = this.getPaymentFallbackQueries(query);
+            const portal1Articles = await this.searchPortalWithFallbacks(portalId, query, paymentFallbackQueries);
+            const portal1Relevant = portal1Articles.length > 0
+                && await this.isRelevantToQuery(query, portal1Articles, 'portal 1');
+            const portal1Score = this.scoreArticleSet(query, portal1Articles);
+
+            let portal2Articles: ZohoArticle[] = [];
+            let portal2Relevant = false;
+            let portal2Score = -1;
 
             if (portalId2) {
-                if (!relevant) {
-                    logger.info('Portal 1 did not answer the question, trying portal 2');
-                    const articles2 = await this.searchArticlesTraceable(query, portalId2);
-                    if (articles2.length > 0) {
-                        articles = articles2;
-                        relevant = await this.isRelevantToQuery(query, articles2);
-                    }
-                }
+                logger.info('Portal 2 configured; evaluating both portals and selecting best match');
+                portal2Articles = await this.searchPortalWithFallbacks(portalId2, query, paymentFallbackQueries);
+                portal2Relevant = portal2Articles.length > 0
+                    && await this.isRelevantToQuery(query, portal2Articles, 'portal 2');
+                portal2Score = this.scoreArticleSet(query, portal2Articles);
             }
 
-            if (articles.length === 0 || !relevant) {
+            const normalizedQuery = this.normalizeText(query);
+            const preferPortal2 = normalizedQuery.includes('group goodness');
+            const cardBrandIntent = /(amex|american express|visa|mastercard|paypal|apple pay|google pay)/.test(normalizedQuery);
+            const portal1PriorityBoost = !preferPortal2 && cardBrandIntent ? 6 : 0;
+            const portal2PriorityBoost = preferPortal2 ? 3 : 0;
+            const candidates = [
+                {
+                    label: 'portal 1',
+                    articles: portal1Articles,
+                    relevant: portal1Relevant,
+                    score: portal1Score + (preferPortal2 ? 0 : 1) + portal1PriorityBoost,
+                },
+                {
+                    label: 'portal 2',
+                    articles: portal2Articles,
+                    relevant: portal2Relevant,
+                    score: portal2Score + (preferPortal2 ? 1 : 0) + portal2PriorityBoost,
+                },
+            ].filter((candidate) => candidate.articles.length > 0);
+
+            candidates.sort((a, b) => {
+                if (a.relevant !== b.relevant) return a.relevant ? -1 : 1;
+                if (a.score !== b.score) return b.score - a.score;
+                return b.articles.length - a.articles.length;
+            });
+
+            const bestCandidate = candidates[0];
+            if (!bestCandidate || !bestCandidate.relevant) {
                 return {
                     toolResponse: {
                         status: 'no_results',
@@ -108,6 +139,11 @@ export class ZohoKbToolService implements AgentTool {
                     actualArgs,
                 };
             }
+
+            logger.info(
+                `Selected ${bestCandidate.label} with relevance=${bestCandidate.relevant} score=${bestCandidate.score} for query "${query}"`,
+            );
+            const articles = this.rankArticlesForQuery(query, bestCandidate.articles);
 
             return {
                 toolResponse: {
@@ -142,13 +178,50 @@ export class ZohoKbToolService implements AgentTool {
         }
     }
 
-    private async isRelevantToQuery(query: string, articles: { title: string; summary: string }[]): Promise<boolean> {
+    private async isRelevantToQuery(
+        query: string,
+        articles: { title: string; summary: string }[],
+        portalLabel: string,
+    ): Promise<boolean> {
         if (this.hasStrongLexicalMatch(query, articles)) {
-            logger.info('Relevance check passed via lexical matching');
+            logger.info(`Relevance check passed via lexical matching (${portalLabel})`);
             return true;
         }
 
-        return this.articlesAnswerQuery(query, articles);
+        return this.articlesAnswerQuery(query, articles, portalLabel);
+    }
+
+    private async searchPortalWithFallbacks(
+        portalId: string,
+        query: string,
+        fallbackQueries: string[],
+    ): Promise<ZohoArticle[]> {
+        const primary = await this.searchArticlesTraceable(query, portalId);
+
+        if (fallbackQueries.length === 0) return primary;
+
+        const primaryScore = this.scoreArticleSet(query, primary);
+        const shouldTryFallbacks = primary.length === 0 || primaryScore < 6;
+        if (!shouldTryFallbacks) return primary;
+
+        logger.info(
+            `Primary search appears weak for "${query}" (score=${primaryScore}); trying ${fallbackQueries.length} fallback query(ies).`,
+        );
+
+        const merged = new Map<string, ZohoArticle>();
+        for (const article of primary) {
+            merged.set(article.id || article.permalink || article.title, article);
+        }
+
+        for (const fallbackQuery of fallbackQueries) {
+            const fallbackArticles = await this.searchArticlesTraceable(fallbackQuery, portalId);
+            for (const article of fallbackArticles) {
+                merged.set(article.id || article.permalink || article.title, article);
+            }
+        }
+
+        const mergedArticles = Array.from(merged.values());
+        return this.rankArticlesForQuery(query, mergedArticles);
     }
 
     private hasStrongLexicalMatch(query: string, articles: { title: string; summary: string }[]): boolean {
@@ -167,22 +240,24 @@ export class ZohoKbToolService implements AgentTool {
         const keywordGroups = this.extractQueryKeywordGroups(query);
         if (keywordGroups.length === 0) return false;
 
+        const requiredGroups = keywordGroups.length <= 2
+            ? keywordGroups.length
+            : Math.max(2, Math.ceil(keywordGroups.length * 0.6));
+
         return articles.some((article) => {
             const title = this.normalizeText(article.title);
             const summary = this.normalizeText(article.summary);
             const corpus = `${title} ${summary}`;
 
-            // Strong signal: title contains at least one token from each keyword group.
-            const titleHasAllKeywordGroups = keywordGroups.every((group) =>
+            const titleMatchCount = keywordGroups.filter((group) =>
                 group.some((token) => this.matchesToken(title, token)),
-            );
-            if (titleHasAllKeywordGroups) return true;
+            ).length;
+            if (titleMatchCount >= requiredGroups) return true;
 
-            // Secondary signal: article text covers at least one token from each group.
-            const corpusHasAllKeywordGroups = keywordGroups.every((group) =>
+            const corpusMatchCount = keywordGroups.filter((group) =>
                 group.some((token) => this.matchesToken(corpus, token)),
-            );
-            if (corpusHasAllKeywordGroups) return true;
+            ).length;
+            if (corpusMatchCount >= requiredGroups) return true;
 
             return false;
         });
@@ -195,15 +270,93 @@ export class ZohoKbToolService implements AgentTool {
             'you', 'your',
         ]);
 
+        const shippingDeliveryCluster = [
+            'delivery',
+            'shipping',
+            'freight',
+            'postage',
+            'dispatch',
+            'courier',
+            'ship',
+            'deliver',
+        ];
+        const paymentCluster = [
+            'pay',
+            'payment',
+            'payments',
+            'paying',
+            'paid',
+            'checkout',
+            'option',
+            'options',
+            'method',
+            'methods',
+            'accept',
+            'accepts',
+            'accepted',
+            'american express',
+            'amex',
+            'visa',
+            'mastercard',
+            'paypal',
+            'apple pay',
+            'google pay',
+        ];
+        const costCluster = ['much', 'cost', 'costs', 'price', 'prices', 'fee', 'fees', 'charge', 'charges'];
+
         const synonyms: Record<string, string[]> = {
             join: ['join', 'joining', 'signup', 'sign up', 'register', 'enrol', 'enroll', 'buying group'],
             click: ['click'],
             collect: ['collect', 'pickup', 'pick up'],
             goodness: ['goodness'],
             group: ['group'],
+            delivery: shippingDeliveryCluster,
+            shipping: shippingDeliveryCluster,
+            freight: shippingDeliveryCluster,
+            postage: shippingDeliveryCluster,
+            dispatch: shippingDeliveryCluster,
+            courier: shippingDeliveryCluster,
+            ship: shippingDeliveryCluster,
+            deliver: shippingDeliveryCluster,
+            pay: paymentCluster,
+            payment: paymentCluster,
+            payments: paymentCluster,
+            paying: paymentCluster,
+            paid: paymentCluster,
+            checkout: paymentCluster,
+            option: paymentCluster,
+            options: paymentCluster,
+            method: paymentCluster,
+            methods: paymentCluster,
+            accept: paymentCluster,
+            accepts: paymentCluster,
+            accepted: paymentCluster,
+            much: costCluster,
+            cost: costCluster,
+            costs: costCluster,
+            price: costCluster,
+            prices: costCluster,
+            fee: costCluster,
+            fees: costCluster,
+            charge: costCluster,
+            charges: costCluster,
+            american: ['american', 'amex'],
+            amex: ['amex', 'american'],
+            express: ['express', 'amex', 'american express'],
+            visa: ['visa'],
+            mastercard: ['mastercard', 'master'],
+            paypal: ['paypal'],
+            paypall: ['paypal'],
+            apple: ['apple'],
+            applepay: ['apple', 'pay', 'apple pay'],
+            google: ['google'],
+            googlepay: ['google', 'pay', 'google pay'],
         };
 
-        const raw = this.normalizeText(query)
+        const normalizedQuery = this.normalizeText(query)
+            .replace(/\bamerican express\b/g, 'amex');
+
+        const raw = normalizedQuery
             .split(/\s+/)
             .filter(Boolean)
             .filter((token) => !stopWords.has(token));
@@ -230,6 +383,26 @@ export class ZohoKbToolService implements AgentTool {
         }).filter((group) => group.length > 0);
     }
 
+    private getPaymentFallbackQueries(query: string): string[] {
+        const normalized = this.normalizeText(query);
+        const looksLikePaymentIntent = /(pay|payment|method|option|checkout|amex|american express|visa|mastercard|paypal|apple pay|google pay)/.test(normalized);
+        if (!looksLikePaymentIntent) return [];
+
+        const fallbacks: string[] = ['payment options', 'payment methods'];
+
+        if (/(amex|american express)/.test(normalized)) {
+            fallbacks.push('what payment options you offer', 'american express payment');
+        }
+        if (/apple pay/.test(normalized)) {
+            fallbacks.push('what payment options you offer', 'apple pay payment');
+        }
+        if (/paypal/.test(normalized)) {
+            fallbacks.push('what payment options you offer', 'paypal payment');
+        }
+
+        return Array.from(new Set(fallbacks));
+    }
+
     private normalizeText(text: string): string {
         return text
             .toLowerCase()
@@ -246,7 +419,11 @@ export class ZohoKbToolService implements AgentTool {
         return text.split(' ').includes(token);
     }
 
-    private async articlesAnswerQuery(query: string, articles: { title: string; summary: string }[]): Promise<boolean> {
+    private async articlesAnswerQuery(
+        query: string,
+        articles: { title: string; summary: string }[],
+        portalLabel: string,
+    ): Promise<boolean> {
         const articleList = articles
             .map((a, i) => `${i + 1}. ${a.title}: ${a.summary}`)
             .join('\n');
@@ -254,8 +431,10 @@ export class ZohoKbToolService implements AgentTool {
         const prompt =
             `Question: "${query}"\n\n` +
             `Articles found:\n${articleList}\n\n` +
-            `Do any of these articles answer or substantially help answer the question? ` +
-            `Prefer "yes" when articles explain the same concept in general (for example an introduction page that explains what something is, how to join, or how it works), even if wording differs. ` +
+            `Do any of these articles answer or substantially help answer the question?\n` +
+            `- Reply "yes" if wording differs but the topic matches (e.g. "delivery" vs "shipping" or "freight" for costs; "pay" vs "payment" or "checkout").\n` +
+            `- Reply "yes" for short follow-ups about a card or method (e.g. "American Express", "Visa") if an article lists that method among accepted payments.\n` +
+            `- Prefer "yes" when an article explains the same concept in general, even if the title uses different words.\n` +
             `Reply with only "yes" or "no".`;
 
         try {
@@ -266,11 +445,58 @@ export class ZohoKbToolService implements AgentTool {
             });
             const result = await model.generateContent(prompt);
             const answer = result.response.text().trim().toLowerCase();
-            logger.info(`Relevance check for portal 1 articles: "${answer}"`);
-            return answer.startsWith('yes');
+            logger.info(`Relevance check for ${portalLabel} articles: "${answer}"`);
+
+            if (answer.startsWith('yes')) return true;
+            if (answer.startsWith('no')) return false;
+
+            const fallbackScore = this.scoreArticleSet(query, articles);
+            logger.warn(
+                `Ambiguous relevance response for ${portalLabel}; fallback lexical score=${fallbackScore}.`,
+            );
+            return fallbackScore >= 4;
         } catch (err) {
             logger.warn('Relevance check failed, assuming articles are relevant', err);
             return true;
         }
+    }
+
+    private rankArticlesForQuery(query: string, articles: ZohoArticle[]): ZohoArticle[] {
+        return [...articles].sort((a, b) => this.scoreArticle(query, b) - this.scoreArticle(query, a));
+    }
+
+    private scoreArticleSet(query: string, articles: { title: string; summary: string }[]): number {
+        if (articles.length === 0) return 0;
+        const top3 = articles.slice(0, 3);
+        return top3.reduce((sum, article) => sum + this.scoreArticle(query, article), 0);
+    }
+
+    private scoreArticle(query: string, article: { title: string; summary: string }): number {
+        const groups = this.extractQueryKeywordGroups(query);
+        if (groups.length === 0) return 0;
+
+        const title = this.normalizeText(article.title);
+        const summary = this.normalizeText(article.summary);
+        const queryNorm = this.normalizeText(query);
+        const fullText = `${title} ${summary}`;
+
+        const titleMatches = groups.filter((group) => group.some((token) => this.matchesToken(title, token))).length;
+        const bodyMatches = groups.filter((group) => group.some((token) => this.matchesToken(fullText, token))).length;
+
+        let score = titleMatches * 3 + bodyMatches;
+
+        if (queryNorm && title.includes(queryNorm)) score += 4;
+
+        const paymentIntent = /(pay|payment|amex|visa|mastercard|paypal|apple|google|option|method|accept)/.test(queryNorm);
+        if (paymentIntent) {
+            if (/(pay|payment|checkout|visa|mastercard|amex|paypal|apple pay|google pay)/.test(fullText)) score += 3;
+        }
+
+        const shippingIntent = /(deliver|shipping|freight|postage|courier|dispatch|ship)/.test(queryNorm);
+        if (shippingIntent) {
+            if (/(deliver|shipping|freight|postage|courier|dispatch|ship)/.test(fullText)) score += 3;
+        }
+
+        return score;
     }
 }

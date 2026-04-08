@@ -30,9 +30,11 @@ interface ToolMetadata {
 interface ChatWindowProps {
     refreshTrigger?: number;
     agentId?: string;
+    /** When set (e.g. embedded widget), show a control to collapse the launcher panel. */
+    onEmbedMinimize?: () => void;
 }
 
-export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps) {
+export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
@@ -492,34 +494,47 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                 </div>
             )}
 
-            {/* Header */}
-            <div className="frosted-header flex shrink-0 items-center justify-between px-4 py-2.5">
-                <div className="flex items-center gap-2.5">
-                    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80">
+            {/* Header — branded bar (matches common embed widgets; tune via --brand-primary / --chat-header-bg) */}
+            <div className="chat-panel-header flex shrink-0 items-center justify-between px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-white/15 ring-1 ring-white/25">
                         <Image src={getBranchLogoUrl(agentId)} alt="" width={32} height={32} className="h-full w-full object-cover" />
                     </div>
-                    <div className="flex flex-col">
-                        <span className="text-[13px] font-semibold tracking-tight text-gray-900">{agentName}</span>
+                    <div className="flex min-w-0 flex-col">
+                        <span className="text-[13px] font-semibold tracking-tight text-white">{agentName}</span>
                         {agentSubtitle && (
-                            <p className="mt-0.5 line-clamp-1 text-[12px] font-medium leading-snug text-gray-600">
+                            <p className="mt-0.5 line-clamp-1 text-[12px] font-medium leading-snug text-white/85">
                                 {agentSubtitle}
                             </p>
                         )}
                         <div className="mt-0.5 inline-flex items-center gap-1.5">
-                            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-subtle-pulse" />
-                            <span className="text-[11px] font-medium text-gray-500">Online</span>
+                            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] animate-subtle-pulse" />
+                            <span className="text-[11px] font-medium text-white/70">Online</span>
                         </div>
                         {agentDescription && (
-                            <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-gray-500">
+                            <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/75">
                                 {agentDescription}
                             </p>
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-0.5">
+                    {onEmbedMinimize && (
+                        <button
+                            type="button"
+                            onClick={onEmbedMinimize}
+                            className="rounded-lg p-1.5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+                            aria-label="Minimise chat"
+                            title="Minimise"
+                        >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                    )}
                     <button
                         onClick={() => setShowEndChatPopup(true)}
-                        className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                        className="rounded-lg p-1.5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
                         aria-label="Clear Chat"
                         title="Clear Chat"
                     >
@@ -563,8 +578,8 @@ export default function ChatWindow({ refreshTrigger, agentId }: ChatWindowProps)
                         <div
                             className={`max-w-[75%] px-4 py-2.5 text-[13px] leading-relaxed ${
                                 message.role === 'user'
-                                    ? 'rounded-2xl rounded-br-md bg-[var(--brand-primary)] text-white'
-                                    : 'rounded-2xl rounded-bl-md border border-gray-100 bg-white text-gray-800'
+                                    ? 'rounded-xl rounded-br-md bg-[var(--brand-primary)] text-white'
+                                    : 'rounded-xl rounded-bl-md border border-gray-100 bg-white text-gray-800'
                             }`}
                         >
                             <p className="whitespace-pre-line break-words pr-1">{message.content}</p>

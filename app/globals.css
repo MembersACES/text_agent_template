@@ -7,6 +7,8 @@
   /* Brand tokens (overridable per deployment) */
   --brand-primary: #111827;
   --brand-primary-hover: #1f2937;
+  /* Chat panel header: branded strip; end stop is slightly darker than gray-900 for depth */
+  --chat-header-bg: linear-gradient(155deg, var(--brand-primary) 0%, #0f172a 100%);
 }
 
 @theme inline {
@@ -42,6 +44,12 @@ body {
 /* Frosted header utility */
 .frosted-header {
   @apply bg-white/85 backdrop-blur-xl border-b border-gray-200/60;
+}
+
+/* Chat widget / panel top bar (Intercom-style branded strip) */
+.chat-panel-header {
+  background: var(--chat-header-bg);
+  @apply border-b border-white/10 shadow-sm;
 }
 
 /* Subtle gradient mesh background for dashboards */
