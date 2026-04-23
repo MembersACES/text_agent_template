@@ -3,6 +3,7 @@ import { settings } from '@/lib/config/settings';
 import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
+import { deterministicSavingsService } from '@/lib/services/report/DeterministicSavingsService';
 import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/types/ReportTypes';
 
 export async function POST(request: Request) {
@@ -24,12 +25,16 @@ export async function POST(request: Request) {
             );
         }
 
+        const normalizedInvoices = deterministicSavingsService.applyDeterministicFindings(
+            invoices as ExtractedInvoice[],
+        );
+
         // Build report data
         const reportData: ReportData = {
             businessInfo: businessInfo as BusinessInfo,
-            invoices: invoices as ExtractedInvoice[],
+            invoices: normalizedInvoices,
             generatedAt: new Date().toISOString(),
-            savingsSummary: calculateSavingsSummary(invoices as ExtractedInvoice[]),
+            savingsSummary: calculateSavingsSummary(normalizedInvoices),
         };
 
         // Generate Excel workbook

@@ -78,6 +78,7 @@ import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorag
 import { documentFetcherService } from '@/lib/services/google/DocumentFetcherService';
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
+import { deterministicSavingsService } from '@/lib/services/report/DeterministicSavingsService';
 import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/types/ReportTypes';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
@@ -371,8 +372,11 @@ async function processInvoicesWithChat(
     console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
     console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
 
-    // Extract JSON from response using shared utility; map alternate Gemini field names
-    const extractedData: ExtractedInvoice[] = normalizeExtractedInvoices(extractJsonFromResponse(text));
+    // Extract JSON from response using shared utility, normalize keys, then deterministically
+    // calculate low_hanging_fruit so repeated runs with same invoices stay stable.
+    const extractedData: ExtractedInvoice[] = deterministicSavingsService.applyDeterministicFindings(
+        normalizeExtractedInvoices(extractJsonFromResponse(text)),
+    );
 
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
