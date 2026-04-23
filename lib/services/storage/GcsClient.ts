@@ -89,6 +89,8 @@ export interface PromptConfig {
         kbFolderId?: string;
         description?: string;
         allowFileUploads?: boolean;
+        /** Links an agent to a code-defined preset (e.g. GVACA RGR). */
+        templatePresetId?: string;
         zohoDesk?: {
             enabled: boolean;
             publicPortalIds?: string[];
@@ -276,6 +278,47 @@ export class GcsClient {
             contentType: 'application/json',
             metadata: { cacheControl: 'no-cache' },
         });
+    }
+
+    /**
+     * Append one JSON object as a line to a newline-delimited JSON file (read–modify–write).
+     * Path is relative to the configured bucket.
+     */
+    async appendJsonlLine(path: string, record: unknown): Promise<void> {
+        if (!this.bucketName) throw new Error('GCS_BUCKET_NAME not configured');
+
+        const file = this.storage.bucket(this.bucketName).file(path);
+        const [exists] = await file.exists();
+        let body = '';
+        if (exists) {
+            const [content] = await file.download();
+            const trimmed = content.toString('utf-8').replace(/\s+$/, '');
+            if (trimmed) body = `${trimmed}\n`;
+        }
+        body += `${JSON.stringify(record)}\n`;
+        await file.save(body, {
+            contentType: 'application/x-ndjson',
+            metadata: { cacheControl: 'no-cache' },
+        });
+    }
+
+    /** Read a newline-delimited JSON file; returns one parsed object per non-empty line. */
+    async readJsonlFile(path: string): Promise<unknown[]> {
+        if (!this.bucketName) throw new Error('GCS_BUCKET_NAME not configured');
+
+        const file = this.storage.bucket(this.bucketName).file(path);
+        const [exists] = await file.exists();
+        if (!exists) return [];
+
+        const [content] = await file.download();
+        const text = content.toString('utf-8').trim();
+        if (!text) return [];
+
+        return text
+            .split('\n')
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as unknown);
     }
 }
 

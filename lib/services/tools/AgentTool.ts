@@ -12,6 +12,8 @@ export interface ToolExecutionParams {
     args: Record<string, unknown>;
     uploadedFiles: any[];
     agentId?: string;
+    /** Server-resolved venue (e.g. path on POST /api/venues/{venueId}/chat). */
+    venueId?: string;
     useKnowledgeBase: boolean;
     userMessage?: string;
 }

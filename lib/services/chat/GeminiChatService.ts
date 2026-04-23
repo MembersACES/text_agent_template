@@ -39,6 +39,8 @@ export interface ChatParams {
     useKnowledgeBase?: boolean;
     agentId?: string;
     uploadedFiles?: any[];
+    /** When set (e.g. venue-scoped chat route), tools receive it as ToolExecutionParams.venueId. */
+    venueId?: string;
 }
 
 export interface ChatResponse {
@@ -75,6 +77,7 @@ export class GeminiChatService {
             useKnowledgeBase = false,
             agentId,
             uploadedFiles = [],
+            venueId,
         } = params;
 
         const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
@@ -115,6 +118,7 @@ export class GeminiChatService {
                 contents,
                 uploadedFiles,
                 agentId,
+                venueId,
                 useKnowledgeBase,
                 userMessage: message,
             });
@@ -224,10 +228,11 @@ export class GeminiChatService {
         contents: Content[];
         uploadedFiles: any[];
         agentId?: string;
+        venueId?: string;
         useKnowledgeBase: boolean;
         userMessage: string;
     }): Promise<ChatResponse> {
-        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase, userMessage } = options;
+        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, venueId, useKnowledgeBase, userMessage } = options;
         const functionName: string = functionCallPart.functionCall.name;
         const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
@@ -238,6 +243,7 @@ export class GeminiChatService {
             args,
             uploadedFiles,
             agentId,
+            venueId,
             useKnowledgeBase,
             userMessage,
         });
