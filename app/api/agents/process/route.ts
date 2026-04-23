@@ -31,6 +31,7 @@
  * 
  * Returns:
  * - Excel file (.xlsx) as binary response with Content-Disposition header
+ * - Or with ?format=json or Accept: application/json: JSON with excelBase64, htmlEmail, businessInfo, invoices (full extracted row per invoice), metadata
  * 
  * Example (curl - multipart):
  * curl -X POST http://localhost:3000/api/agents/process \
@@ -80,6 +81,8 @@ import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorServi
 import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/types/ReportTypes';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
+import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
+import { chunkSourceIsElectricityGuide, chunkSourceMatchesGuide } from '@/lib/config/knowledgeBaseGuides';
 
 interface ProcessedFile {
     name: string;
@@ -263,13 +266,8 @@ async function processInvoicesWithChat(
         const kb = await knowledgeBaseStorage.getCached(agentId);
         if (kb) {
             // Use guide documents directly (like chat API) to ensure benchmark sections are included
-            const guideDocuments = ['ELECTRICITY_GUIDE', 'GAS_GUIDE', 'WATER_GUIDE', 'WASTE_GUIDE', 'OIL_GUIDE'];
-            
-            // Get all chunks from guide documents
-            const guideChunks = kb.chunks.filter((chunk: any) => {
-                const source = chunk.source || '';
-                return guideDocuments.some(guide => source.includes(guide));
-            });
+            // Guide docs: ELECTRICITY_GUIDE, ELECTRICITY_ANALYSIS, etc. (see knowledgeBaseGuides.ts)
+            const guideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
             
             let similarChunks: any[] = [];
             let useKBContext = false;
@@ -285,10 +283,10 @@ async function processInvoicesWithChat(
                                  chunk.text.toLowerCase().includes('market benchmark')) ? 1 : 0
                     }))
                     .sort((a, b) => {
-                        // Sort by priority first, then by source (prefer ELECTRICITY_GUIDE)
+                        // Sort by priority first, then by source (prefer electricity guides)
                         if (a.priority !== b.priority) return b.priority - a.priority;
-                        const aIsElec = (a.source || '').includes('ELECTRICITY_GUIDE');
-                        const bIsElec = (b.source || '').includes('ELECTRICITY_GUIDE');
+                        const aIsElec = chunkSourceIsElectricityGuide(a.source);
+                        const bIsElec = chunkSourceIsElectricityGuide(b.source);
                         if (aIsElec && !bIsElec) return -1;
                         if (!aIsElec && bIsElec) return 1;
                         return 0;
@@ -377,12 +375,16 @@ async function processInvoicesWithChat(
     console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
     console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
 
-    // Extract JSON from response using shared utility
-    const extractedData: ExtractedInvoice[] = extractJsonFromResponse(text);
+    // Extract JSON from response using shared utility; map alternate Gemini field names
+    const extractedData: ExtractedInvoice[] = normalizeExtractedInvoices(extractJsonFromResponse(text));
 
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
     }
+
+    console.log(
+        `[Agent Process API] Full extracted invoices (normalized JSON):\n${JSON.stringify(extractedData, null, 2)}`,
+    );
 
     // Log detailed benchmarking information for debugging
     console.log(`[Agent Process API] Extracted ${extractedData.length} invoice(s)`);
@@ -560,19 +562,6 @@ export async function POST(request: Request) {
             }
         }
 
-        // Check agent configuration for upload permission BEFORE processing files
-        if (agentId) {
-            const config = await gcsClient.getPromptConfig(agentId);
-            const allowUploads = config.config?.allowFileUploads === true;
-
-            if (!allowUploads) {
-                return NextResponse.json(
-                    { error: 'File uploads are disabled for this agent' },
-                    { status: 403 }
-                );
-            }
-        }
-
         // If Google Drive folder ID is provided, fetch all files from that folder
         if (googleDriveFolderId) {
             console.log(`[Agent Process API] Fetching files from Google Drive folder: ${googleDriveFolderId}`);
@@ -710,6 +699,7 @@ export async function POST(request: Request) {
                 excelBase64,
                 htmlEmail,
                 businessInfo,
+                invoices: extractedInvoices,
                 metadata: {
                     fileName,
                     invoiceCount: extractedInvoices.length,

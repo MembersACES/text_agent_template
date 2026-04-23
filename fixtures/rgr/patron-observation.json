@@ -1,0 +1,14 @@
+{
+  "schema": "gvaca_rgr_entry_v1",
+  "venue_id": "frankston-rsl-pilot",
+  "recorded_at_utc": "2026-04-09T10:15:00.000Z",
+  "entry_date": "2026-04-08",
+  "entry_time": "15:40",
+  "staff_name": "Tracy Vrana",
+  "interaction_type": "patron_observation",
+  "description": "Patron on gaming floor appeared distressed after extended play; approached in a low-key manner at machine bank near main aisle. Patron declined assistance but was informed of Gamblers Help materials and quiet room availability.",
+  "action_taken": "Brief wellbeing check completed; patron chose to continue play. Brochure stand restocked after shift.",
+  "follow_up_required": false,
+  "follow_up_delegate": "",
+  "follow_up_detail": ""
+}

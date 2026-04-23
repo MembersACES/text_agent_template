@@ -154,7 +154,7 @@ export class GcsClient {
             }
 
             if (!exists) {
-                logger.info(`Settings file not found for ${agentId || 'default'}, returning default.`);
+                logger.debug(`Settings file not found for ${agentId || 'default'}, returning default.`);
                 return defaultData;
             }
 

@@ -10,6 +10,7 @@ import { getLogger } from '@/lib/config/logger';
 import { embeddingService } from '@/lib/services/ai/EmbeddingService';
 import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
 import { findSimilarChunks } from '@/lib/utils/DocumentChunker';
+import { chunkSourceMatchesGuide } from '@/lib/config/knowledgeBaseGuides';
 
 const logger = getLogger('ContextService');
 
@@ -29,15 +30,6 @@ export class ContextService {
     private static readonly TOTAL_FILE_BUDGET = 200_000;
     /** Hard safety limit for the combined prompt context to avoid token overflow. */
     private static readonly MAX_CONTEXT_LENGTH = 2_000_000;
-    /** Knowledge-base guide document prefixes used to identify benchmark files. */
-    private static readonly GUIDE_DOCUMENT_PREFIXES = [
-        'ELECTRICITY_GUIDE',
-        'GAS_GUIDE',
-        'WATER_GUIDE',
-        'WASTE_GUIDE',
-        'OIL_GUIDE',
-    ];
-
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -114,11 +106,7 @@ export class ContextService {
             return { kbContext: '', fileListContext: '' };
         }
 
-        const guideChunks = kb.chunks.filter((chunk: any) =>
-            ContextService.GUIDE_DOCUMENT_PREFIXES.some(prefix =>
-                (chunk.source || '').includes(prefix),
-            ),
-        );
+        const guideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
 
         if (guideChunks.length === 0) {
             const available = [...new Set(kb.chunks.map((c: any) => c.source))].join(', ');

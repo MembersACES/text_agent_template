@@ -1,0 +1,14 @@
+{
+  "schema": "gvaca_rgr_entry_v1",
+  "venue_id": "frankston-rsl-pilot",
+  "recorded_at_utc": "2026-04-09T11:22:00.000Z",
+  "entry_date": "2026-04-08",
+  "entry_time": "20:05",
+  "staff_name": "Jordan Miles",
+  "interaction_type": "id_check",
+  "description": "Patron appeared under 25 entering gaming machine area. Photo ID requested under venue policy. ID confirmed patron is 24. Entry to GMA logged per procedure.",
+  "action_taken": "ID verified and recorded on duty manager sheet; patron permitted entry.",
+  "follow_up_required": false,
+  "follow_up_delegate": "",
+  "follow_up_detail": ""
+}
