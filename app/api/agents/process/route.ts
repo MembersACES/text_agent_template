@@ -82,7 +82,11 @@ import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } f
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
 import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
-import { chunkSourceIsElectricityGuide, chunkSourceMatchesGuide } from '@/lib/config/knowledgeBaseGuides';
+import {
+    chunkSourceMatchesGuide,
+    inferUtilitiesFromFilesContentAndNames,
+    sortGuideChunksForExtraction,
+} from '@/lib/config/knowledgeBaseGuides';
 
 interface ProcessedFile {
     name: string;
@@ -265,36 +269,28 @@ async function processInvoicesWithChat(
     if (useKnowledgeBase) {
         const kb = await knowledgeBaseStorage.getCached(agentId);
         if (kb) {
-            // Use guide documents directly (like chat API) to ensure benchmark sections are included
-            // Guide docs: ELECTRICITY_GUIDE, ELECTRICITY_ANALYSIS, etc. (see knowledgeBaseGuides.ts)
-            const guideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+            // All guide chunks, sorted by benchmark keywords + optional utility inference (we do not drop
+            // other utilities — that removed too much context vs the previous 20-chunk mix).
+            const allGuideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+            const utilityHint = inferUtilitiesFromFilesContentAndNames(
+                fileContext,
+                files.map((f) => f.name),
+            );
+            if (utilityHint && utilityHint.size > 0) {
+                console.log(
+                    `[Agent Process API] Guide utility hint: ${[...utilityHint].join(', ')} (sort tie-break; all guide families still in pool)`,
+                );
+            }
             
             let similarChunks: any[] = [];
             let useKBContext = false;
 
-            if (guideChunks.length > 0) {
-                // Prioritize chunks that contain "benchmark" or "metering" to ensure benchmark sections are included
-                similarChunks = guideChunks
-                    .map(chunk => ({
-                        ...chunk,
-                        priority: (chunk.text.toLowerCase().includes('benchmark') || 
-                                 chunk.text.toLowerCase().includes('metering') ||
-                                 chunk.text.toLowerCase().includes('dma') ||
-                                 chunk.text.toLowerCase().includes('market benchmark')) ? 1 : 0
-                    }))
-                    .sort((a, b) => {
-                        // Sort by priority first, then by source (prefer electricity guides)
-                        if (a.priority !== b.priority) return b.priority - a.priority;
-                        const aIsElec = chunkSourceIsElectricityGuide(a.source);
-                        const bIsElec = chunkSourceIsElectricityGuide(b.source);
-                        if (aIsElec && !bIsElec) return -1;
-                        if (!aIsElec && bIsElec) return 1;
-                        return 0;
-                    })
-                    .slice(0, 20); // Get top 20 chunks from guides
-                
+            if (allGuideChunks.length > 0) {
+                similarChunks = sortGuideChunksForExtraction(allGuideChunks, utilityHint).slice(0, 20);
                 useKBContext = true;
-                console.log(`[Agent Process API] Found ${guideChunks.length} guide document chunks, using ${similarChunks.length} for benchmarking`);
+                console.log(
+                    `[Agent Process API] Found ${allGuideChunks.length} guide document chunks, using ${similarChunks.length} for benchmarking (top 20 by priority)`,
+                );
             } else {
                 console.warn(`[Agent Process API] No guide document chunks found. Available sources: ${[...new Set(kb.chunks.map((c: any) => c.source))].join(', ')}`);
             }

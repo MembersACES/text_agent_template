@@ -10,7 +10,11 @@ import { getLogger } from '@/lib/config/logger';
 import { embeddingService } from '@/lib/services/ai/EmbeddingService';
 import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
 import { findSimilarChunks } from '@/lib/utils/DocumentChunker';
-import { chunkSourceMatchesGuide } from '@/lib/config/knowledgeBaseGuides';
+import {
+    chunkSourceMatchesGuide,
+    inferUtilitiesFromFilesContentAndNames,
+    sortGuideChunksForExtraction,
+} from '@/lib/config/knowledgeBaseGuides';
 
 const logger = getLogger('ContextService');
 
@@ -94,11 +98,13 @@ export class ContextService {
     }
 
     /**
-     * Retrieve ALL chunks from guide documents (ELECTRICITY_GUIDE, GAS_GUIDE …)
-     * rather than using semantic search. Used by InvoiceToolService so the model
-     * has full access to benchmarks and extraction rules.
+     * Retrieve chunks from guide documents (ELECTRICITY, GAS, …) rather than semantic search.
+     * Optional `fileContext` / `fileNames` adjust **sort order** (benchmark + utility hint), not inclusion.
      */
-    async buildGuideDocumentContext(agentId?: string): Promise<GuideDocumentContextResult> {
+    async buildGuideDocumentContext(
+        agentId?: string,
+        opts?: { fileContext?: string; fileNames?: string[] },
+    ): Promise<GuideDocumentContextResult> {
         const kb = await knowledgeBaseStorage.getCached(agentId);
 
         if (!kb) {
@@ -106,7 +112,18 @@ export class ContextService {
             return { kbContext: '', fileListContext: '' };
         }
 
-        const guideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+        const allGuides = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+
+        const utilityHint = opts?.fileContext
+            ? inferUtilitiesFromFilesContentAndNames(opts.fileContext, opts.fileNames)
+            : null;
+        if (utilityHint && utilityHint.size > 0) {
+            logger.info(
+                `Guide utility hint: ${[...utilityHint].sort().join(', ')} (sort tie-break; all guide families still included)`,
+            );
+        }
+
+        const guideChunks = sortGuideChunksForExtraction(allGuides, utilityHint);
 
         if (guideChunks.length === 0) {
             const available = [...new Set(kb.chunks.map((c: any) => c.source))].join(', ');

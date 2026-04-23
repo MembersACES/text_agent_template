@@ -98,7 +98,12 @@ export class InvoiceToolService implements AgentTool {
         const { uploadedFiles, agentId, useKnowledgeBase } = params;
 
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
-        const extractionPrompt = await this.buildExtractionPrompt(fileContext, agentId, useKnowledgeBase);
+        const extractionPrompt = await this.buildExtractionPrompt(
+            fileContext,
+            agentId,
+            useKnowledgeBase,
+            uploadedFiles,
+        );
 
         logger.info(`Running extraction prompt (${extractionPrompt.length} chars)`);
 
@@ -114,12 +119,16 @@ export class InvoiceToolService implements AgentTool {
         fileContext: string,
         agentId: string | undefined,
         useKnowledgeBase: boolean,
+        uploadedFiles: any[] | undefined,
     ): Promise<string> {
         if (!useKnowledgeBase) {
             return buildNoKBExtractionPrompt(fileContext);
         }
 
-        const { kbContext, fileListContext } = await this.contextService.buildGuideDocumentContext(agentId);
+        const { kbContext, fileListContext } = await this.contextService.buildGuideDocumentContext(agentId, {
+            fileContext,
+            fileNames: Array.isArray(uploadedFiles) ? uploadedFiles.map((f: { name?: string }) => f.name || '') : [],
+        });
 
         if (!kbContext) {
             // KB exists but has no guide chunks — fall back to no-KB prompt
