@@ -38,6 +38,19 @@ function ChatWidgetPageContent() {
   const [open, setOpen] = useState(startOpen);
 
   useEffect(() => {
+    // Keep the iframe canvas transparent so collapsed mode does not show a white block.
+    const previousBodyBackground = document.body.style.background;
+    const previousHtmlBackground = document.documentElement.style.background;
+    document.body.style.background = 'transparent';
+    document.documentElement.style.background = 'transparent';
+
+    return () => {
+      document.body.style.background = previousBodyBackground;
+      document.documentElement.style.background = previousHtmlBackground;
+    };
+  }, []);
+
+  useEffect(() => {
     notifyParentHeight(open);
   }, [open]);
 
@@ -49,7 +62,7 @@ function ChatWidgetPageContent() {
       className={`relative isolate box-border w-full bg-transparent ${
         open
           ? 'flex h-[100svh] min-h-0 items-end justify-end p-3 sm:p-4'
-          : 'flex min-h-svh items-end justify-end p-2 sm:p-3'
+          : 'flex h-auto min-h-0 items-end justify-end p-2 sm:p-3'
       }`}
     >
       {open ? (
