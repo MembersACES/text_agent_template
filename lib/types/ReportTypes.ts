@@ -26,7 +26,13 @@ export interface ExtractedInvoice {
     shoulder_rate_c_per_kwh: number | null;
     off_peak_rate_c_per_kwh: number | null;
     daily_supply_charge: number | null;
+    /**
+     * Demand used for billed demand charges this period (kW or kVA — use the same unit as the invoice;
+     * many C&I bills are kVA; store the numeric value here).
+     */
     demand_kw: number | null;
+    /** Highest interval / max demand on the invoice (same unit as demand_kw). */
+    recorded_max_demand_kw?: number | null;
     demand_charges: number | null;
     meter_charges: number | null;
     

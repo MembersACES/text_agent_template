@@ -30,7 +30,10 @@ CRITICAL INSTRUCTIONS:
    - MRIN must be 8-12 characters (gas) - validate length
    - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
    - daily_supply_charge in $/day (convert from monthly if needed)
-   - ALWAYS calculate rates if not shown: rate = charges / usage (follow rate calculation methods from the guides)
+   - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
+   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic rules use these strings.
+   - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
+   - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
    - For waste: populate waste_services array with ALL line items and pickup dates
    - For oil: populate oil_services array with ALL line items
 
@@ -58,7 +61,8 @@ CRITICAL INSTRUCTIONS:
         - For gas: Compare gas_rate_per_gj to KB benchmark
         - Calculate savings: (current_rate - KB_benchmark_threshold) / 100 × annual_usage
      
-     b) **DAILY SUPPLY CHARGE** (extract from KB guide):
+     b) **DAILY SUPPLY CHARGE** (extract from KB guide) — **SME electricity / gas only**:
+        - **Do NOT add daily supply charge entries to low_hanging_fruit for C&I electricity** (Base 1 omits them server-side and they are out of scope for C&I narrative savings).
         - **FORBIDDEN VALUES: DO NOT USE $2.00, $3.00, $4.00, $5.00, or any other hardcoded dollar amounts**
         - Search the KB for "Daily Supply Charge", "Supply Charge", or "Daily Supply" in MARKET BENCHMARKS
         - The KB will show THREE different values:
@@ -141,6 +145,8 @@ CRITICAL INSTRUCTIONS:
 
 OUTPUT SCHEMA (return array of these objects):
 
+For **Electricity**, populate \`tariff_type\`, \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (state), and **accurate TOU c/kWh** (unbundled = **energy lines only**). **low_hanging_fruit** for electricity is recalculated server-side: **bundled TOU retail**, **metering tiers**, **demand repricing** (material gap only); **retail TOU skipped** when \`tariff_type\` indicates unbundled or flat/single-rate; **daily supply savings skipped** for C&I. You may use \`[]\` for electricity; KB-backed **SME daily supply** or **gas** only if appropriate.
+
 \`\`\`json
 [
   {
@@ -166,6 +172,7 @@ OUTPUT SCHEMA (return array of these objects):
     "off_peak_rate_c_per_kwh": number | null,
     "daily_supply_charge": number | null,
     "demand_kw": number | null,
+    "recorded_max_demand_kw": number | null,
     "demand_charges": number | null,
     "meter_charges": number | null,
     "total_usage_mj": number | null,

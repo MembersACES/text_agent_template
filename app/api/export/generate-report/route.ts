@@ -5,6 +5,7 @@ import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorServi
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
 import { deterministicSavingsService } from '@/lib/services/report/DeterministicSavingsService';
 import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/types/ReportTypes';
+import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
 
 export async function POST(request: Request) {
     try {
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
         }
 
         const normalizedInvoices = deterministicSavingsService.applyDeterministicFindings(
-            invoices as ExtractedInvoice[],
+            normalizeExtractedInvoices(invoices as unknown[]),
         );
 
         // Build report data

@@ -11,38 +11,34 @@ interface Thresholds {
     high: number;
 }
 
-interface ElectricityBenchmarks {
-    peak: Thresholds;
-    shoulder: Thresholds;
-    offPeak: Thresholds;
+interface DailySupplyBenchmarks {
     dailySupply: Thresholds;
-    meteringAnnual: Thresholds;
 }
+
+/** Billed demand must exceed recorded by at least this fraction to flag repricing. */
+const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
 
 /**
  * Deterministic benchmarking/savings calculator.
  * Replaces model-authored low_hanging_fruit to keep repeated runs stable.
+ *
+ * Retail TOU (NSW 12/12/10, other states 9/9/7): **bundled TOU only** — skipped for
+ * **unbundled** invoices (energy-only rates; no blended total c/kWh) and **flat / single-rate** tariffs.
+ *
+ * Daily supply: **SME only** — omitted entirely for C&I Base 1 reviews.
+ *
+ * Metering: annual ≤700 no flag; (700,1200] vs $700; >1200 vs $900.
+ *
+ * Demand repricing: only when recorded max is materially below billed (≥2% gap) and annual savings >$200.
  */
 export class DeterministicSavingsService {
-    private readonly ciBenchmarks3p: ElectricityBenchmarks = {
-        peak: { base: 28, medium: 32, high: 35 },
-        shoulder: { base: 24, medium: 28, high: 30 },
-        offPeak: { base: 18, medium: 24, high: 26 },
+    private readonly ciSupply: DailySupplyBenchmarks = {
         dailySupply: { base: 2.0, medium: 4.0, high: 5.0 },
-        meteringAnnual: { base: 700, medium: 1000, high: 1200 },
     };
 
-    private readonly smeBenchmarks3p: ElectricityBenchmarks = {
-        peak: { base: 25, medium: 30, high: 32 },
-        shoulder: { base: 22, medium: 26, high: 28 },
-        offPeak: { base: 16, medium: 22, high: 24 },
+    private readonly smeSupply: DailySupplyBenchmarks = {
         dailySupply: { base: 1.2, medium: 1.6, high: 1.8 },
-        meteringAnnual: { base: 700, medium: 800, high: 900 },
     };
-
-    // 2-period thresholds are not explicitly defined in the guide; use same warning/critical as 3-period.
-    private readonly ciBenchmarks2p: ElectricityBenchmarks = this.ciBenchmarks3p;
-    private readonly smeBenchmarks2p: ElectricityBenchmarks = this.smeBenchmarks3p;
 
     applyDeterministicFindings(invoices: ExtractedInvoice[]): ExtractedInvoice[] {
         return invoices.map((invoice) => this.applyOne(invoice));
@@ -54,82 +50,239 @@ export class DeterministicSavingsService {
         }
 
         const billingDays = this.positive(invoice.billing_days);
-        const annualUsage = this.annualize(invoice.total_usage_kwh, billingDays);
-        const customerType = this.classifyCustomerType(invoice, annualUsage);
-        const isThreePeriod = this.positive(invoice.shoulder_usage_kwh) !== null;
-        const bm = this.getBenchmarks(customerType, isThreePeriod);
+        const annualUsageTotal = this.annualize(invoice.total_usage_kwh, billingDays);
+        const customerType = this.classifyCustomerType(invoice, annualUsageTotal);
+        const isThreePeriod = this.hasThreePeriodTou(invoice);
+        const supplyBm = customerType === 'c_and_i' ? this.ciSupply : this.smeSupply;
+        const state = this.inferRetailState(invoice.site_address);
         const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [];
 
-        this.maybeAddRateFinding(
-            findings,
-            'High Peak Rate',
-            invoice.peak_rate_c_per_kwh,
-            bm.peak,
-            this.annualize(invoice.peak_usage_kwh, billingDays),
-        );
-        if (isThreePeriod) {
-            this.maybeAddRateFinding(
-                findings,
-                'High Shoulder Rate',
-                invoice.shoulder_rate_c_per_kwh,
-                bm.shoulder,
-                this.annualize(invoice.shoulder_usage_kwh, billingDays),
-            );
+        const skipRetailTou =
+            this.isUnbundledElectricity(invoice) || this.isFlatOrSingleRateElectricity(invoice);
+        if (!skipRetailTou) {
+            this.addRetailTouFindings(findings, invoice, state, isThreePeriod, billingDays);
         }
-        this.maybeAddRateFinding(
-            findings,
-            'High Off-Peak Rate',
-            invoice.off_peak_rate_c_per_kwh,
-            bm.offPeak,
-            this.annualize(invoice.off_peak_usage_kwh, billingDays),
-        );
 
-        this.maybeAddDailySupplyFinding(findings, invoice.daily_supply_charge, bm.dailySupply);
+        if (customerType === 'sme') {
+            this.maybeAddDailySupplyFinding(findings, invoice.daily_supply_charge, supplyBm.dailySupply);
+        }
 
         const annualMeter = this.annualize(invoice.meter_charges, billingDays);
         if (annualMeter !== null) {
-            this.maybeAddAnnualFinding(
-                findings,
-                'High Meter Charges',
-                annualMeter,
-                bm.meteringAnnual,
-                'Annual meter charges',
-                '/year',
-            );
+            this.maybeAddMeteringTierFinding(findings, annualMeter);
         }
 
+        this.maybeAddDemandRepricingFinding(findings, invoice, billingDays);
+
         logger.info(
-            `Deterministic findings for invoice ${invoice.invoice_number ?? 'unknown'}: ${findings.length}`,
+            `Deterministic findings for invoice ${invoice.invoice_number ?? 'unknown'}: ${findings.length}` +
+                (skipRetailTou ? ' (retail TOU skipped: unbundled or flat/single-rate)' : ''),
         );
 
         return { ...invoice, low_hanging_fruit: findings };
     }
 
-    private maybeAddRateFinding(
+    /** Unbundled bills: retail energy c/kWh is explicit — do not apply bundled TOU retail comparisons. */
+    private isUnbundledElectricity(invoice: ExtractedInvoice): boolean {
+        return (invoice.tariff_type || '').toLowerCase().includes('unbundled');
+    }
+
+    /**
+     * Flat / single-rate / all-in-one usage bucket — not TOU retail (e.g. SME Bundled Flat Rate).
+     */
+    private isFlatOrSingleRateElectricity(invoice: ExtractedInvoice): boolean {
+        const raw = invoice.tariff_type || '';
+        const t = raw.toLowerCase();
+        if (/\bflat\b|single\s*rate|anytime|all[- ]?time/i.test(t)) return true;
+        if (/tou|time[- ]?of[- ]?use|2[- ]?period|3[- ]?period/i.test(t)) return false;
+
+        const p = this.positive(invoice.peak_usage_kwh);
+        const tot = this.positive(invoice.total_usage_kwh);
+        const sh = this.positive(invoice.shoulder_usage_kwh);
+        const off = this.positive(invoice.off_peak_usage_kwh);
+        const noSh = sh == null || sh === 0;
+        const noOff = off == null || off === 0;
+        if (!noSh || !noOff) return false;
+        if (p == null || tot == null || tot <= 0) return false;
+        return Math.abs(p - tot) <= Math.max(1, tot * 0.001);
+    }
+
+    private hasThreePeriodTou(invoice: ExtractedInvoice): boolean {
+        const s = this.positive(invoice.shoulder_usage_kwh);
+        return s != null && s > 0;
+    }
+
+    private inferRetailState(siteAddress: string | null | undefined): 'NSW' | 'OTHER' | null {
+        if (siteAddress == null || typeof siteAddress !== 'string') return null;
+        const u = siteAddress.toUpperCase();
+        if (/\bNSW\b|\bNEW SOUTH WALES\b/.test(u)) return 'NSW';
+        if (
+            /\bVIC\b|\bVICTORIA\b|\bQLD\b|\bQUEENSLAND\b|\bWA\b|\bWESTERN AUSTRALIA\b|\bSA\b|\bSOUTH AUSTRALIA\b|\bTAS\b|\bTASMANIA\b|\bACT\b|\bNT\b|\bNORTHERN TERRITORY\b/.test(
+                u,
+            )
+        ) {
+            return 'OTHER';
+        }
+        return null;
+    }
+
+    private addRetailTouFindings(
+        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
+        invoice: ExtractedInvoice,
+        state: 'NSW' | 'OTHER' | null,
+        isThreePeriod: boolean,
+        billingDays: number | null,
+    ): void {
+        if (state === null) return;
+
+        if (state === 'NSW') {
+            this.maybeAddRetailRateFinding(
+                findings,
+                'Retail peak rate (NSW)',
+                invoice.peak_rate_c_per_kwh,
+                12,
+                this.annualize(invoice.peak_usage_kwh, billingDays),
+            );
+            if (isThreePeriod) {
+                this.maybeAddRetailRateFinding(
+                    findings,
+                    'Retail shoulder rate (NSW)',
+                    invoice.shoulder_rate_c_per_kwh,
+                    12,
+                    this.annualize(invoice.shoulder_usage_kwh, billingDays),
+                );
+            }
+            this.maybeAddRetailRateFinding(
+                findings,
+                'Retail off-peak rate (NSW)',
+                invoice.off_peak_rate_c_per_kwh,
+                10,
+                this.annualize(invoice.off_peak_usage_kwh, billingDays),
+            );
+            return;
+        }
+
+        const shoulderComparison = this.shoulderRetailComparisonCPerKwh(invoice, isThreePeriod);
+
+        this.maybeAddRetailRateFinding(
+            findings,
+            'Retail peak rate',
+            invoice.peak_rate_c_per_kwh,
+            9,
+            this.annualize(invoice.peak_usage_kwh, billingDays),
+        );
+        if (isThreePeriod && shoulderComparison !== null) {
+            this.maybeAddRetailRateFinding(
+                findings,
+                'Retail shoulder rate',
+                invoice.shoulder_rate_c_per_kwh,
+                shoulderComparison,
+                this.annualize(invoice.shoulder_usage_kwh, billingDays),
+            );
+        }
+        this.maybeAddRetailRateFinding(
+            findings,
+            'Retail off-peak rate',
+            invoice.off_peak_rate_c_per_kwh,
+            7,
+            this.annualize(invoice.off_peak_usage_kwh, billingDays),
+        );
+    }
+
+    private shoulderRetailComparisonCPerKwh(
+        invoice: ExtractedInvoice,
+        isThreePeriod: boolean,
+    ): number | null {
+        if (!isThreePeriod) return null;
+        const sh = this.positive(invoice.shoulder_rate_c_per_kwh);
+        const off = this.positive(invoice.off_peak_rate_c_per_kwh);
+        if (sh !== null && off !== null && Math.abs(sh - off) < 0.01) {
+            return 7;
+        }
+        return 9;
+    }
+
+    private maybeAddRetailRateFinding(
         findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
         type: string,
         currentRateCPerKwh: number | null,
-        thresholds: Thresholds,
+        comparisonCPerKwh: number,
         annualUsageKwh: number | null,
     ): void {
         const rate = this.positive(currentRateCPerKwh);
         const annualUsage = this.positive(annualUsageKwh);
         if (rate === null || annualUsage === null) return;
-        if (rate <= thresholds.medium) return;
+        if (rate <= comparisonCPerKwh) return;
 
-        const severity: Severity = rate > thresholds.high ? 'high' : 'medium';
-        const savings = ((rate - thresholds.medium) / 100) * annualUsage;
+        const savings = ((rate - comparisonCPerKwh) / 100) * annualUsage;
         if (savings < 200) return;
+
+        const severity: Severity =
+            rate >= comparisonCPerKwh + 5 || savings >= 2000 ? 'high' : 'medium';
 
         findings.push({
             type,
             severity,
             message:
-                `${type.replace('High ', '')} ${rate.toFixed(2)} c/kWh exceeds KB benchmark of ` +
-                `${thresholds.base.toFixed(2)} c/kWh and ` +
-                `${severity === 'high' ? 'critical' : 'warning'} threshold of ` +
-                `${(severity === 'high' ? thresholds.high : thresholds.medium).toFixed(2)} c/kWh.`,
+                `${type.replace('Retail ', '').replace(' (NSW)', '')} at ${rate.toFixed(2)} c/kWh exceeds Base 1 retail comparison of ${comparisonCPerKwh.toFixed(2)} c/kWh.`,
             potential_savings: this.moneyPerYear(savings),
+        });
+    }
+
+    private maybeAddMeteringTierFinding(
+        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
+        annualMeter: number,
+    ): void {
+        if (annualMeter <= 700) return;
+
+        let comparison: number;
+        if (annualMeter <= 1200) {
+            comparison = 700;
+        } else {
+            comparison = 900;
+        }
+
+        const savings = annualMeter - comparison;
+        if (savings < 200) return;
+
+        const severity: Severity = annualMeter > 1200 || savings >= 2000 ? 'high' : 'medium';
+
+        findings.push({
+            type: 'Metering charges above Base 1 comparison',
+            severity,
+            message:
+                `Annual metering (combined) ${this.money(annualMeter)}/year exceeds Base 1 comparison of ${this.money(comparison)}/year.`,
+            potential_savings: this.moneyPerYear(savings),
+        });
+    }
+
+    private maybeAddDemandRepricingFinding(
+        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
+        invoice: ExtractedInvoice,
+        billingDays: number | null,
+    ): void {
+        const charges = this.positive(invoice.demand_charges);
+        const billed = this.positive(invoice.demand_kw);
+        const recorded = this.positive(invoice.recorded_max_demand_kw);
+        if (charges === null || billed === null || recorded === null) return;
+        if (billed <= 0 || recorded >= billed) return;
+        if (billingDays === null || billingDays <= 0) return;
+
+        const relativeOverstatement = (billed - recorded) / billed;
+        if (relativeOverstatement < DEMAND_REPRICE_MIN_RELATIVE_OVER) return;
+
+        const periodSavings = charges * (1 - recorded / billed);
+        const annualSavings = periodSavings * (365 / billingDays);
+        if (annualSavings < 200) return;
+
+        const severity: Severity = annualSavings >= 2000 ? 'high' : 'medium';
+
+        findings.push({
+            type: 'Demand charge vs recorded maximum demand',
+            severity,
+            message:
+                `Demand charges appear based on ${billed.toFixed(2)} kW/kVA while the highest demand shown on the invoice is ${recorded.toFixed(2)}. Repricing at the same effective rate reduces demand charges by approximately ${this.money(periodSavings)} for this period.`,
+            potential_savings: this.moneyPerYear(annualSavings),
         });
     }
 
@@ -156,47 +309,20 @@ export class DeterministicSavingsService {
         });
     }
 
-    private maybeAddAnnualFinding(
-        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
-        type: string,
-        annualValue: number,
-        thresholds: Thresholds,
-        label: string,
-        unit: string,
-    ): void {
-        if (annualValue <= thresholds.medium) return;
-        const severity: Severity = annualValue > thresholds.high ? 'high' : 'medium';
-        const savings = annualValue - thresholds.base;
-        if (savings < 200) return;
-
-        findings.push({
-            type,
-            severity,
-            message:
-                `${label} ${this.money(annualValue)}${unit} exceed KB benchmark of ${this.money(thresholds.base)}${unit} ` +
-                `and ${severity === 'high' ? 'critical' : 'warning'} threshold of ` +
-                `${this.money(severity === 'high' ? thresholds.high : thresholds.medium)}${unit}.`,
-            potential_savings: this.moneyPerYear(savings),
-        });
-    }
-
     private classifyCustomerType(
         invoice: ExtractedInvoice,
         annualUsageKwh: number | null,
     ): 'c_and_i' | 'sme' {
+        const t = (invoice.tariff_type || '').toLowerCase();
+        if (/c\s*&\s*i|commercial.*industrial|large\s*business/i.test(t)) {
+            return 'c_and_i';
+        }
         const demandKw = this.positive(invoice.demand_kw);
         const demandCharges = this.positive(invoice.demand_charges);
         if (demandCharges !== null && demandCharges > 0) return 'c_and_i';
         if (demandKw !== null && demandKw >= 100) return 'c_and_i';
         if (annualUsageKwh !== null && annualUsageKwh >= 160_000) return 'c_and_i';
         return 'sme';
-    }
-
-    private getBenchmarks(customerType: 'c_and_i' | 'sme', isThreePeriod: boolean): ElectricityBenchmarks {
-        if (customerType === 'c_and_i') {
-            return isThreePeriod ? this.ciBenchmarks3p : this.ciBenchmarks2p;
-        }
-        return isThreePeriod ? this.smeBenchmarks3p : this.smeBenchmarks2p;
     }
 
     private isElectricityInvoice(invoice: ExtractedInvoice): boolean {

@@ -154,5 +154,37 @@ function normalizeOne(item: unknown): ExtractedInvoice | null {
 
     if (n.invoice_number == null && o.invoice_num != null) n.invoice_number = o.invoice_num as string;
 
+    if (n.demand_kw == null) {
+        const d = firstDefined(
+            o.demand_kw as number | null,
+            o.demand_kva as number | null,
+            o.billed_demand_kva as number | null,
+            o.registered_demand_kva as number | null,
+            o.maximum_demand_kw as number | null,
+            o.max_demand_kw as number | null,
+            o.registered_demand_kw as number | null,
+        );
+        if (d != null) {
+            const num = typeof d === 'number' ? d : Number(d);
+            n.demand_kw = Number.isFinite(num) ? num : null;
+        }
+    }
+
+    if (n.recorded_max_demand_kw == null) {
+        const r = firstDefined(
+            o.recorded_max_demand_kw as number | null,
+            o.recorded_max_demand_kva as number | null,
+            o.maximum_interval_demand_kva as number | null,
+            o.highest_actual_demand_kva as number | null,
+            o.maximum_interval_demand_kw as number | null,
+            o.interval_max_demand_kw as number | null,
+            o.max_interval_demand_kw as number | null,
+        );
+        if (r != null) {
+            const num = typeof r === 'number' ? r : Number(r);
+            n.recorded_max_demand_kw = Number.isFinite(num) ? num : null;
+        }
+    }
+
     return n as unknown as ExtractedInvoice;
 }
