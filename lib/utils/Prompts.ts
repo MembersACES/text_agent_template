@@ -29,7 +29,7 @@ CRITICAL INSTRUCTIONS:
    - NMI must be 10-11 characters (electricity) - validate length
    - MRIN must be 8-12 characters (gas) - validate length
    - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
-   - daily_supply_charge in $/day (convert from monthly if needed)
+   - **daily_supply_charge** in **$/day**: use the retailer line that quotes **daily** service/supply (e.g. “Daily Charge” with **$/day**). **Never** set daily_supply_charge to (unrelated period $ total) ÷ billing_days unless the invoice explicitly defines that as the daily supply component.
    - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
    - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic rules use these strings.
    - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
@@ -145,7 +145,7 @@ CRITICAL INSTRUCTIONS:
 
 OUTPUT SCHEMA (return array of these objects):
 
-For **Electricity**, populate \`tariff_type\`, \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (state), and **accurate TOU c/kWh** (unbundled = **energy lines only**). **low_hanging_fruit** for electricity is recalculated server-side: **bundled TOU retail**, **metering tiers**, **demand repricing** (material gap only); **retail TOU skipped** when \`tariff_type\` indicates unbundled or flat/single-rate; **daily supply savings skipped** for C&I. You may use \`[]\` for electricity; KB-backed **SME daily supply** or **gas** only if appropriate.
+For **Electricity**, populate \`tariff_type\`, \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (state), and **accurate TOU c/kWh** (unbundled = **energy lines only**). **low_hanging_fruit** for electricity is recalculated server-side: **TOU retail** (NSW 12/12/10 etc. for bundled **or** unbundled energy c/kWh), **metering tiers**, **demand repricing** (material gap only); **retail TOU skipped** only for **flat/single-rate** tariffs; **daily supply savings skipped** for C&I. You may use \`[]\` for electricity; KB-backed **SME daily supply** or **gas** only if appropriate.
 
 \`\`\`json
 [

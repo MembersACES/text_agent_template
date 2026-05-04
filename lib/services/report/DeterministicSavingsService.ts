@@ -22,8 +22,9 @@ const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
  * Deterministic benchmarking/savings calculator.
  * Replaces model-authored low_hanging_fruit to keep repeated runs stable.
  *
- * Retail TOU (NSW 12/12/10, other states 9/9/7): **bundled TOU only** — skipped for
- * **unbundled** invoices (energy-only rates; no blended total c/kWh) and **flat / single-rate** tariffs.
+ * Retail TOU (NSW 12/12/10, other states 9/9/7): applies to **TOU c/kWh** for bundled and **unbundled**
+ * (use per-period **energy-only** extracted rates — never blended energy+network). Skipped only for
+ * **flat / single-rate** tariffs.
  *
  * Daily supply: **SME only** — omitted entirely for C&I Base 1 reviews.
  *
@@ -57,8 +58,7 @@ export class DeterministicSavingsService {
         const state = this.inferRetailState(invoice.site_address);
         const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [];
 
-        const skipRetailTou =
-            this.isUnbundledElectricity(invoice) || this.isFlatOrSingleRateElectricity(invoice);
+        const skipRetailTou = this.isFlatOrSingleRateElectricity(invoice);
         if (!skipRetailTou) {
             this.addRetailTouFindings(findings, invoice, state, isThreePeriod, billingDays);
         }
@@ -76,15 +76,10 @@ export class DeterministicSavingsService {
 
         logger.info(
             `Deterministic findings for invoice ${invoice.invoice_number ?? 'unknown'}: ${findings.length}` +
-                (skipRetailTou ? ' (retail TOU skipped: unbundled or flat/single-rate)' : ''),
+                (skipRetailTou ? ' (retail TOU skipped: flat/single-rate)' : ''),
         );
 
         return { ...invoice, low_hanging_fruit: findings };
-    }
-
-    /** Unbundled bills: retail energy c/kWh is explicit — do not apply bundled TOU retail comparisons. */
-    private isUnbundledElectricity(invoice: ExtractedInvoice): boolean {
-        return (invoice.tariff_type || '').toLowerCase().includes('unbundled');
     }
 
     /**
