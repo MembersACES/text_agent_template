@@ -1,12 +1,5 @@
-import { ReportData, getSavingsEligibleOpportunities } from '@/lib/types/ReportTypes';
-
-/** One-line summary for client-facing email (Base 1 estimate). */
-function shortIssueSummary(issue: string, maxLen = 80): string {
-    const trimmed = (issue || '').trim();
-    const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
-    if (firstSentence.length <= maxLen) return firstSentence;
-    return firstSentence.slice(0, maxLen).trim() + '…';
-}
+import { ReportData } from '@/lib/types/ReportTypes';
+import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
 export class EmailGeneratorService {
     generateEmail(data: ReportData): string {
@@ -20,11 +13,11 @@ export class EmailGeneratorService {
             return acc;
         }, {} as Record<string, { count: number; totalCost: number }>);
 
-        const memberFacingOpportunities = getSavingsEligibleOpportunities(invoices, {
+        const benchmarkGroups = getBase1BenchmarkGroups(invoices, {
             hideWasteForMemberReport: true,
         });
-        const opportunityCount = memberFacingOpportunities.length;
-        const utilityTypesWithIssues = [...new Set(memberFacingOpportunities.map(o => o.utilityType))];
+        const opportunityCount = benchmarkGroups.length;
+        const utilityTypesWithIssues = [...new Set(benchmarkGroups.map(g => g.utilityType))];
         const summaryAreas = utilityTypesWithIssues.length > 0
             ? utilityTypesWithIssues.slice(0, 4).join(', ') + (utilityTypesWithIssues.length > 4 ? ' and others' : '')
             : 'your utilities';
@@ -46,18 +39,14 @@ export class EmailGeneratorService {
                 <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">${formatCurrency(stats.totalCost)}</td>
             </tr>`).join('');
 
-        const criticalIssues = savingsSummary?.criticalIssues || [];
-        const maxCriticalInEmail = 3;
-        const criticalToShow = criticalIssues.slice(0, maxCriticalInEmail);
-        const criticalIssuesList = criticalToShow.length > 0
-            ? criticalToShow.map(issue => `
-                <li style="margin-bottom: 8px; padding-left: 8px; font-size: 14px;">
-                    ${shortIssueSummary(issue.issue)} — ${formatCurrency(issue.savings)}/year
-                </li>`).join('')
-            : '<li style="margin-bottom: 8px; padding-left: 8px; color: #666;">No critical issues identified.</li>';
-        const moreIssuesNote = criticalIssues.length > maxCriticalInEmail
-            ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Full details and ${criticalIssues.length - maxCriticalInEmail} additional item(s) are in the attached report.</p>`
-            : '';
+        const keyItemsRows = benchmarkGroups.length > 0
+            ? benchmarkGroups
+                .map((g) => `
+                <div style="margin-bottom: 10px; font-size: 14px; line-height: 1.5; color: #333333;">
+                    ${g.utilityType} ${g.optionKind} ${g.relatedCharges} ${formatCurrency(g.totalSavings)}
+                </div>`)
+                .join('')
+            : '<div style="margin-bottom: 8px; color: #666;">No key savings areas identified.</div>';
 
         return `
 <!DOCTYPE html>
@@ -102,7 +91,7 @@ export class EmailGeneratorService {
                     ${opportunityCount > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
-                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">We identified <strong>${opportunityCount} potential savings opportunities</strong> across ${summaryAreas}. The attached report contains the full breakdown; below is a high-level estimate and the main items to address.</p>
+                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">We identified <strong>${opportunityCount} areas of potential savings</strong> across ${summaryAreas}. The attached report contains the full breakdown; below is a high-level estimate and the main items to address.</p>
                         </td>
                     </tr>` : ''}
                     ${savingsSummary ? `
@@ -118,12 +107,12 @@ export class EmailGeneratorService {
                             </div>
                         </td>
                     </tr>` : ''}
-                    ${criticalToShow.length > 0 ? `
+                    ${benchmarkGroups.length > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
                             <div style="background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 20px; margin-bottom: 24px;">
-                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Key items to address</h3>
-                                <ul style="margin: 0; padding-left: 20px; color: #333333; font-size: 15px; line-height: 1.6;">${criticalIssuesList}</ul>${moreIssuesNote}
+                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Key Items to Address</h3>
+                                <div style="margin: 0; color: #333333; font-size: 15px; line-height: 1.6;">${keyItemsRows}</div>
                             </div>
                         </td>
                     </tr>` : ''}
