@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+import { ReportData, ExtractedInvoice, getSavingsEligibleOpportunities } from '@/lib/types/ReportTypes';
 
 const HEADER_BG_COLOR = '366092'; // Blue
 const TOTALS_BG_COLOR = 'FFD966'; // Yellow
@@ -7,6 +7,15 @@ const OVERVIEW_TITLE_BG = '366092'; // Same blue as headers
 const OVERVIEW_SECTION_BG = 'E7E6E6'; // Light grey for business block
 
 export class ExcelGeneratorService {
+    private formatCurrency(amount: number): string {
+        return new Intl.NumberFormat('en-AU', {
+            style: 'currency',
+            currency: 'AUD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    }
+
     async generateWorkbook(data: ReportData): Promise<Buffer> {
         const workbook = new ExcelJS.Workbook();
 
@@ -86,19 +95,19 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        sheet.addRow(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
+        sheet.addRow(['Total annual cost (est.)', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             sheet.addRow([
-                'Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`,
-                'Our costs – conservative (1st month savings)', `$${(data.savingsSummary.conservative / 12).toFixed(2)}`
+                'Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative),
+                'Our costs – conservative (1st month savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
             ]);
             sheet.addRow([
-                'Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`,
-                'Our costs – moderate (1st month savings)', `$${(data.savingsSummary.moderate / 12).toFixed(2)}`
+                'Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate),
+                'Our costs – moderate (1st month savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
             ]);
             sheet.addRow([
-                'Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`,
-                'Our costs – optimistic (1st month savings)', `$${(data.savingsSummary.optimistic / 12).toFixed(2)}`
+                'Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic),
+                'Our costs – optimistic (1st month savings)', this.formatCurrency(data.savingsSummary.optimistic / 12)
             ]);
         }
         sheet.getColumn(1).width = 32;
@@ -500,16 +509,18 @@ export class ExcelGeneratorService {
         if (data.savingsSummary) {
             const c = data.savingsSummary.conservative;
             const o = data.savingsSummary.optimistic;
-            sheet.addRow([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`]);
+            const cText = new Intl.NumberFormat('en-AU').format(Math.round(c));
+            const oText = new Intl.NumberFormat('en-AU').format(Math.round(o));
+            sheet.addRow([`Estimated annual savings: $${cText} – $${oText} (conservative to optimistic)`]);
             sheet.getRow(1).font = { bold: true, size: 12 };
             sheet.addRow([]);
         }
 
-        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
+        // Benchmarking summary – grouped by (Category, Option Type), cap at top 8
         sheet.addRow(['Benchmarking summary']);
         sheet.getRow(sheet.rowCount).font = { bold: true, size: 14 };
         sheet.addRow([]);
-        sheet.addRow(['Category', 'Issue type', 'Count', 'Est. total savings per year']);
+        sheet.addRow(['Category', 'Option Type', 'Count', 'Est. total savings per year']);
         const tableHeaderRow = sheet.getRow(sheet.rowCount);
         tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
         tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
@@ -517,25 +528,20 @@ export class ExcelGeneratorService {
 
         const groupKey = (u: string, t: string) => `${u}|${t}`;
         const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
-        data.invoices.forEach(inv => {
-            (inv.low_hanging_fruit || []).forEach(opp => {
-                const key = groupKey(inv.utility_type, opp.type);
+        getSavingsEligibleOpportunities(data.invoices, { hideWasteForMemberReport: true }).forEach(opp => {
+                const key = groupKey(opp.utilityType, opp.type);
                 if (!grouped.has(key)) {
-                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
+                    grouped.set(key, { category: opp.utilityType, type: opp.type, count: 0, savings: 0 });
                 }
                 const g = grouped.get(key)!;
                 g.count += 1;
-                if (opp.potential_savings) {
-                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
-                }
-            });
+                g.savings += opp.savings;
         });
         const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
         const maxBenchmarkingRows = 8;
         const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
         toShowGroups.forEach(g => {
-            sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? `$${g.savings.toFixed(2)}` : '']);
+            sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? this.formatCurrency(g.savings) : '']);
         });
         if (sortedGroups.length > maxBenchmarkingRows) {
             sheet.addRow([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', '']);
@@ -544,22 +550,22 @@ export class ExcelGeneratorService {
 
         sheet.addRow([]);
 
-        // Total Potential Savings section
+        // Total Savings section
         if (data.savingsSummary) {
-            sheet.addRow(['Total potential savings (estimate)']);
+            sheet.addRow(['Total Savings (Estimate)']);
             sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
             sheet.addRow([]);
             sheet.addRow([
-                'Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`,
-                'Our costs – conservative (1st month savings)', `$${(data.savingsSummary.conservative / 12).toFixed(2)}`
+                'Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative),
+                'Our costs – conservative (1st month savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
             ]);
             sheet.addRow([
-                'Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`,
-                'Our costs – moderate (1st month savings)', `$${(data.savingsSummary.moderate / 12).toFixed(2)}`
+                'Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate),
+                'Our costs – moderate (1st month savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
             ]);
             sheet.addRow([
-                'Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`,
-                'Our costs – optimistic (1st month savings)', `$${(data.savingsSummary.optimistic / 12).toFixed(2)}`
+                'Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic),
+                'Our costs – optimistic (1st month savings)', this.formatCurrency(data.savingsSummary.optimistic / 12)
             ]);
             sheet.getColumn(2).numFmt = '$#,##0.00';
             sheet.getColumn(4).numFmt = '$#,##0.00';
@@ -583,7 +589,7 @@ export class ExcelGeneratorService {
 
             toShow.forEach(issue => {
                 const summary = this.shortIssueSummary(issue.issue);
-                const row = sheet.addRow([summary, `$${issue.savings.toFixed(2)}`]);
+                const row = sheet.addRow([summary, this.formatCurrency(issue.savings)]);
                 row.getCell(1).alignment = { wrapText: true };
             });
             if (issues.length > maxShow) {

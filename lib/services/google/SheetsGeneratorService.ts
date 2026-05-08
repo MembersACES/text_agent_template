@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
-import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+import { ReportData, ExtractedInvoice, getSavingsEligibleOpportunities } from '@/lib/types/ReportTypes';
 
 const logger = getLogger('SheetsGeneratorService');
 
@@ -11,6 +11,15 @@ const TOTALS_BG_COLOR = { red: 1.0, green: 0.851, blue: 0.4 }; // #FFD966
 const OVERVIEW_SECTION_BG = { red: 0.906, green: 0.902, blue: 0.902 }; // #E7E6E6
 
 export class SheetsGeneratorService {
+    private formatCurrency(amount: number): string {
+        return new Intl.NumberFormat('en-AU', {
+            style: 'currency',
+            currency: 'AUD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    }
+
     async createSheet(data: ReportData, folderId?: string): Promise<{ spreadsheetId: string; url: string }> {
         const auth = googleAuthService.getWriteAuth();
 
@@ -191,12 +200,12 @@ export class SheetsGeneratorService {
         ];
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        values.push(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
+        values.push(['Total annual cost (est.)', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             values.push(
-                ['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`],
-                ['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`],
-                ['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]
+                ['Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative)],
+                ['Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate)],
+                ['Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic)]
             );
         }
 
@@ -703,48 +712,45 @@ export class SheetsGeneratorService {
         if (data.savingsSummary) {
             const c = data.savingsSummary.conservative;
             const o = data.savingsSummary.optimistic;
-            rows.push(pad([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`], maxCol));
+            const cText = new Intl.NumberFormat('en-AU').format(Math.round(c));
+            const oText = new Intl.NumberFormat('en-AU').format(Math.round(o));
+            rows.push(pad([`Estimated annual savings: $${cText} – $${oText} (conservative to optimistic)`], maxCol));
             rows.push(pad([], maxCol));
         }
 
-        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
+        // Benchmarking summary – grouped by (Category, Option Type), cap at top 8
         rows.push(pad(['Benchmarking summary'], maxCol));
         rows.push(pad([], maxCol));
-        rows.push(pad(['Category', 'Issue type', 'Count', 'Est. total savings per year'], maxCol));
+        rows.push(pad(['Category', 'Option Type', 'Count', 'Est. total savings per year'], maxCol));
 
         const groupKey = (u: string, t: string) => `${u}|${t}`;
         const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
-        data.invoices.forEach(inv => {
-            (inv.low_hanging_fruit || []).forEach(opp => {
-                const key = groupKey(inv.utility_type, opp.type);
+        getSavingsEligibleOpportunities(data.invoices, { hideWasteForMemberReport: true }).forEach(opp => {
+                const key = groupKey(opp.utilityType, opp.type);
                 if (!grouped.has(key)) {
-                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
+                    grouped.set(key, { category: opp.utilityType, type: opp.type, count: 0, savings: 0 });
                 }
                 const g = grouped.get(key)!;
                 g.count += 1;
-                if (opp.potential_savings) {
-                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
-                }
-            });
+                g.savings += opp.savings;
         });
         const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
         const maxBenchmarkingRows = 8;
         const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
         toShowGroups.forEach(g => {
-            rows.push(pad([g.category, g.type, g.count.toString(), g.savings > 0 ? `$${g.savings.toFixed(2)}` : ''], maxCol));
+            rows.push(pad([g.category, g.type, g.count.toString(), g.savings > 0 ? this.formatCurrency(g.savings) : ''], maxCol));
         });
         if (sortedGroups.length > maxBenchmarkingRows) {
             rows.push(pad([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', ''], maxCol));
         }
 
         rows.push(pad([], maxCol));
-        rows.push(pad(['Total potential savings (estimate)'], maxCol));
+        rows.push(pad(['Total Savings (Estimate)'], maxCol));
         rows.push(pad([], maxCol));
         if (data.savingsSummary) {
-            rows.push(pad(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`], maxCol));
-            rows.push(pad(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`], maxCol));
-            rows.push(pad(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`], maxCol));
+            rows.push(pad(['Conservative (70%)', this.formatCurrency(data.savingsSummary.conservative)], maxCol));
+            rows.push(pad(['Moderate (85%)', this.formatCurrency(data.savingsSummary.moderate)], maxCol));
+            rows.push(pad(['Optimistic (100%)', this.formatCurrency(data.savingsSummary.optimistic)], maxCol));
         }
 
         rows.push(pad([], maxCol));
@@ -756,7 +762,7 @@ export class SheetsGeneratorService {
             rows.push(pad([], maxCol));
             rows.push(pad(['Summary', 'Est. savings per year'], maxCol));
             toShow.forEach(issue => {
-                rows.push(pad([this.shortIssueSummary(issue.issue), `$${issue.savings.toFixed(2)}`], maxCol));
+                rows.push(pad([this.shortIssueSummary(issue.issue), this.formatCurrency(issue.savings)], maxCol));
             });
             if (issues.length > maxShow) {
                 rows.push(pad([`${issues.length - maxShow} more critical issue(s) in full report.`, ''], maxCol));
@@ -779,7 +785,7 @@ export class SheetsGeneratorService {
             requestBody: { values: rows },
         });
 
-        // Row index of table header (Category, Issue type, ...): with savings at top: 0,1,2,3,4 so header at 4. Without: 0,1,2 so header at 2.
+        // Row index of table header (Category, Option Type, ...): with savings at top: 0,1,2,3,4 so header at 4. Without: 0,1,2 so header at 2.
         const tableHeaderRowIndex = data.savingsSummary ? 4 : 2;
         const benchmarkingTitleRowIndex = data.savingsSummary ? 2 : 0;
         const requests: object[] = [

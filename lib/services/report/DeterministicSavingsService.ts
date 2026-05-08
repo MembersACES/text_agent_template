@@ -5,16 +5,6 @@ const logger = getLogger('DeterministicSavingsService');
 
 type Severity = 'high' | 'medium';
 
-interface Thresholds {
-    base: number;
-    medium: number;
-    high: number;
-}
-
-interface DailySupplyBenchmarks {
-    dailySupply: Thresholds;
-}
-
 /** Billed demand must exceed recorded by at least this fraction to flag repricing. */
 const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
 
@@ -22,49 +12,37 @@ const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
  * Deterministic benchmarking/savings calculator.
  * Replaces model-authored low_hanging_fruit to keep repeated runs stable.
  *
- * Retail TOU (NSW 12/12/10, other states 9/9/7): applies to **TOU c/kWh** for bundled and **unbundled**
+ * Retail TOU (NSW 10/10/12, other states 9/9/7): applies to **TOU c/kWh** for bundled and **unbundled**
  * (use per-period **energy-only** extracted rates — never blended energy+network). Skipped only for
  * **flat / single-rate** tariffs.
  *
- * Daily supply: **SME only** — omitted entirely for C&I Base 1 reviews.
+ * Daily supply checks are disabled for Base 1 savings.
  *
  * Metering: annual ≤700 no flag; (700,1200] vs $700; >1200 vs $900.
  *
  * Demand repricing: only when recorded max is materially below billed (≥2% gap) and annual savings >$200.
  */
 export class DeterministicSavingsService {
-    private readonly ciSupply: DailySupplyBenchmarks = {
-        dailySupply: { base: 2.0, medium: 4.0, high: 5.0 },
-    };
-
-    private readonly smeSupply: DailySupplyBenchmarks = {
-        dailySupply: { base: 1.2, medium: 1.6, high: 1.8 },
-    };
-
     applyDeterministicFindings(invoices: ExtractedInvoice[]): ExtractedInvoice[] {
         return invoices.map((invoice) => this.applyOne(invoice));
     }
 
     private applyOne(invoice: ExtractedInvoice): ExtractedInvoice {
+        if (this.isGasInvoice(invoice)) {
+            return this.applyGas(invoice);
+        }
         if (!this.isElectricityInvoice(invoice)) {
             return invoice;
         }
 
         const billingDays = this.positive(invoice.billing_days);
-        const annualUsageTotal = this.annualize(invoice.total_usage_kwh, billingDays);
-        const customerType = this.classifyCustomerType(invoice, annualUsageTotal);
         const isThreePeriod = this.hasThreePeriodTou(invoice);
-        const supplyBm = customerType === 'c_and_i' ? this.ciSupply : this.smeSupply;
         const state = this.inferRetailState(invoice.site_address);
         const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [];
 
         const skipRetailTou = this.isFlatOrSingleRateElectricity(invoice);
         if (!skipRetailTou) {
             this.addRetailTouFindings(findings, invoice, state, isThreePeriod, billingDays);
-        }
-
-        if (customerType === 'sme') {
-            this.maybeAddDailySupplyFinding(findings, invoice.daily_supply_charge, supplyBm.dailySupply);
         }
 
         const annualMeter = this.annualize(invoice.meter_charges, billingDays);
@@ -78,6 +56,70 @@ export class DeterministicSavingsService {
             `Deterministic findings for invoice ${invoice.invoice_number ?? 'unknown'}: ${findings.length}` +
                 (skipRetailTou ? ' (retail TOU skipped: flat/single-rate)' : ''),
         );
+
+        return { ...invoice, low_hanging_fruit: findings };
+    }
+
+    private applyGas(invoice: ExtractedInvoice): ExtractedInvoice {
+        const billingDays = this.positive(invoice.billing_days);
+        const usageGjPeriod = this.positive(invoice.total_usage_gj);
+        const annualUsageGj = this.annualize(usageGjPeriod, billingDays);
+        if (annualUsageGj === null) {
+            return { ...invoice, low_hanging_fruit: [] };
+        }
+
+        const customerType = this.classifyGasCustomerType(invoice, annualUsageGj);
+        const invoiceIncGst = this.positive(invoice.total_inc_gst);
+        const gst = this.positive(invoice.gst_amount);
+        const invoiceExGst =
+            this.positive(invoice.total_charges_ex_gst) ??
+            (invoiceIncGst !== null && gst !== null ? invoiceIncGst - gst : null);
+        const benchmark = 17.8;
+        let annualSavings: number | null = null;
+        let message: string | null = null;
+
+        if (customerType === 'sme') {
+            if (annualUsageGj < 1000) {
+                return { ...invoice, low_hanging_fruit: [] };
+            }
+            if (invoiceExGst === null || usageGjPeriod === null || usageGjPeriod <= 0) {
+                return { ...invoice, low_hanging_fruit: [] };
+            }
+            const bundledRate = invoiceExGst / usageGjPeriod;
+            const energyCharge = bundledRate * 0.75;
+            annualSavings = annualUsageGj * (energyCharge - benchmark);
+            message =
+                `Calculated SME gas energy charge ${energyCharge.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
+                `(bundled ${bundledRate.toFixed(2)} $/GJ × 75%).`;
+        } else {
+            const retailRate = this.positive(invoice.gas_rate_per_gj) ??
+                (invoiceExGst !== null && usageGjPeriod !== null && usageGjPeriod > 0
+                    ? invoiceExGst / usageGjPeriod
+                    : null);
+            if (retailRate === null) {
+                return { ...invoice, low_hanging_fruit: [] };
+            }
+            annualSavings = annualUsageGj * (retailRate - benchmark);
+            message =
+                `Gas retail rate ${retailRate.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
+        }
+
+        if (annualSavings === null) {
+            return { ...invoice, low_hanging_fruit: [] };
+        }
+        if (annualSavings < 200) {
+            return { ...invoice, low_hanging_fruit: [] };
+        }
+
+        const severity: Severity = annualSavings >= 2000 ? 'high' : 'medium';
+        const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [
+            {
+                type: 'Gas energy rate above Base 1 comparison',
+                severity,
+                message: message!,
+                potential_savings: this.moneyPerYear(annualSavings),
+            },
+        ];
 
         return { ...invoice, low_hanging_fruit: findings };
     }
@@ -135,7 +177,7 @@ export class DeterministicSavingsService {
                 findings,
                 'Retail peak rate (NSW)',
                 invoice.peak_rate_c_per_kwh,
-                12,
+                10,
                 this.annualize(invoice.peak_usage_kwh, billingDays),
             );
             if (isThreePeriod) {
@@ -143,7 +185,7 @@ export class DeterministicSavingsService {
                     findings,
                     'Retail shoulder rate (NSW)',
                     invoice.shoulder_rate_c_per_kwh,
-                    12,
+                    10,
                     this.annualize(invoice.shoulder_usage_kwh, billingDays),
                 );
             }
@@ -151,7 +193,7 @@ export class DeterministicSavingsService {
                 findings,
                 'Retail off-peak rate (NSW)',
                 invoice.off_peak_rate_c_per_kwh,
-                10,
+                12,
                 this.annualize(invoice.off_peak_usage_kwh, billingDays),
             );
             return;
@@ -281,45 +323,6 @@ export class DeterministicSavingsService {
         });
     }
 
-    private maybeAddDailySupplyFinding(
-        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
-        dailySupply: number | null,
-        thresholds: Thresholds,
-    ): void {
-        const current = this.positive(dailySupply);
-        if (current === null || current <= thresholds.medium) return;
-
-        const severity: Severity = current > thresholds.high ? 'high' : 'medium';
-        const savings = (current - thresholds.base) * 365;
-        if (savings < 200) return;
-
-        findings.push({
-            type: 'High Daily Supply',
-            severity,
-            message:
-                `Daily supply charge ${this.money(current)}/day exceeds KB benchmark of ${this.money(thresholds.base)}/day ` +
-                `and ${severity === 'high' ? 'critical' : 'warning'} threshold of ` +
-                `${this.money(severity === 'high' ? thresholds.high : thresholds.medium)}/day.`,
-            potential_savings: this.moneyPerYear(savings),
-        });
-    }
-
-    private classifyCustomerType(
-        invoice: ExtractedInvoice,
-        annualUsageKwh: number | null,
-    ): 'c_and_i' | 'sme' {
-        const t = (invoice.tariff_type || '').toLowerCase();
-        if (/c\s*&\s*i|commercial.*industrial|large\s*business/i.test(t)) {
-            return 'c_and_i';
-        }
-        const demandKw = this.positive(invoice.demand_kw);
-        const demandCharges = this.positive(invoice.demand_charges);
-        if (demandCharges !== null && demandCharges > 0) return 'c_and_i';
-        if (demandKw !== null && demandKw >= 100) return 'c_and_i';
-        if (annualUsageKwh !== null && annualUsageKwh >= 160_000) return 'c_and_i';
-        return 'sme';
-    }
-
     private isElectricityInvoice(invoice: ExtractedInvoice): boolean {
         if (invoice.utility_type === 'Electricity') return true;
         if (invoice.nmi != null) return true;
@@ -328,6 +331,22 @@ export class DeterministicSavingsService {
             this.positive(invoice.peak_usage_kwh) !== null ||
             this.positive(invoice.off_peak_usage_kwh) !== null
         );
+    }
+
+    private isGasInvoice(invoice: ExtractedInvoice): boolean {
+        if (invoice.utility_type === 'Gas') return true;
+        if (invoice.mrin != null) return true;
+        return this.positive(invoice.total_usage_gj) !== null;
+    }
+
+    private classifyGasCustomerType(
+        invoice: ExtractedInvoice,
+        annualUsageGj: number,
+    ): 'c_and_i' | 'sme' {
+        const t = (invoice.tariff_type || '').toLowerCase();
+        if (/sme|small\s*business|residential/.test(t)) return 'sme';
+        if (/c\s*&\s*i|commercial.*industrial|large\s*business|c&i/.test(t)) return 'c_and_i';
+        return annualUsageGj >= 1000 ? 'c_and_i' : 'sme';
     }
 
     private positive(v: number | null | undefined): number | null {

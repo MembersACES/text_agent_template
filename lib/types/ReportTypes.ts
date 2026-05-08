@@ -106,32 +106,169 @@ export interface ReportData {
     generatedAt: string; // ISO timestamp
 }
 
+interface SavingsFilterOptions {
+    hideWasteForMemberReport?: boolean;
+}
+
+interface InvoiceOpportunity {
+    type: string;
+    issue: string;
+    savings: number;
+    severity: 'high' | 'medium' | 'low';
+    utilityType: ExtractedInvoice['utility_type'];
+}
+
+function normalizeText(value: string | null | undefined): string {
+    return (value || '').trim().toLowerCase();
+}
+
+function parseAuDateToEpoch(value: string | null | undefined): number {
+    if (!value) return Number.NEGATIVE_INFINITY;
+    const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!match) return Number.NEGATIVE_INFINITY;
+    const d = Number(match[1]);
+    const m = Number(match[2]) - 1;
+    const y = Number(match[3]);
+    const dt = new Date(y, m, d);
+    const ts = dt.getTime();
+    return Number.isFinite(ts) ? ts : Number.NEGATIVE_INFINITY;
+}
+
+function parseSavingsNumber(value: string | null | undefined): number | null {
+    if (!value) return null;
+    const match = value.match(/[\d,]+\.?\d*/);
+    if (!match) return null;
+    const parsed = Number.parseFloat(match[0].replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
+    const tariff = normalizeText(inv.tariff_type);
+    if (/c\s*&\s*i|commercial.*industrial|large\s*business/.test(tariff)) {
+        return 'c_and_i';
+    }
+    const demandCharges = inv.demand_charges ?? null;
+    if (demandCharges !== null && Number.isFinite(demandCharges) && demandCharges > 0) {
+        return 'c_and_i';
+    }
+    const demandKw = inv.demand_kw ?? null;
+    if (demandKw !== null && Number.isFinite(demandKw) && demandKw >= 100) {
+        return 'c_and_i';
+    }
+    const usage = inv.total_usage_kwh ?? null;
+    const days = inv.billing_days ?? null;
+    if (
+        usage !== null &&
+        days !== null &&
+        Number.isFinite(usage) &&
+        Number.isFinite(days) &&
+        days > 0
+    ) {
+        const annualUsage = (usage / days) * 365;
+        if (annualUsage >= 160_000) return 'c_and_i';
+    }
+    return 'sme';
+}
+
+function electricityGroupingKey(inv: ExtractedInvoice): string {
+    const nmi = normalizeText(inv.nmi);
+    if (nmi) return `nmi:${nmi}`;
+    const site = normalizeText(inv.site_address);
+    if (site) return `site:${site}`;
+    return `fallback:${normalizeText(inv.business_name)}|${normalizeText(inv.account_number)}`;
+}
+
+function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]): Set<number> {
+    const eligible = new Set<number>();
+    const electricityGroups = new Map<string, number[]>();
+
+    invoices.forEach((inv, index) => {
+        if (inv.utility_type !== 'Electricity') {
+            eligible.add(index);
+            return;
+        }
+        const key = electricityGroupingKey(inv);
+        const group = electricityGroups.get(key) || [];
+        group.push(index);
+        electricityGroups.set(key, group);
+    });
+
+    electricityGroups.forEach((indices) => {
+        const hasCAndI = indices.some((idx) => classifyElectricityCustomerType(invoices[idx]) === 'c_and_i');
+        const mixedGroup = hasCAndI && indices.some((idx) => classifyElectricityCustomerType(invoices[idx]) === 'sme');
+
+        const latestByNmi = new Map<string, number>();
+        const withoutNmi: number[] = [];
+
+        indices.forEach((idx) => {
+            const inv = invoices[idx];
+            if (mixedGroup && classifyElectricityCustomerType(inv) === 'sme') return;
+            const nmi = normalizeText(inv.nmi);
+            if (!nmi) {
+                withoutNmi.push(idx);
+                return;
+            }
+            const current = latestByNmi.get(nmi);
+            if (current == null) {
+                latestByNmi.set(nmi, idx);
+                return;
+            }
+            const currentDate = parseAuDateToEpoch(invoices[current].invoice_date);
+            const candidateDate = parseAuDateToEpoch(inv.invoice_date);
+            if (candidateDate >= currentDate) latestByNmi.set(nmi, idx);
+        });
+
+        latestByNmi.forEach((idx) => eligible.add(idx));
+        withoutNmi.forEach((idx) => eligible.add(idx));
+    });
+
+    return eligible;
+}
+
+export function getSavingsEligibleOpportunities(
+    invoices: ExtractedInvoice[],
+    options: SavingsFilterOptions = {},
+): InvoiceOpportunity[] {
+    const eligibleIndexes = buildSavingsEligibleInvoiceIndexSet(invoices);
+    const hideWaste = options.hideWasteForMemberReport ?? false;
+    const opportunities: InvoiceOpportunity[] = [];
+
+    invoices.forEach((inv, idx) => {
+        if (!eligibleIndexes.has(idx)) return;
+        if (hideWaste && inv.utility_type === 'Waste') return;
+        (inv.low_hanging_fruit || []).forEach((opp) => {
+            const savings = parseSavingsNumber(opp.potential_savings);
+            if (savings === null) return;
+            opportunities.push({
+                type: opp.type,
+                issue: opp.message,
+                savings,
+                severity: opp.severity,
+                utilityType: inv.utility_type,
+            });
+        });
+    });
+
+    return opportunities;
+}
+
 /**
  * Calculate savings summary from invoices
  */
-export function calculateSavingsSummary(invoices: ExtractedInvoice[]): SavingsSummary {
+export function calculateSavingsSummary(
+    invoices: ExtractedInvoice[],
+    options: SavingsFilterOptions = { hideWasteForMemberReport: true },
+): SavingsSummary {
     let totalSavings = 0;
     const criticalIssues: Array<{ issue: string; savings: number; severity: 'high' | 'medium' | 'low' }> = [];
 
-    invoices.forEach(inv => {
-        if (inv.low_hanging_fruit) {
-            inv.low_hanging_fruit.forEach((opp: any) => {
-                if (opp.potential_savings) {
-                    // Extract number from string like "$1,234.56/year"
-                    const match = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (match) {
-                        const savings = parseFloat(match[0].replace(/,/g, ''));
-                        totalSavings += savings;
-
-                        if (opp.severity === 'high') {
-                            criticalIssues.push({
-                                issue: opp.message,
-                                savings,
-                                severity: opp.severity,
-                            });
-                        }
-                    }
-                }
+    getSavingsEligibleOpportunities(invoices, options).forEach((opp) => {
+        totalSavings += opp.savings;
+        if (opp.severity === 'high') {
+            criticalIssues.push({
+                issue: opp.issue,
+                savings: opp.savings,
+                severity: opp.severity,
             });
         }
     });

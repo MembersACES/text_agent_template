@@ -186,5 +186,18 @@ function normalizeOne(item: unknown): ExtractedInvoice | null {
         }
     }
 
+    const utilityType = n.utility_type as string | null | undefined;
+    const tariffType = (n.tariff_type as string | null | undefined) || '';
+    const oilServices = Array.isArray(n.oil_services) ? n.oil_services : [];
+    const hasGreaseTrap =
+        /grease\s*trap/i.test(tariffType) ||
+        oilServices.some((svc: any) =>
+            /grease\s*trap/i.test(String(svc?.service_type || '')),
+        );
+
+    if (hasGreaseTrap && utilityType === 'Oil') {
+        n.utility_type = 'Waste';
+    }
+
     return n as unknown as ExtractedInvoice;
 }

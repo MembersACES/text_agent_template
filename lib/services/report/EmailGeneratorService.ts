@@ -1,4 +1,4 @@
-import { ReportData } from '@/lib/types/ReportTypes';
+import { ReportData, getSavingsEligibleOpportunities } from '@/lib/types/ReportTypes';
 
 /** One-line summary for client-facing email (Base 1 estimate). */
 function shortIssueSummary(issue: string, maxLen = 80): string {
@@ -20,10 +20,11 @@ export class EmailGeneratorService {
             return acc;
         }, {} as Record<string, { count: number; totalCost: number }>);
 
-        const allOpportunities = invoices
-            .flatMap(inv => (inv.low_hanging_fruit || []).map(opp => ({ ...opp, utilityType: inv.utility_type })));
-        const opportunityCount = allOpportunities.length;
-        const utilityTypesWithIssues = [...new Set(allOpportunities.map(o => o.utilityType))];
+        const memberFacingOpportunities = getSavingsEligibleOpportunities(invoices, {
+            hideWasteForMemberReport: true,
+        });
+        const opportunityCount = memberFacingOpportunities.length;
+        const utilityTypesWithIssues = [...new Set(memberFacingOpportunities.map(o => o.utilityType))];
         const summaryAreas = utilityTypesWithIssues.length > 0
             ? utilityTypesWithIssues.slice(0, 4).join(', ') + (utilityTypesWithIssues.length > 4 ? ' and others' : '')
             : 'your utilities';
