@@ -508,14 +508,6 @@ export class ExcelGeneratorService {
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
         const BENCHMARK_COLS = 5;
 
-        const applyBlueBannerRow = (rowIdx: number) => {
-            sheet.mergeCells(`A${rowIdx}:E${rowIdx}`);
-            const first = sheet.getRow(rowIdx).getCell(1);
-            first.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-            first.font = { color: { argb: 'FFFFFF' }, bold: true, size: 12 };
-            first.alignment = { horizontal: 'center', vertical: 'middle' };
-        };
-
         const applyBlueHeaderCells = (rowIdx: number, colCount: number) => {
             const r = sheet.getRow(rowIdx);
             for (let c = 1; c <= colCount; c++) {
@@ -530,42 +522,61 @@ export class ExcelGeneratorService {
             hideWasteForMemberReport: true,
         });
         const totalEstimated = data.savingsSummary?.optimistic ?? benchmarkGroups.reduce((s, g) => s + g.totalSavings, 0);
-        const conservative = data.savingsSummary?.conservative ?? totalEstimated * 0.7;
-        const firstMonthFee = conservative / 12;
+        const firstMonthFee = totalEstimated / 12;
 
-        // Hero card
-        sheet.addRow(['ESTIMATED ANNUAL SAVINGS', '', '', '', '']);
-        const heroTitleIdx = sheet.rowCount;
-        sheet.mergeCells(`A${heroTitleIdx}:E${heroTitleIdx}`);
-        const heroTitle = sheet.getRow(heroTitleIdx).getCell(1);
-        heroTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E7775' } };
-        heroTitle.font = { color: { argb: 'FFFFFF' }, bold: true, size: 10 };
-        heroTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+        // Top title bar
+        sheet.addRow(['Base 1 Review — Savings Analysis', '', '', '', '']);
+        const topTitleIdx = sheet.rowCount;
+        sheet.mergeCells(`A${topTitleIdx}:E${topTitleIdx}`);
+        const topTitle = sheet.getRow(topTitleIdx).getCell(1);
+        topTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+        topTitle.font = { color: { argb: 'FFFFFF' }, bold: true, size: 13 };
+        topTitle.alignment = { horizontal: 'left', vertical: 'middle' };
 
-        sheet.addRow([totalEstimated, '', '', '', '']);
-        const heroValueIdx = sheet.rowCount;
-        sheet.mergeCells(`A${heroValueIdx}:E${heroValueIdx}`);
-        const heroValue = sheet.getRow(heroValueIdx).getCell(1);
-        heroValue.numFmt = '$#,##0';
-        heroValue.font = { bold: true, size: 22, color: { argb: '102A43' } };
-        heroValue.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.addRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
+        const subtitleIdx = sheet.rowCount;
+        sheet.mergeCells(`A${subtitleIdx}:E${subtitleIdx}`);
+        const subtitle = sheet.getRow(subtitleIdx).getCell(1);
+        subtitle.font = { italic: true, size: 9, color: { argb: '4A5568' } };
+        subtitle.alignment = { horizontal: 'left', vertical: 'middle' };
 
-        sheet.addRow(['Total identified savings, per year', '', '', '', '']);
-        const heroSubIdx = sheet.rowCount;
-        sheet.mergeCells(`A${heroSubIdx}:E${heroSubIdx}`);
-        const heroSub = sheet.getRow(heroSubIdx).getCell(1);
-        heroSub.font = { italic: true, size: 9, color: { argb: '4A5568' } };
-        heroSub.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.addRow([]);
+
+        // KPI labels
+        sheet.addRow(['ESTIMATED ANNUAL SAVINGS', '', '', 'OUR FEE (FIRST MONTH ONLY)', '']);
+        const kpiLabelIdx = sheet.rowCount;
+        sheet.mergeCells(`A${kpiLabelIdx}:C${kpiLabelIdx}`);
+        sheet.mergeCells(`D${kpiLabelIdx}:E${kpiLabelIdx}`);
+        for (const col of [1, 4] as const) {
+            const cell = sheet.getRow(kpiLabelIdx).getCell(col);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E5E7EB' } };
+            cell.font = { bold: true, size: 9, color: { argb: '334155' } };
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        }
+
+        // KPI values
+        sheet.addRow([totalEstimated, '', '', firstMonthFee, '']);
+        const kpiValueIdx = sheet.rowCount;
+        sheet.mergeCells(`A${kpiValueIdx}:C${kpiValueIdx}`);
+        sheet.mergeCells(`D${kpiValueIdx}:E${kpiValueIdx}`);
+        const estCell = sheet.getRow(kpiValueIdx).getCell(1);
+        estCell.numFmt = '$#,##0';
+        estCell.font = { bold: true, size: 24, color: { argb: '102A43' } };
+        estCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        const feeCell = sheet.getRow(kpiValueIdx).getCell(4);
+        feeCell.numFmt = '$#,##0';
+        feeCell.font = { bold: true, size: 24, color: { argb: '102A43' } };
+        feeCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
         sheet.addRow([]);
 
         // Breakdown table
-        sheet.addRow(['Saving Breakdown by Category']);
+        sheet.addRow(['Breakdown by category']);
         const breakdownTitleIdx = sheet.rowCount;
         sheet.mergeCells(`A${breakdownTitleIdx}:E${breakdownTitleIdx}`);
         sheet.getRow(breakdownTitleIdx).getCell(1).font = { bold: true, size: 11, color: { argb: '1A202C' } };
 
-        sheet.addRow(['Category', 'Option Type', 'Invoices', 'Charge Type', '$']);
+        sheet.addRow(['Category', 'Option', 'Inv.', 'Charge type', 'Savings p.a']);
         applyBlueHeaderCells(sheet.rowCount, BENCHMARK_COLS);
 
         benchmarkGroups.forEach((g) => {
@@ -585,40 +596,6 @@ export class ExcelGeneratorService {
         estValue.font = { color: { argb: 'FFFFFF' }, bold: true };
         estValue.numFmt = '$#,##0.00';
         estValue.alignment = { horizontal: 'right', vertical: 'middle' };
-
-        sheet.addRow([]);
-
-        // Fee section
-        sheet.addRow(['Our Fee']);
-        const feeTitleIdx = sheet.rowCount;
-        sheet.mergeCells(`A${feeTitleIdx}:E${feeTitleIdx}`);
-        sheet.getRow(feeTitleIdx).getCell(1).font = { bold: true, size: 11, color: { argb: '1A202C' } };
-
-        sheet.addRow(['Basis', 'Conservative Annual Savings', '', 'First Month Fee', '']);
-        const feeHdrIdx = sheet.rowCount;
-        sheet.mergeCells(`B${feeHdrIdx}:C${feeHdrIdx}`);
-        sheet.mergeCells(`D${feeHdrIdx}:E${feeHdrIdx}`);
-        for (const col of [1, 2, 4] as const) {
-            const cell = sheet.getRow(feeHdrIdx).getCell(col);
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-            cell.font = { color: { argb: 'FFFFFF' }, bold: true };
-            cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        }
-
-        sheet.addRow(['Conservative estimate', conservative, '', firstMonthFee, '']);
-        const feeRowIdx = sheet.rowCount;
-        sheet.mergeCells(`B${feeRowIdx}:C${feeRowIdx}`);
-        sheet.mergeCells(`D${feeRowIdx}:E${feeRowIdx}`);
-        sheet.getRow(feeRowIdx).getCell(2).numFmt = '$#,##0.00';
-        sheet.getRow(feeRowIdx).getCell(4).numFmt = '$#,##0.00';
-        sheet.getRow(feeRowIdx).getCell(4).font = { bold: true, color: { argb: '1E7775' } };
-
-        sheet.addRow(['Our fee equals one month of conservative annual savings. Figures use cent-level rounding only.', '', '', '', '']);
-        const feeNoteIdx = sheet.rowCount;
-        sheet.mergeCells(`A${feeNoteIdx}:E${feeNoteIdx}`);
-        const feeNote = sheet.getRow(feeNoteIdx).getCell(1);
-        feeNote.font = { size: 9, color: { argb: '4A5568' }, italic: true };
-        feeNote.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
 
         this.applyApproxColumnWidthsBase1Analysis(sheet, BENCHMARK_COLS);
     }

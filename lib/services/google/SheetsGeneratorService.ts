@@ -706,51 +706,34 @@ export class SheetsGeneratorService {
 
         const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, { hideWasteForMemberReport: true });
         const totalEstimated = data.savingsSummary?.optimistic ?? benchmarkGroups.reduce((sum, g) => sum + g.totalSavings, 0);
-        const conservative = data.savingsSummary?.conservative ?? totalEstimated * 0.7;
-        const firstMonthFee = conservative / 12;
+        const firstMonthFee = totalEstimated / 12;
 
-        // Hero
-        const heroTitleIdx = rows.length;
-        pushRow(['ESTIMATED ANNUAL SAVINGS', '', '', '', '']);
-        const heroValueIdx = rows.length;
-        pushRow([this.formatCurrency(Math.round(totalEstimated)), '', '', '', '']);
-        const heroSubIdx = rows.length;
-        pushRow(['Total identified savings, per year', '', '', '', '']);
+        // Title bar + subtitle
+        const titleIdx = rows.length;
+        pushRow(['Base 1 Review — Savings Analysis', '', '', '', '']);
+        const subtitleIdx = rows.length;
+        pushRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
         pushRow([]);
 
-        // Breakdown
-        const breakdownTitleIdx = rows.length;
-        pushRow(['Saving Breakdown by Category', '', '', '', '']);
+        // KPI labels + values (left/right blocks)
+        const kpiLabelIdx = rows.length;
+        pushRow(['ESTIMATED ANNUAL SAVINGS', '', '', 'OUR FEE (FIRST MONTH ONLY)', '']);
+        const kpiValueIdx = rows.length;
+        pushRow([this.formatCurrency(Math.round(totalEstimated)), '', '', this.formatCurrency(Math.round(firstMonthFee)), '']);
+        pushRow([]);
 
+        // Breakdown table
+        const breakdownTitleIdx = rows.length;
+        pushRow(['Breakdown by category', '', '', '', '']);
         const benchmarkHeaderIdx = rows.length;
-        pushRow(['Category', 'Option Type', 'Invoices', 'Charge Type', '$']);
+        pushRow(['Category', 'Option', 'Inv.', 'Charge type', 'Savings p.a']);
 
         benchmarkGroups.forEach((g) => {
-            pushRow([
-                g.utilityType,
-                g.optionKind,
-                String(g.invoiceCount),
-                g.relatedCharges,
-                g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '',
-            ]);
+            pushRow([g.utilityType, g.optionKind, String(g.invoiceCount), g.relatedCharges, g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '']);
         });
 
         const estTotalRowIdx = rows.length;
-        pushRow(['Estimated Savings', '', '', '', this.formatCurrency(totalEstimated)]);
-        pushRow([]);
-
-        // Fee section
-        const feeTitleIdx = rows.length;
-        pushRow(['Our Fee', '', '', '', '']);
-
-        const feeHeaderIdx = rows.length;
-        pushRow(['Basis', 'Conservative Annual Savings', '', 'First Month Fee', '']);
-
-        const feeValueIdx = rows.length;
-        pushRow(['Conservative estimate', this.formatCurrency(conservative), '', this.formatCurrency(firstMonthFee), '']);
-
-        const feeNoteIdx = rows.length;
-        pushRow(['Our fee equals one month of conservative annual savings. Figures use cent-level rounding only.', '', '', '', '']);
+        pushRow(['Estimated savings', '', '', '', this.formatCurrency(totalEstimated)]);
 
         await sheets.spreadsheets.values.update({
             spreadsheetId,
@@ -764,10 +747,10 @@ export class SheetsGeneratorService {
             textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 12 },
             horizontalAlignment: 'CENTER' as const,
         };
-        const heroBannerFormat = {
-            backgroundColor: { red: 0.118, green: 0.467, blue: 0.459 },
-            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
-            horizontalAlignment: 'CENTER' as const,
+        const kpiLabelFormat = {
+            backgroundColor: OVERVIEW_SECTION_BG,
+            textFormat: { foregroundColor: { red: 0.2, green: 0.227, blue: 0.286 }, bold: true, fontSize: 9 },
+            horizontalAlignment: 'LEFT' as const,
         };
 
         const blueHeaderFormat = {
@@ -778,86 +761,103 @@ export class SheetsGeneratorService {
 
         const requests: object[] = [];
 
+        // Title row
         requests.push({
             mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroTitleIdx,
-                    endRowIndex: heroTitleIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
+                range: { sheetId, startRowIndex: titleIdx, endRowIndex: titleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
                 mergeType: 'MERGE_ALL',
             },
         });
         requests.push({
             repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroTitleIdx,
-                    endRowIndex: heroTitleIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
+                range: { sheetId, startRowIndex: titleIdx, endRowIndex: titleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: HEADER_BG_COLOR,
+                        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 13 },
+                        horizontalAlignment: 'LEFT',
+                    },
                 },
-                cell: { userEnteredFormat: heroBannerFormat },
                 fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
             },
         });
         requests.push({
             mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroValueIdx,
-                    endRowIndex: heroValueIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
+                range: { sheetId, startRowIndex: subtitleIdx, endRowIndex: subtitleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
                 mergeType: 'MERGE_ALL',
             },
         });
         requests.push({
             repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroValueIdx,
-                    endRowIndex: heroValueIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
+                range: { sheetId, startRowIndex: subtitleIdx, endRowIndex: subtitleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
                 cell: {
                     userEnteredFormat: {
-                        textFormat: { bold: true, fontSize: 22, foregroundColor: { red: 0.063, green: 0.165, blue: 0.263 } },
-                        horizontalAlignment: 'CENTER',
+                        textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.29, green: 0.333, blue: 0.408 } },
+                        horizontalAlignment: 'LEFT',
+                    },
+                },
+                fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
+            },
+        });
+
+        // KPI section
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                cell: { userEnteredFormat: kpiLabelFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                cell: { userEnteredFormat: kpiLabelFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                cell: {
+                    userEnteredFormat: {
+                        textFormat: { bold: true, fontSize: 24, foregroundColor: { red: 0.063, green: 0.165, blue: 0.263 } },
+                        horizontalAlignment: 'LEFT',
                     },
                 },
                 fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
             },
         });
         requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroSubIdx,
-                    endRowIndex: heroSubIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
             repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: heroSubIdx,
-                    endRowIndex: heroSubIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
                 cell: {
                     userEnteredFormat: {
-                        textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.29, green: 0.333, blue: 0.408 } },
-                        horizontalAlignment: 'CENTER',
+                        textFormat: { bold: true, fontSize: 24, foregroundColor: { red: 0.063, green: 0.165, blue: 0.263 } },
+                        horizontalAlignment: 'LEFT',
                     },
                 },
                 fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
@@ -913,138 +913,6 @@ export class SheetsGeneratorService {
                 },
                 cell: { userEnteredFormat: blueHeaderFormat },
                 fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-            },
-        });
-
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeTitleIdx,
-                    endRowIndex: feeTitleIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-
-        requests.push({
-            repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeHeaderIdx,
-                    endRowIndex: feeHeaderIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: 1,
-                },
-                cell: { userEnteredFormat: blueHeaderFormat },
-                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-            },
-        });
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeHeaderIdx,
-                    endRowIndex: feeHeaderIdx + 1,
-                    startColumnIndex: 1,
-                    endColumnIndex: 3,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeHeaderIdx,
-                    endRowIndex: feeHeaderIdx + 1,
-                    startColumnIndex: 3,
-                    endColumnIndex: 5,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
-            repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeHeaderIdx,
-                    endRowIndex: feeHeaderIdx + 1,
-                    startColumnIndex: 1,
-                    endColumnIndex: 3,
-                },
-                cell: { userEnteredFormat: blueHeaderFormat },
-                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-            },
-        });
-        requests.push({
-            repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeHeaderIdx,
-                    endRowIndex: feeHeaderIdx + 1,
-                    startColumnIndex: 3,
-                    endColumnIndex: 5,
-                },
-                cell: { userEnteredFormat: blueHeaderFormat },
-                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-            },
-        });
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeValueIdx,
-                    endRowIndex: feeValueIdx + 1,
-                    startColumnIndex: 1,
-                    endColumnIndex: 3,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeValueIdx,
-                    endRowIndex: feeValueIdx + 1,
-                    startColumnIndex: 3,
-                    endColumnIndex: 5,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
-            mergeCells: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeNoteIdx,
-                    endRowIndex: feeNoteIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
-                mergeType: 'MERGE_ALL',
-            },
-        });
-        requests.push({
-            repeatCell: {
-                range: {
-                    sheetId,
-                    startRowIndex: feeNoteIdx,
-                    endRowIndex: feeNoteIdx + 1,
-                    startColumnIndex: 0,
-                    endColumnIndex: COLS,
-                },
-                cell: {
-                    userEnteredFormat: {
-                        textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.29, green: 0.333, blue: 0.408 } },
-                        horizontalAlignment: 'LEFT',
-                        wrapStrategy: 'WRAP',
-                    },
-                },
-                fields: 'userEnteredFormat(textFormat,horizontalAlignment,wrapStrategy)',
             },
         });
 
