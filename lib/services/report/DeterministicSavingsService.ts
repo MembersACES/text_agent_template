@@ -21,6 +21,8 @@ const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
  * Metering: annual ≤700 no flag; (700,1200] vs $700; >1200 vs $900.
  *
  * Demand repricing: only when recorded max is materially below billed (≥2% gap) and annual savings >$200.
+ *
+ * **Gas:** bundled vs unbundled (from `tariff_type`) selects the formula — bundled uses (invoice ex-GST / GJ) × 75% vs **17.8** with **≥1000 GJ/year** gate; unbundled compares commodity **$/GJ** vs **17.8** directly (usage does not flip bundled/unbundled).
  */
 export class DeterministicSavingsService {
     applyDeterministicFindings(invoices: ExtractedInvoice[]): ExtractedInvoice[] {
@@ -68,7 +70,7 @@ export class DeterministicSavingsService {
             return { ...invoice, low_hanging_fruit: [] };
         }
 
-        const customerType = this.classifyGasCustomerType(invoice, annualUsageGj);
+        const bundledGas = this.isGasBundledInvoice(invoice);
         const invoiceIncGst = this.positive(invoice.total_inc_gst);
         const gst = this.positive(invoice.gst_amount);
         const invoiceExGst =
@@ -78,7 +80,7 @@ export class DeterministicSavingsService {
         let annualSavings: number | null = null;
         let message: string | null = null;
 
-        if (customerType === 'sme') {
+        if (bundledGas) {
             if (annualUsageGj < 1000) {
                 return { ...invoice, low_hanging_fruit: [] };
             }
@@ -89,7 +91,7 @@ export class DeterministicSavingsService {
             const energyCharge = bundledRate * 0.75;
             annualSavings = annualUsageGj * (energyCharge - benchmark);
             message =
-                `Calculated SME gas energy charge ${energyCharge.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
+                `Calculated bundled gas energy charge ${energyCharge.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
                 `(bundled ${bundledRate.toFixed(2)} $/GJ × 75%).`;
         } else {
             const retailRate = this.positive(invoice.gas_rate_per_gj) ??
@@ -101,7 +103,7 @@ export class DeterministicSavingsService {
             }
             annualSavings = annualUsageGj * (retailRate - benchmark);
             message =
-                `Gas retail rate ${retailRate.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
+                `Unbundled gas retail rate ${retailRate.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
         }
 
         if (annualSavings === null) {
@@ -339,14 +341,13 @@ export class DeterministicSavingsService {
         return this.positive(invoice.total_usage_gj) !== null;
     }
 
-    private classifyGasCustomerType(
-        invoice: ExtractedInvoice,
-        annualUsageGj: number,
-    ): 'c_and_i' | 'sme' {
-        const t = (invoice.tariff_type || '').toLowerCase();
-        if (/sme|small\s*business|residential/.test(t)) return 'sme';
-        if (/c\s*&\s*i|commercial.*industrial|large\s*business|c&i/.test(t)) return 'c_and_i';
-        return annualUsageGj >= 1000 ? 'c_and_i' : 'sme';
+    /**
+     * **Unbundled** only when `tariff_type` mentions "unbundled"; otherwise **bundled** (including empty labels).
+     * Annual usage does not select this path — it only gates bundled savings (≥1000 GJ/year).
+     */
+    private isGasBundledInvoice(invoice: ExtractedInvoice): boolean {
+        const t = (invoice.tariff_type || '').trim().toLowerCase();
+        return !/\bunbundl\b/.test(t);
     }
 
     private positive(v: number | null | undefined): number | null {

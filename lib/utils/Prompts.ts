@@ -33,7 +33,8 @@ CRITICAL INSTRUCTIONS:
    - **daily_supply_charge** in **$/day**: use the retailer line that quotes **daily** service/supply (e.g. “Daily Charge” with **$/day**). **Never** set daily_supply_charge to (unrelated period $ total) ÷ billing_days unless the invoice explicitly defines that as the daily supply component.
    - **Do not create any low_hanging_fruit daily supply entries** (daily charge checks are disabled in Base 1).
    - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
-   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic rules use these strings.
+   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic electricity rules use these strings.
+   - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. **Bundled vs unbundled** selects the gas savings formula; annual usage only gates the bundled path (≥ **1,000 GJ/year**).
    - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
    - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
    - For waste: populate waste_services array with ALL line items and pickup dates
@@ -53,7 +54,7 @@ CRITICAL INSTRUCTIONS:
 
 4. **BENCHMARKING & low_hanging_fruit** (utility-specific):
    - **Electricity:** Deterministic Base 1 replaces all model-authored findings (retail TOU NSW 10/10/12 and non-NSW 9/7 shoulder rules, metering tiers, demand repricing). Always set **low_hanging_fruit** to **[]**.
-   - **Gas:** Deterministic Base 1 replaces gas findings (\`17.8 $/GJ\` rules, SME 75% bundled energy charge when applicable). Always set **low_hanging_fruit** to **[]**.
+   - **Gas:** Deterministic Base 1 replaces gas findings (\`17.8 $/GJ\` compare; **bundled**: \`(invoice_ex_gst / usage_gj) × 75%\` vs benchmark only when annualized usage **≥ 1,000 GJ**; **unbundled**: retail **$/GJ** vs benchmark). Always set **low_hanging_fruit** to **[]**.
    - **Water, Waste, Oil, Cleaning:** Use **MARKET BENCHMARKS** from the KB context only. **Never invent** dollar or cent thresholds that do not appear above. Compare extracted values to KB thresholds when creating findings.
    - **Daily supply:** extract \`daily_supply_charge\` as data only — **no low_hanging_fruit** from daily supply for any utility type.
 

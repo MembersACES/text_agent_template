@@ -11,7 +11,7 @@ KNOWLEDGE BASE STRUCTURE
 ═══════════════════════════════════════════════════════════════
 
 Your knowledge base contains utility-specific guides with:
-- Classification rules (C&I vs SME, bundled vs unbundled, TOU structures)
+- Classification rules (electricity: C&I vs SME, bundled vs unbundled, TOU structures; **gas automation: bundled vs unbundled from \`tariff_type\`** — not SME/C&I by usage)
 - Data extraction requirements
 - **MARKET BENCHMARKS** (actual threshold values)
 - Calculation formulas
@@ -45,7 +45,7 @@ The guides contain classification, extraction rules, and supplementary benchmark
 Step 2: CLASSIFY THE INVOICE
 - Follow the classification steps in the guide
 - For electricity: Determine C&I vs SME, Bundled vs Unbundled, TOU structure (2-period or 3-period), and **state (NSW / VIC / other)** from site address or distributor context
-- For gas: Determine customer size (Large C&I, C&I, SME, Residential)
+- For gas: Determine **bundled vs unbundled** from the invoice / GAS_GUIDE and reflect it in \`tariff_type\` (**must include \"Unbundled\"** when the bill is unbundled). Customer segment (Large C&I, SME, etc.) is **contextual only** — it does **not** select the Base 1 gas formula.
 - For waste: Identify bin types and utilization
 
 Step 3: EXTRACT ALL FIELDS
@@ -62,9 +62,9 @@ Step 3: EXTRACT ALL FIELDS
 Server-side savings behavior you must align with:
 - If multiple electricity invoices share one NMI, savings use the most recent invoice only (all invoices still appear in data tabs)
 - If a site/NMI group contains both SME and C&I electricity invoices, SME invoices are excluded from savings (but still shown in data tabs)
-- Gas split:
-  - **C&I gas:** compare retail rate directly to `17.8 $/GJ`
-  - **SME gas:** if annualized usage is under `1,000 GJ`, do not include a gas savings line; if at/above `1,000 GJ`, compare `(invoice_ex_gst / usage_gj) × 75%` against `17.8 $/GJ`
+- Gas (server-side, from extracted fields):
+  - **Unbundled** (\`tariff_type\` contains \"unbundled\"): compare commodity **$/GJ** (\`gas_rate_per_gj\`, or invoice ex-GST ÷ period GJ if needed) directly to **17.8 $/GJ**
+  - **Bundled** (no \"unbundled\" in \`tariff_type\`): if annualized usage is **under 1,000 GJ/year**, no automated gas savings row; if **at/above 1,000 GJ/year**, compare **(invoice_ex_gst / usage_gj) × 75%** to **17.8 $/GJ**
 
 Step 4: APPLY BENCHMARKS
 - Use ELECTRICITY_GUIDE (and other guides) for classification, network/energy splits (unbundled), waste, water, oil
@@ -176,7 +176,8 @@ ELECTRICITY:
 GAS:
 - MRIN: 8-12 characters (validate)
 - total_usage_mj, total_usage_gj: extract (GJ = MJ / 1000)
-- gas_rate_per_gj: ALWAYS extract or calculate (usage_charges / total_usage_gj)
+- gas_rate_per_gj: ALWAYS extract or calculate (usage_charges / total_usage_gj) for **unbundled** commodity rates; bundled bills may rely on totals ÷ usage for the bundled path
+- **tariff_type:** must contain **\"Unbundled\"** when the retailer invoice is unbundled (substring match is how Base 1 chooses the formula)
 - daily_supply_charge: in $/day
 - estimated_annual_usage_gj: (total_usage_gj / billing_days) * 365
 
@@ -227,7 +228,7 @@ Use **ELECTRICITY_GUIDE.docx** / **GAS_GUIDE.docx** for demand $/kVA/month bands
 
 Daily supply may still be extracted as invoice data, but do not generate Base 1 savings findings from daily supply values.
 
-From GAS_GUIDE.docx:
+From GAS_GUIDE.docx (narrative / band context — automated gas **savings** use **bundled vs unbundled** + **`17.8 $/GJ`** as in § Gas (Base 1), not SME/C&I by usage):
 
 **C&I Gas Rates:**
 - Gas Rate: $16.50-$19.00/GJ (🟡 >$18.00/GJ, 🔴 >$19.00/GJ)
@@ -337,6 +338,8 @@ SAVINGS CALCULATION METHODOLOGY
 
 **Metering:** § RETAIL & METERING POLICY tier comparisons (700 / 900); populated server-side for electricity.
 
+**Gas (Base 1):** **Bundled vs unbundled** comes from \`tariff_type\` (\"unbundled\" substring → unbundled path). **Annual usage** only gates the **bundled** path (≥ **1,000 GJ/year**). Threshold **> $200/year** and severity rules apply on the server.
+
 **Demand:** § DEMAND REPRICING only when billed materially exceeds recorded max (see §); otherwise note alignment in prose without savings.
 
 Annual projections:
@@ -386,7 +389,8 @@ QUALITY VALIDATION
 ═══════════════════════════════════════════════════════════════
 
 Classification:
-☑ Customer type, billing structure, TOU, **state** for retail rules
+☑ Electricity: customer type, billing structure, TOU, **state** for retail rules
+☑ Gas: **bundled vs unbundled** encoded in \`tariff_type\` (plus accurate usage and charges for annualisation)
 
 Data Integrity:
 ☑ Numeric fields are numbers; null not 0; dates DD/MM/YYYY; NMI/MRIN lengths

@@ -526,7 +526,7 @@ export class ExcelGeneratorService {
             }
         };
 
-        // One-line savings highlight at top (lead with the number)
+        // One-line savings highlight at top (merged A–E for consistent width with section banners)
         if (data.savingsSummary) {
             const c = data.savingsSummary.conservative;
             const o = data.savingsSummary.optimistic;
@@ -534,8 +534,16 @@ export class ExcelGeneratorService {
             const oText = new Intl.NumberFormat('en-AU').format(Math.round(o));
             sheet.addRow([
                 `Estimated Annual Savings: $${cText} – $${oText} (conservative to optimistic)`,
+                '',
+                '',
+                '',
+                '',
             ]);
-            sheet.getRow(1).font = { bold: true, size: 12 };
+            const topIdx = sheet.rowCount;
+            sheet.mergeCells(`A${topIdx}:E${topIdx}`);
+            const top = sheet.getRow(topIdx).getCell(1);
+            top.font = { bold: true, size: 12 };
+            top.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
             sheet.addRow([]);
         }
 
@@ -582,9 +590,20 @@ export class ExcelGeneratorService {
 
         sheet.addRow([]);
 
-        // Summary (generic lines — Category + Option Type + Related Charges)
-        sheet.addRow(['Summary', 'Estimated Savings Per Year', '', '', '']);
-        applyBlueHeaderCells(sheet.rowCount, 2);
+        // Roll-up Summary: full-width banner (matches Benchmarking Summary), then merged A:B | C:E header row
+        sheet.addRow(['Roll-up Summary']);
+        applyBlueBannerRow(sheet.rowCount);
+
+        sheet.addRow(['Summary', '', 'Estimated Savings Per Year', '', '']);
+        const rollupHdrIdx = sheet.rowCount;
+        sheet.mergeCells(`A${rollupHdrIdx}:B${rollupHdrIdx}`);
+        sheet.mergeCells(`C${rollupHdrIdx}:E${rollupHdrIdx}`);
+        for (const col of [1, 3] as const) {
+            const cell = sheet.getRow(rollupHdrIdx).getCell(col);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+            cell.font = { color: { argb: 'FFFFFF' }, bold: true };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
 
         toShowBenchmark.forEach((g) => {
             const label = `${g.utilityType} ${g.optionKind} ${g.relatedCharges}`;
@@ -639,51 +658,11 @@ export class ExcelGeneratorService {
             }
         }
 
-        sheet.addRow([]);
-
-        // Critical issues – top 3 only
-        if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
-            const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 3;
-            const toShow = issues.slice(0, maxShow);
-
-            sheet.addRow([
-                'Critical Issues (Top Items – See Full Report for Detail)',
-                '',
-                '',
-                '',
-                '',
-            ]);
-            applyBlueBannerRow(sheet.rowCount);
-
-            sheet.addRow([]);
-            sheet.addRow(['Summary', 'Estimated Savings Per Year', '', '', '']);
-            applyBlueHeaderCells(sheet.rowCount, 2);
-
-            toShow.forEach((issue) => {
-                const summary = this.shortIssueSummary(issue.issue);
-                const row = sheet.addRow([summary, issue.savings > 0 ? issue.savings : null, '', '', '']);
-                row.getCell(1).alignment = { wrapText: true };
-                row.getCell(2).numFmt = '$#,##0.00';
-            });
-            if (issues.length > maxShow) {
-                sheet.addRow([`${issues.length - maxShow} more critical issue(s) in full report.`, '', '', '', '']);
-            }
-        }
-
         sheet.getColumn(1).width = 42;
         sheet.getColumn(2).width = 22;
         sheet.getColumn(3).width = 18;
         sheet.getColumn(4).width = 28;
         sheet.getColumn(5).width = 22;
-    }
-
-    /** One-line summary for client-facing sheets and email (Base 1 estimate). */
-    private shortIssueSummary(issue: string, maxLen = 80): string {
-        const trimmed = (issue || '').trim();
-        const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
-        if (firstSentence.length <= maxLen) return firstSentence;
-        return firstSentence.slice(0, maxLen).trim() + '…';
     }
 }
 
