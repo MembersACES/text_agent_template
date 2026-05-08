@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
-import { ReportData, ExtractedInvoice, getSavingsEligibleOpportunities } from '@/lib/types/ReportTypes';
+import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
 const HEADER_BG_COLOR = '366092'; // Blue
 const TOTALS_BG_COLOR = 'FFD966'; // Yellow
@@ -505,100 +506,176 @@ export class ExcelGeneratorService {
     }
 
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
+        const BENCHMARK_COLS = 5;
+
+        const applyBlueBannerRow = (rowIdx: number) => {
+            sheet.mergeCells(`A${rowIdx}:E${rowIdx}`);
+            const first = sheet.getRow(rowIdx).getCell(1);
+            first.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+            first.font = { color: { argb: 'FFFFFF' }, bold: true, size: 12 };
+            first.alignment = { horizontal: 'center', vertical: 'middle' };
+        };
+
+        const applyBlueHeaderCells = (rowIdx: number, colCount: number) => {
+            const r = sheet.getRow(rowIdx);
+            for (let c = 1; c <= colCount; c++) {
+                const cell = r.getCell(c);
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+                cell.font = { color: { argb: 'FFFFFF' }, bold: true };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+        };
+
         // One-line savings highlight at top (lead with the number)
         if (data.savingsSummary) {
             const c = data.savingsSummary.conservative;
             const o = data.savingsSummary.optimistic;
             const cText = new Intl.NumberFormat('en-AU').format(Math.round(c));
             const oText = new Intl.NumberFormat('en-AU').format(Math.round(o));
-            sheet.addRow([`Estimated annual savings: $${cText} – $${oText} (conservative to optimistic)`]);
+            sheet.addRow([
+                `Estimated Annual Savings: $${cText} – $${oText} (conservative to optimistic)`,
+            ]);
             sheet.getRow(1).font = { bold: true, size: 12 };
             sheet.addRow([]);
         }
 
-        // Benchmarking summary – grouped by (Category, Option Type), cap at top 8
-        sheet.addRow(['Benchmarking summary']);
-        sheet.getRow(sheet.rowCount).font = { bold: true, size: 14 };
-        sheet.addRow([]);
-        sheet.addRow(['Category', 'Option Type', 'Count', 'Est. total savings per year']);
-        const tableHeaderRow = sheet.getRow(sheet.rowCount);
-        tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-        tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
-        tableHeaderRow.alignment = { horizontal: 'center' };
-
-        const groupKey = (u: string, t: string) => `${u}|${t}`;
-        const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
-        getSavingsEligibleOpportunities(data.invoices, { hideWasteForMemberReport: true }).forEach(opp => {
-                const key = groupKey(opp.utilityType, opp.type);
-                if (!grouped.has(key)) {
-                    grouped.set(key, { category: opp.utilityType, type: opp.type, count: 0, savings: 0 });
-                }
-                const g = grouped.get(key)!;
-                g.count += 1;
-                g.savings += opp.savings;
+        const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, {
+            hideWasteForMemberReport: true,
         });
-        const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
         const maxBenchmarkingRows = 8;
-        const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
-        toShowGroups.forEach(g => {
-            sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? this.formatCurrency(g.savings) : '']);
+        const toShowBenchmark = benchmarkGroups.slice(0, maxBenchmarkingRows);
+
+        // Benchmarking Summary banner + table
+        sheet.addRow(['Benchmarking Summary']);
+        applyBlueBannerRow(sheet.rowCount);
+
+        sheet.addRow([
+            'Category',
+            'Option Type',
+            'Amount Of Invoices',
+            'Total Savings Per Year (Estimated)',
+            'Related Charges',
+        ]);
+        applyBlueHeaderCells(sheet.rowCount, BENCHMARK_COLS);
+
+        toShowBenchmark.forEach((g) => {
+            const savingsNum = g.totalSavings > 0 ? g.totalSavings : null;
+            const row = sheet.addRow([
+                g.utilityType,
+                g.optionKind,
+                g.invoiceCount,
+                savingsNum,
+                g.relatedCharges,
+            ]);
+            row.getCell(4).numFmt = '$#,##0.00';
         });
-        if (sortedGroups.length > maxBenchmarkingRows) {
-            sheet.addRow([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', '']);
+
+        if (benchmarkGroups.length > maxBenchmarkingRows) {
+            sheet.addRow([
+                `${benchmarkGroups.length - maxBenchmarkingRows} more opportunity types in full report.`,
+                '',
+                '',
+                '',
+                '',
+            ]);
         }
-        sheet.getColumn(4).numFmt = '$#,##0.00';
 
         sheet.addRow([]);
 
-        // Total Savings section
+        // Summary (generic lines — Category + Option Type + Related Charges)
+        sheet.addRow(['Summary', 'Estimated Savings Per Year', '', '', '']);
+        applyBlueHeaderCells(sheet.rowCount, 2);
+
+        toShowBenchmark.forEach((g) => {
+            const label = `${g.utilityType} ${g.optionKind} ${g.relatedCharges}`;
+            const savingsNum = g.totalSavings > 0 ? g.totalSavings : null;
+            const row = sheet.addRow([label, savingsNum, '', '', '']);
+            row.getCell(2).numFmt = '$#,##0.00';
+            row.getCell(1).alignment = { wrapText: true };
+        });
+
+        if (benchmarkGroups.length > maxBenchmarkingRows) {
+            sheet.addRow([
+                `${benchmarkGroups.length - maxBenchmarkingRows} more rows in full report.`,
+                '',
+                '',
+                '',
+                '',
+            ]);
+        }
+
+        sheet.addRow([]);
+
+        // Total Savings (Estimation)
         if (data.savingsSummary) {
-            sheet.addRow(['Total Savings (Estimate)']);
-            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
-            sheet.addRow([]);
+            sheet.addRow(['Total Savings (Estimation)', '', '', '', '']);
+            applyBlueBannerRow(sheet.rowCount);
+
             sheet.addRow([
-                'Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative),
-                'Our costs – conservative (1st month savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
+                'Potential Savings (Conservative)',
+                data.savingsSummary.conservative,
+                'Our Costs – Conservative (1st Month Savings)',
+                data.savingsSummary.conservative / 12,
+                '',
             ]);
             sheet.addRow([
-                'Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate),
-                'Our costs – moderate (1st month savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
+                'Potential Savings (Moderate)',
+                data.savingsSummary.moderate,
+                'Our Costs – Moderate (1st Month Savings)',
+                data.savingsSummary.moderate / 12,
+                '',
             ]);
             sheet.addRow([
-                'Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic),
-                'Our costs – optimistic (1st month savings)', this.formatCurrency(data.savingsSummary.optimistic / 12)
+                'Potential Savings (Optimistic)',
+                data.savingsSummary.optimistic,
+                'Our Costs – Optimistic (1st Month Savings)',
+                data.savingsSummary.optimistic / 12,
+                '',
             ]);
-            sheet.getColumn(2).numFmt = '$#,##0.00';
-            sheet.getColumn(4).numFmt = '$#,##0.00';
+            const lastRow = sheet.rowCount;
+            for (let r = lastRow - 2; r <= lastRow; r++) {
+                sheet.getRow(r).getCell(2).numFmt = '$#,##0.00';
+                sheet.getRow(r).getCell(4).numFmt = '$#,##0.00';
+            }
         }
 
         sheet.addRow([]);
 
-        // Critical issues – top 3 only, one-line summary
+        // Critical issues – top 3 only
         if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
             const issues = data.savingsSummary.criticalIssues;
             const maxShow = 3;
             const toShow = issues.slice(0, maxShow);
 
-            sheet.addRow(['Critical issues (top items – see full report for detail)']);
-            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
-            sheet.addRow([]);
-            sheet.addRow(['Summary', 'Est. savings per year']);
-            const critHeaderRow = sheet.getRow(sheet.rowCount);
-            critHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-            critHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
+            sheet.addRow([
+                'Critical Issues (Top Items – See Full Report for Detail)',
+                '',
+                '',
+                '',
+                '',
+            ]);
+            applyBlueBannerRow(sheet.rowCount);
 
-            toShow.forEach(issue => {
+            sheet.addRow([]);
+            sheet.addRow(['Summary', 'Estimated Savings Per Year', '', '', '']);
+            applyBlueHeaderCells(sheet.rowCount, 2);
+
+            toShow.forEach((issue) => {
                 const summary = this.shortIssueSummary(issue.issue);
-                const row = sheet.addRow([summary, this.formatCurrency(issue.savings)]);
+                const row = sheet.addRow([summary, issue.savings > 0 ? issue.savings : null, '', '', '']);
                 row.getCell(1).alignment = { wrapText: true };
+                row.getCell(2).numFmt = '$#,##0.00';
             });
             if (issues.length > maxShow) {
-                sheet.addRow([`${issues.length - maxShow} more critical issue(s) in full report.`, '']);
+                sheet.addRow([`${issues.length - maxShow} more critical issue(s) in full report.`, '', '', '', '']);
             }
-            sheet.getColumn(1).width = 50;
-            sheet.getColumn(2).width = 18;
-            sheet.getColumn(2).numFmt = '$#,##0.00';
         }
+
+        sheet.getColumn(1).width = 42;
+        sheet.getColumn(2).width = 22;
+        sheet.getColumn(3).width = 18;
+        sheet.getColumn(4).width = 28;
+        sheet.getColumn(5).width = 22;
     }
 
     /** One-line summary for client-facing sheets and email (Base 1 estimate). */

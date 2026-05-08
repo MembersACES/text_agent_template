@@ -106,16 +106,18 @@ export interface ReportData {
     generatedAt: string; // ISO timestamp
 }
 
-interface SavingsFilterOptions {
+export interface SavingsFilterOptions {
     hideWasteForMemberReport?: boolean;
 }
 
-interface InvoiceOpportunity {
+export interface InvoiceOpportunity {
     type: string;
     issue: string;
     savings: number;
     severity: 'high' | 'medium' | 'low';
     utilityType: ExtractedInvoice['utility_type'];
+    /** Invoice row index in the original `invoices` array (for distinct invoice counts per bucket). */
+    invoiceIndex: number;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -245,6 +247,7 @@ export function getSavingsEligibleOpportunities(
                 savings,
                 severity: opp.severity,
                 utilityType: inv.utility_type,
+                invoiceIndex: idx,
             });
         });
     });
