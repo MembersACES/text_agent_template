@@ -91,6 +91,7 @@ export interface BusinessInfo {
 export interface SavingsSummary {
     conservative: number;
     moderate: number;
+    /** @deprecated Kept for backwards compatibility; equals `moderate` (100% scenario). */
     optimistic: number;
     criticalIssues: Array<{
         issue: string;
@@ -177,16 +178,30 @@ function periodSpansMultipleCalendarMonths(start: string | null | undefined, end
  * - Usage dominates ex-GST total with negligible network: bundled SME-heavy.
  * - Demand dollar lines alone do not force C&I (some SME tariffs still show demand).
  */
-function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
+export interface ElectricityClassificationDebug {
+    classification: 'c_and_i' | 'sme';
+    cAndSignals: number;
+    smeSignals: number;
+    reasons: string[];
+}
+
+function evaluateElectricityCustomerType(inv: ExtractedInvoice): ElectricityClassificationDebug {
     const tariffRaw = inv.tariff_type || '';
     const tariff = normalizeText(tariffRaw);
+    const reasons: string[] = [];
 
     const hasExplicitCAndI =
         /c\s*&\s*i\b|commercial(?:\s+and\s+|\s*[/&]\s*)industrial|large\s*business\b/.test(tariff);
     const hasExplicitSME = /\bsme\b|small\s+business\b/.test(tariff);
 
-    if (hasExplicitCAndI) return 'c_and_i';
-    if (hasExplicitSME) return 'sme';
+    if (hasExplicitCAndI) {
+        reasons.push('explicit tariff keyword matched C&I');
+        return { classification: 'c_and_i', cAndSignals: 999, smeSignals: 0, reasons };
+    }
+    if (hasExplicitSME) {
+        reasons.push('explicit tariff keyword matched SME');
+        return { classification: 'sme', cAndSignals: 0, smeSignals: 999, reasons };
+    }
 
     const billingDays = inv.billing_days;
     const spanFromDates =
@@ -235,8 +250,10 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
     if (effectiveDays != null && Number.isFinite(effectiveDays)) {
         if (effectiveDays >= 55) {
             smeSignals += 4;
+            reasons.push(`+4 SME: long billing cycle (${effectiveDays} days >= 55)`);
         } else if (effectiveDays >= 45) {
             smeSignals += 2;
+            reasons.push(`+2 SME: extended billing cycle (${effectiveDays} days >= 45)`);
         }
     }
 
@@ -246,9 +263,11 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
 
     if (singleMonthBill === true && effectiveDays != null && effectiveDays >= 24 && effectiveDays <= 37) {
         cAndSignals += 1;
+        reasons.push('+1 C&I: period contained within single calendar month');
     }
     if (crossesMonths === true && effectiveDays != null && effectiveDays >= 32 && effectiveDays < 55) {
         smeSignals += 1;
+        reasons.push('+1 SME: period crosses months with non-monthly cycle');
     }
 
     // Unbundling / network-visible split
@@ -256,13 +275,17 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
         const netRatio = net / tex;
         if (net >= 120 || netRatio >= 0.05) {
             cAndSignals += 4;
+            reasons.push(`+4 C&I: significant network split (network=$${net.toFixed(2)}, ratio=${(netRatio * 100).toFixed(1)}%)`);
         } else if (net >= 40 || netRatio >= 0.025) {
             cAndSignals += 3;
+            reasons.push(`+3 C&I: moderate network split (network=$${net.toFixed(2)}, ratio=${(netRatio * 100).toFixed(1)}%)`);
         } else if (net >= 15 || netRatio >= 0.012) {
             cAndSignals += 2;
+            reasons.push(`+2 C&I: light network split (network=$${net.toFixed(2)}, ratio=${(netRatio * 100).toFixed(1)}%)`);
         }
     } else if (net != null && net >= 120) {
         cAndSignals += 3;
+        reasons.push(`+3 C&I: network charge present without total split (network=$${net.toFixed(2)})`);
     }
 
     const supplySeparate =
@@ -273,6 +296,8 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
 
     if (supplySeparate || envOrMarketSplit) {
         cAndSignals += 1;
+        if (supplySeparate) reasons.push('+1 C&I: separated supply charges present');
+        if (envOrMarketSplit) reasons.push('+1 C&I: tariff text includes environmental/market split terms');
     }
 
     // Bundled / single-stack usage charge dominating ex-GST
@@ -286,16 +311,20 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
         const usageRatio = usageCharges / tex;
         if (usageRatio >= 0.82) {
             smeSignals += 2;
+            reasons.push(`+2 SME: usage charges dominate total (ratio=${(usageRatio * 100).toFixed(1)}%)`);
         } else if (usageRatio >= 0.72) {
             smeSignals += 1;
+            reasons.push(`+1 SME: usage-heavy bundled profile (ratio=${(usageRatio * 100).toFixed(1)}%)`);
         }
     }
 
     if (/\bbundled\b|\bsingle\s+rate\b|\bflat\s+rate\b/.test(tariff)) {
         smeSignals += 1;
+        reasons.push('+1 SME: tariff text indicates bundled/single/flat rate');
     }
     if (/\bunbundl\b|network\s+fee|distribution\s+network/i.test(tariff)) {
         cAndSignals += 1;
+        reasons.push('+1 C&I: tariff text indicates unbundled/network-fee');
     }
 
     // Demand magnitude (charges alone deliberately ignored — SME can carry demand rows)
@@ -303,26 +332,33 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
     if (demandKw != null && Number.isFinite(demandKw)) {
         if (demandKw >= 150) {
             cAndSignals += 4;
+            reasons.push(`+4 C&I: demand magnitude ${demandKw.toFixed(2)} >= 150`);
         } else if (demandKw >= 100) {
             cAndSignals += 3;
+            reasons.push(`+3 C&I: demand magnitude ${demandKw.toFixed(2)} >= 100`);
         } else if (demandKw >= 50) {
             cAndSignals += 1;
+            reasons.push(`+1 C&I: demand magnitude ${demandKw.toFixed(2)} >= 50`);
         }
     }
 
     if (annualUsage != null && Number.isFinite(annualUsage)) {
         if (annualUsage >= 550_000) {
             cAndSignals += 4;
+            reasons.push(`+4 C&I: annual usage ${Math.round(annualUsage).toLocaleString('en-AU')} kWh >= 550k`);
         } else if (annualUsage >= 260_000) {
             cAndSignals += 3;
+            reasons.push(`+3 C&I: annual usage ${Math.round(annualUsage).toLocaleString('en-AU')} kWh >= 260k`);
         } else if (annualUsage >= 160_000) {
             cAndSignals += 2;
+            reasons.push(`+2 C&I: annual usage ${Math.round(annualUsage).toLocaleString('en-AU')} kWh >= 160k`);
         } else if (annualUsage >= 120_000) {
             cAndSignals += 1;
+            reasons.push(`+1 C&I: annual usage ${Math.round(annualUsage).toLocaleString('en-AU')} kWh >= 120k`);
         }
     }
 
-    const decide = (): 'c_and_i' | 'sme' => {
+    const decide = (): ElectricityClassificationDebug['classification'] => {
         const margin = 1;
         if (cAndSignals >= 5 && cAndSignals - smeSignals >= margin) return 'c_and_i';
         if (smeSignals >= 6 && smeSignals - cAndSignals >= margin) return 'sme';
@@ -331,7 +367,15 @@ function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sm
         return 'sme';
     };
 
-    return decide();
+    return { classification: decide(), cAndSignals, smeSignals, reasons };
+}
+
+function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
+    return evaluateElectricityCustomerType(inv).classification;
+}
+
+export function getElectricityClassificationDebug(inv: ExtractedInvoice): ElectricityClassificationDebug {
+    return evaluateElectricityCustomerType(inv);
 }
 
 function parseSavingsNumber(value: string | null | undefined): number | null {
@@ -449,8 +493,8 @@ export function calculateSavingsSummary(
     });
 
     return {
-        conservative: totalSavings * 0.7,
-        moderate: totalSavings * 0.85,
+        conservative: totalSavings * 0.8,
+        moderate: totalSavings,
         optimistic: totalSavings,
         criticalIssues,
     };

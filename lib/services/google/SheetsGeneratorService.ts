@@ -201,12 +201,11 @@ export class SheetsGeneratorService {
         ];
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        values.push(['Total annual cost (est.)', this.formatCurrency(totalCost)]);
+        values.push(['Total Annual Cost (Est.)', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             values.push(
-                ['Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative)],
-                ['Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate)],
-                ['Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic)]
+                ['Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative)],
+                ['Potential Savings (Expected)', this.formatCurrency(data.savingsSummary.moderate)]
             );
         }
 
@@ -705,12 +704,13 @@ export class SheetsGeneratorService {
         const pushRow = (cells: string[]) => rows.push(pad(cells));
 
         const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, { hideWasteForMemberReport: true });
-        const totalEstimated = data.savingsSummary?.optimistic ?? benchmarkGroups.reduce((sum, g) => sum + g.totalSavings, 0);
+        const totalEstimated = data.savingsSummary?.moderate ?? benchmarkGroups.reduce((sum, g) => sum + g.totalSavings, 0);
         const firstMonthFee = totalEstimated / 12;
 
         // Title bar + subtitle
         const titleIdx = rows.length;
         pushRow(['Base 1 Review — Savings Analysis', '', '', '', '']);
+        pushRow([]);
         const subtitleIdx = rows.length;
         pushRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
         pushRow([]);
@@ -724,16 +724,16 @@ export class SheetsGeneratorService {
 
         // Breakdown table
         const breakdownTitleIdx = rows.length;
-        pushRow(['Breakdown by category', '', '', '', '']);
+        pushRow(['Breakdown by Category', '', '', '', '']);
         const benchmarkHeaderIdx = rows.length;
-        pushRow(['Category', 'Option', 'Inv.', 'Charge type', 'Savings p.a']);
+        pushRow(['Category', 'Option', 'Inv.', 'Charge Type', 'Savings P.A.']);
 
         benchmarkGroups.forEach((g) => {
             pushRow([g.utilityType, g.optionKind, String(g.invoiceCount), g.relatedCharges, g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '']);
         });
 
         const estTotalRowIdx = rows.length;
-        pushRow(['Estimated savings', '', '', '', this.formatCurrency(totalEstimated)]);
+        pushRow(['Estimated Savings', '', '', '', this.formatCurrency(totalEstimated)]);
 
         await sheets.spreadsheets.values.update({
             spreadsheetId,
@@ -774,8 +774,8 @@ export class SheetsGeneratorService {
                 cell: {
                     userEnteredFormat: {
                         backgroundColor: HEADER_BG_COLOR,
-                        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 13 },
-                        horizontalAlignment: 'LEFT',
+                        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 14 },
+                        horizontalAlignment: 'CENTER',
                     },
                 },
                 fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
@@ -924,6 +924,41 @@ export class SheetsGeneratorService {
                     startIndex: 0,
                     endIndex: COLS,
                 },
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 },
+                properties: { pixelSize: 150 },
+                fields: 'pixelSize',
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 },
+                properties: { pixelSize: 140 },
+                fields: 'pixelSize',
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 },
+                properties: { pixelSize: 80 },
+                fields: 'pixelSize',
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 3, endIndex: 4 },
+                properties: { pixelSize: 165 },
+                fields: 'pixelSize',
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 4, endIndex: 5 },
+                properties: { pixelSize: 120 },
+                fields: 'pixelSize',
             },
         });
 

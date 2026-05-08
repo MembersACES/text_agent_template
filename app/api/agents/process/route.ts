@@ -79,7 +79,13 @@ import { documentFetcherService } from '@/lib/services/google/DocumentFetcherSer
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
 import { deterministicSavingsService } from '@/lib/services/report/DeterministicSavingsService';
-import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/types/ReportTypes';
+import {
+    ExtractedInvoice,
+    BusinessInfo,
+    ReportData,
+    calculateSavingsSummary,
+    getElectricityClassificationDebug,
+} from '@/lib/types/ReportTypes';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
 import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
@@ -388,6 +394,33 @@ async function processInvoicesWithChat(
 
     // Log detailed benchmarking information for debugging
     console.log(`[Agent Process API] Extracted ${extractedData.length} invoice(s)`);
+
+    const electricityWithClass = extractedData
+        .map((inv, index) => ({ index, inv, dbg: inv.utility_type === 'Electricity' ? getElectricityClassificationDebug(inv) : null }))
+        .filter((x) => x.dbg !== null) as Array<{
+            index: number;
+            inv: ExtractedInvoice;
+            dbg: ReturnType<typeof getElectricityClassificationDebug>;
+        }>;
+    const portfolioHasCAndI = electricityWithClass.some((x) => x.dbg.classification === 'c_and_i');
+    if (electricityWithClass.length > 0) {
+        console.log(`\n[Agent Process API] Electricity classification diagnostics:`);
+        console.log(`  - Portfolio has C&I electricity: ${portfolioHasCAndI}`);
+        electricityWithClass.forEach(({ index, inv, dbg }) => {
+            const excludedByPortfolioRule = portfolioHasCAndI && dbg.classification === 'sme';
+            console.log(
+                `  - Invoice ${index + 1} (${inv.invoice_number || 'N/A'} | NMI ${inv.nmi || 'N/A'}): ` +
+                `class=${dbg.classification.toUpperCase()} (C&I=${dbg.cAndSignals}, SME=${dbg.smeSignals}) ` +
+                `excludedByPortfolioRule=${excludedByPortfolioRule}`,
+            );
+            if (dbg.reasons.length > 0) {
+                dbg.reasons.forEach((r) => console.log(`      * ${r}`));
+            } else {
+                console.log(`      * no heuristic signals fired (default fallback)`);
+            }
+        });
+    }
+
     extractedData.forEach((invoice, index) => {
         console.log(`\n[Agent Process API] Invoice ${index + 1} Details:`);
         console.log(`  - Business: ${invoice.business_name || 'N/A'}`);
@@ -660,10 +693,9 @@ export async function POST(request: Request) {
         
         // Log savings summary calculation details
         console.log(`\n[Agent Process API] Savings Summary Calculation:`);
-        console.log(`  - Total Raw Savings: $${savingsSummary.optimistic.toFixed(2)}`);
-        console.log(`  - Conservative (70%): $${savingsSummary.conservative.toFixed(2)}`);
-        console.log(`  - Moderate (85%): $${savingsSummary.moderate.toFixed(2)}`);
-        console.log(`  - Optimistic (100%): $${savingsSummary.optimistic.toFixed(2)}`);
+        console.log(`  - Total Raw Savings (100%): $${savingsSummary.moderate.toFixed(2)}`);
+        console.log(`  - Conservative (80%): $${savingsSummary.conservative.toFixed(2)}`);
+        console.log(`  - Expected (100%): $${savingsSummary.moderate.toFixed(2)}`);
         console.log(`  - Critical Issues: ${savingsSummary.criticalIssues.length}`);
         savingsSummary.criticalIssues.forEach((issue, idx) => {
             console.log(`    ${idx + 1}. ${issue.issue}: $${issue.savings.toFixed(2)}/year (${issue.severity})`);

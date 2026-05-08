@@ -96,19 +96,15 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        sheet.addRow(['Total annual cost (est.)', this.formatCurrency(totalCost)]);
+        sheet.addRow(['Total Annual Cost (Est.)', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             sheet.addRow([
-                'Potential savings (conservative)', this.formatCurrency(data.savingsSummary.conservative),
-                'Our costs – conservative (1st month savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
+                'Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative),
+                'Our Costs – Conservative (1st Month Savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
             ]);
             sheet.addRow([
-                'Potential savings (moderate)', this.formatCurrency(data.savingsSummary.moderate),
-                'Our costs – moderate (1st month savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
-            ]);
-            sheet.addRow([
-                'Potential savings (optimistic)', this.formatCurrency(data.savingsSummary.optimistic),
-                'Our costs – optimistic (1st month savings)', this.formatCurrency(data.savingsSummary.optimistic / 12)
+                'Potential Savings (Expected)', this.formatCurrency(data.savingsSummary.moderate),
+                'Our Costs – Expected (1st Month Savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
             ]);
         }
         sheet.getColumn(1).width = 32;
@@ -521,7 +517,7 @@ export class ExcelGeneratorService {
         const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, {
             hideWasteForMemberReport: true,
         });
-        const totalEstimated = data.savingsSummary?.optimistic ?? benchmarkGroups.reduce((s, g) => s + g.totalSavings, 0);
+        const totalEstimated = data.savingsSummary?.moderate ?? benchmarkGroups.reduce((s, g) => s + g.totalSavings, 0);
         const firstMonthFee = totalEstimated / 12;
 
         // Top title bar
@@ -530,15 +526,16 @@ export class ExcelGeneratorService {
         sheet.mergeCells(`A${topTitleIdx}:E${topTitleIdx}`);
         const topTitle = sheet.getRow(topTitleIdx).getCell(1);
         topTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-        topTitle.font = { color: { argb: 'FFFFFF' }, bold: true, size: 13 };
-        topTitle.alignment = { horizontal: 'left', vertical: 'middle' };
+        topTitle.font = { color: { argb: 'FFFFFF' }, bold: true, size: 14 };
+        topTitle.alignment = { horizontal: 'center', vertical: 'middle' };
 
+        sheet.addRow([]);
         sheet.addRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
         const subtitleIdx = sheet.rowCount;
         sheet.mergeCells(`A${subtitleIdx}:E${subtitleIdx}`);
         const subtitle = sheet.getRow(subtitleIdx).getCell(1);
-        subtitle.font = { italic: true, size: 9, color: { argb: '4A5568' } };
-        subtitle.alignment = { horizontal: 'left', vertical: 'middle' };
+        subtitle.font = { italic: true, size: 10, color: { argb: '4A5568' } };
+        subtitle.alignment = { horizontal: 'center', vertical: 'middle' };
 
         sheet.addRow([]);
 
@@ -571,7 +568,7 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
 
         // Breakdown table
-        sheet.addRow(['Breakdown by category']);
+        sheet.addRow(['Breakdown by Category']);
         const breakdownTitleIdx = sheet.rowCount;
         sheet.mergeCells(`A${breakdownTitleIdx}:E${breakdownTitleIdx}`);
         sheet.getRow(breakdownTitleIdx).getCell(1).font = { bold: true, size: 11, color: { argb: '1A202C' } };
@@ -597,24 +594,16 @@ export class ExcelGeneratorService {
         estValue.numFmt = '$#,##0.00';
         estValue.alignment = { horizontal: 'right', vertical: 'middle' };
 
-        this.applyApproxColumnWidthsBase1Analysis(sheet, BENCHMARK_COLS);
+        this.applyCompactColumnWidthsBase1Analysis(sheet);
     }
 
-    /** Excel has no autofit API; widen columns from rendered cell text (capped). */
-    private applyApproxColumnWidthsBase1Analysis(sheet: ExcelJS.Worksheet, maxCols: number) {
-        const lengths = Array<number>(maxCols).fill(0);
-        sheet.eachRow((row) => {
-            row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-                if (colNumber > maxCols) return;
-                const t = (cell.text ?? '').replace(/\r?\n/g, ' ');
-                lengths[colNumber - 1] = Math.max(lengths[colNumber - 1], Math.min(t.length, 90));
-            });
-        });
-        for (let c = 1; c <= maxCols; c++) {
-            const base = lengths[c - 1] || 12;
-            const w = Math.min(65, Math.max(14, base * 1.12 + 3));
-            sheet.getColumn(c).width = w;
-        }
+    /** Fixed compact widths to keep Base 1 concise and consistent. */
+    private applyCompactColumnWidthsBase1Analysis(sheet: ExcelJS.Worksheet) {
+        sheet.getColumn(1).width = 23;
+        sheet.getColumn(2).width = 19;
+        sheet.getColumn(3).width = 8;
+        sheet.getColumn(4).width = 21;
+        sheet.getColumn(5).width = 13;
     }
 }
 

@@ -111,7 +111,7 @@ export class EmailGeneratorService {
                             <div style="background-color: #e3f2fd; border-left: 4px solid #366092; padding: 20px; margin-bottom: 24px;">
                                 <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #366092;">Estimated Annual Savings</h3>
                                 <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #333333;">
-                                    Based on our analysis, we estimate potential annual savings in the range of
+                                    Based on our analysis, we estimate potential annual savings in the range of (Conservative to Expected)
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.conservative)}</strong> to
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.moderate)}</strong>.
                                 </p>
