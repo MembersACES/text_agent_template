@@ -608,9 +608,15 @@ export class ExcelGeneratorService {
         toShowBenchmark.forEach((g) => {
             const label = `${g.utilityType} ${g.optionKind} ${g.relatedCharges}`;
             const savingsNum = g.totalSavings > 0 ? g.totalSavings : null;
-            const row = sheet.addRow([label, savingsNum, '', '', '']);
-            row.getCell(2).numFmt = '$#,##0.00';
-            row.getCell(1).alignment = { wrapText: true };
+            sheet.addRow([label, '', savingsNum, '', '']);
+            const rollupRowIdx = sheet.rowCount;
+            sheet.mergeCells(`A${rollupRowIdx}:B${rollupRowIdx}`);
+            sheet.mergeCells(`C${rollupRowIdx}:E${rollupRowIdx}`);
+            const labelCell = sheet.getRow(rollupRowIdx).getCell(1);
+            labelCell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            const moneyCell = sheet.getRow(rollupRowIdx).getCell(3);
+            moneyCell.alignment = { horizontal: 'right', vertical: 'middle', wrapText: true };
+            if (savingsNum != null) moneyCell.numFmt = '$#,##0.00';
         });
 
         if (benchmarkGroups.length > maxBenchmarkingRows) {
@@ -658,11 +664,24 @@ export class ExcelGeneratorService {
             }
         }
 
-        sheet.getColumn(1).width = 42;
-        sheet.getColumn(2).width = 22;
-        sheet.getColumn(3).width = 18;
-        sheet.getColumn(4).width = 28;
-        sheet.getColumn(5).width = 22;
+        this.applyApproxColumnWidthsBase1Analysis(sheet, BENCHMARK_COLS);
+    }
+
+    /** Excel has no autofit API; widen columns from rendered cell text (capped). */
+    private applyApproxColumnWidthsBase1Analysis(sheet: ExcelJS.Worksheet, maxCols: number) {
+        const lengths = Array<number>(maxCols).fill(0);
+        sheet.eachRow((row) => {
+            row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+                if (colNumber > maxCols) return;
+                const t = (cell.text ?? '').replace(/\r?\n/g, ' ');
+                lengths[colNumber - 1] = Math.max(lengths[colNumber - 1], Math.min(t.length, 90));
+            });
+        });
+        for (let c = 1; c <= maxCols; c++) {
+            const base = lengths[c - 1] || 12;
+            const w = Math.min(65, Math.max(14, base * 1.12 + 3));
+            sheet.getColumn(c).width = w;
+        }
     }
 }
 

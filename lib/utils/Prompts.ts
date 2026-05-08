@@ -33,7 +33,8 @@ CRITICAL INSTRUCTIONS:
    - **daily_supply_charge** in **$/day**: use the retailer line that quotes **daily** service/supply (e.g. “Daily Charge” with **$/day**). **Never** set daily_supply_charge to (unrelated period $ total) ÷ billing_days unless the invoice explicitly defines that as the daily supply component.
    - **Do not create any low_hanging_fruit daily supply entries** (daily charge checks are disabled in Base 1).
    - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
-   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic electricity rules use these strings.
+   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic classification and rules use these strings.
+   - **C&I vs SME (automation):** populate \`billing_period_start\`, \`billing_period_end\`, \`usage_charges_ex_gst\`, \`network_charges_ex_gst\`, \`supply_charges_ex_gst\`, \`total_charges_ex_gst\` when printed — long cycles and network splits drive server-side classification alongside \`tariff_type\` and consumption.
    - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. **Bundled vs unbundled** selects the gas savings formula; annual usage only gates the bundled path (≥ **1,000 GJ/year**).
    - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
    - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
@@ -41,7 +42,7 @@ CRITICAL INSTRUCTIONS:
    - If an invoice line/service mentions **grease trap**, classify it under **Waste** (not Oil)
    - For oil: populate oil_services array with ALL line items
    - When multiple invoices share the same NMI, savings are calculated server-side from the most recent invoice while all invoices remain in output data.
-   - If a site/NMI group contains both SME and C&I invoices, SME invoices are excluded from savings but still retained in data output.
+   - When **any** electricity invoice in the batch classifies as C&I, **all** SME electricity invoices are excluded from savings (still retained in data output).
    - **Electricity and Gas low_hanging_fruit:** always use **[]** — Base 1 computes findings deterministically from extracted fields (do not author metering/TOU/demand/gas rate rows in JSON).
 
 3. **CLASSIFICATION** (follow the guide documents):

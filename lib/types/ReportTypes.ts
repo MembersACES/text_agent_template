@@ -136,40 +136,210 @@ function parseAuDateToEpoch(value: string | null | undefined): number {
     return Number.isFinite(ts) ? ts : Number.NEGATIVE_INFINITY;
 }
 
+/** Calendar span in whole days inclusive (Aus DD/MM/YYYY). */
+function billingSpanDaysInclusive(start: string | null | undefined, end: string | null | undefined): number | null {
+    const ta = parseAuDateToEpoch(start);
+    const tb = parseAuDateToEpoch(end);
+    if (!Number.isFinite(ta) || !Number.isFinite(tb) || ta === Number.NEGATIVE_INFINITY || tb === Number.NEGATIVE_INFINITY) {
+        return null;
+    }
+    const diff = Math.abs(tb - ta) / (24 * 60 * 60 * 1000);
+    return Math.round(diff) + 1;
+}
+
+/** True when start and end fall in the same calendar month/year (classic “whole month” bill). */
+function periodWithinSingleCalendarMonth(start: string | null | undefined, end: string | null | undefined): boolean | null {
+    const ms = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((start ?? '').trim());
+    const me = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((end ?? '').trim());
+    if (!ms || !me) return null;
+    return ms[3] === me[3] && ms[2] === me[2];
+}
+
+function periodSpansMultipleCalendarMonths(start: string | null | undefined, end: string | null | undefined): boolean | null {
+    const ms = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((start ?? '').trim());
+    const me = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((end ?? '').trim());
+    if (!ms || !me) return null;
+    const y = Number(ms[3]);
+    const m0 = Number(ms[2]);
+    const m1 = Number(me[2]);
+    const ye = Number(me[3]);
+    if (ye !== y) return true;
+    return m1 !== m0;
+}
+
+/**
+ * C&I vs SME for routing savings exclusions (paired with portfolio rule).
+ *
+ * Signals (no single metric is authoritative):
+ * - Tariff wording (explicit SME / C&I).
+ * - Long billed cycles (~quarterly): SME-heavy (bundled SME rollover).
+ * - Separated network / unbundling (network_charges_ex_gst): C&I-heavy.
+ * - Usage dominates ex-GST total with negligible network: bundled SME-heavy.
+ * - Demand dollar lines alone do not force C&I (some SME tariffs still show demand).
+ */
+function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
+    const tariffRaw = inv.tariff_type || '';
+    const tariff = normalizeText(tariffRaw);
+
+    const hasExplicitCAndI =
+        /c\s*&\s*i\b|commercial(?:\s+and\s+|\s*[/&]\s*)industrial|large\s*business\b/.test(tariff);
+    const hasExplicitSME = /\bsme\b|small\s+business\b/.test(tariff);
+
+    if (hasExplicitCAndI) return 'c_and_i';
+    if (hasExplicitSME) return 'sme';
+
+    const billingDays = inv.billing_days;
+    const spanFromDates =
+        billingSpanDaysInclusive(inv.billing_period_start, inv.billing_period_end) ?? billingDays ?? null;
+
+    const effectiveDays =
+        billingDays != null &&
+        billingDays > 0 &&
+        spanFromDates != null &&
+        spanFromDates > 0 &&
+        Math.abs(billingDays - spanFromDates) > 5
+            ? spanFromDates
+            : billingDays ?? spanFromDates;
+
+    const usageKwh = inv.total_usage_kwh ?? null;
+    const annualUsage =
+        usageKwh != null && effectiveDays != null && effectiveDays > 0
+            ? (usageKwh / effectiveDays) * 365
+            : null;
+
+    const netRaw = inv.network_charges_ex_gst;
+    const useRaw = inv.usage_charges_ex_gst;
+    const supplyRaw = inv.supply_charges_ex_gst;
+    const tex = inv.total_charges_ex_gst;
+
+    let net =
+        netRaw != null && Number.isFinite(netRaw)
+            ? netRaw
+            : null;
+    if (net !== null && net < 0) net = Math.abs(net);
+    let usageCharges =
+        useRaw != null && Number.isFinite(useRaw)
+            ? useRaw
+            : null;
+    if (usageCharges !== null && usageCharges < 0) usageCharges = Math.abs(usageCharges);
+    let supplyCharges =
+        supplyRaw != null && Number.isFinite(supplyRaw)
+            ? supplyRaw
+            : null;
+    if (supplyCharges !== null && supplyCharges < 0) supplyCharges = Math.abs(supplyCharges);
+
+    let smeSignals = 0;
+    let cAndSignals = 0;
+
+    // Long-cycle / rollover bills (typically SME-style bundled aggregates)
+    if (effectiveDays != null && Number.isFinite(effectiveDays)) {
+        if (effectiveDays >= 55) {
+            smeSignals += 4;
+        } else if (effectiveDays >= 45) {
+            smeSignals += 2;
+        }
+    }
+
+    // Does the printed period resemble a tidy single calendar month slab?
+    const singleMonthBill = periodWithinSingleCalendarMonth(inv.billing_period_start, inv.billing_period_end);
+    const crossesMonths = periodSpansMultipleCalendarMonths(inv.billing_period_start, inv.billing_period_end);
+
+    if (singleMonthBill === true && effectiveDays != null && effectiveDays >= 24 && effectiveDays <= 37) {
+        cAndSignals += 1;
+    }
+    if (crossesMonths === true && effectiveDays != null && effectiveDays >= 32 && effectiveDays < 55) {
+        smeSignals += 1;
+    }
+
+    // Unbundling / network-visible split
+    if (tex != null && tex > 0 && net != null && net > 0) {
+        const netRatio = net / tex;
+        if (net >= 120 || netRatio >= 0.05) {
+            cAndSignals += 4;
+        } else if (net >= 40 || netRatio >= 0.025) {
+            cAndSignals += 3;
+        } else if (net >= 15 || netRatio >= 0.012) {
+            cAndSignals += 2;
+        }
+    } else if (net != null && net >= 120) {
+        cAndSignals += 3;
+    }
+
+    const supplySeparate =
+        supplyCharges != null && supplyCharges > 15 && tex != null && tex > 0 && supplyCharges / tex >= 0.02;
+
+    const envOrMarketSplit =
+        /environmental|aemo|eec|ess|lrec|stc|eec charge|aec|greens?power|climate/i.test(tariffRaw);
+
+    if (supplySeparate || envOrMarketSplit) {
+        cAndSignals += 1;
+    }
+
+    // Bundled / single-stack usage charge dominating ex-GST
+    if (
+        tex != null &&
+        tex > 0 &&
+        usageCharges != null &&
+        usageCharges > 0 &&
+        (net == null || net <= 25)
+    ) {
+        const usageRatio = usageCharges / tex;
+        if (usageRatio >= 0.82) {
+            smeSignals += 2;
+        } else if (usageRatio >= 0.72) {
+            smeSignals += 1;
+        }
+    }
+
+    if (/\bbundled\b|\bsingle\s+rate\b|\bflat\s+rate\b/.test(tariff)) {
+        smeSignals += 1;
+    }
+    if (/\bunbundl\b|network\s+fee|distribution\s+network/i.test(tariff)) {
+        cAndSignals += 1;
+    }
+
+    // Demand magnitude (charges alone deliberately ignored — SME can carry demand rows)
+    const demandKw = inv.demand_kw ?? null;
+    if (demandKw != null && Number.isFinite(demandKw)) {
+        if (demandKw >= 150) {
+            cAndSignals += 4;
+        } else if (demandKw >= 100) {
+            cAndSignals += 3;
+        } else if (demandKw >= 50) {
+            cAndSignals += 1;
+        }
+    }
+
+    if (annualUsage != null && Number.isFinite(annualUsage)) {
+        if (annualUsage >= 550_000) {
+            cAndSignals += 4;
+        } else if (annualUsage >= 260_000) {
+            cAndSignals += 3;
+        } else if (annualUsage >= 160_000) {
+            cAndSignals += 2;
+        } else if (annualUsage >= 120_000) {
+            cAndSignals += 1;
+        }
+    }
+
+    const decide = (): 'c_and_i' | 'sme' => {
+        const margin = 1;
+        if (cAndSignals >= 5 && cAndSignals - smeSignals >= margin) return 'c_and_i';
+        if (smeSignals >= 6 && smeSignals - cAndSignals >= margin) return 'sme';
+        if (smeSignals >= 5 && smeSignals > cAndSignals) return 'sme';
+        if (cAndSignals > smeSignals) return 'c_and_i';
+        return 'sme';
+    };
+
+    return decide();
+}
+
 function parseSavingsNumber(value: string | null | undefined): number | null {
     if (!value) return null;
     const match = value.match(/[\d,]+\.?\d*/);
     if (!match) return null;
     const parsed = Number.parseFloat(match[0].replace(/,/g, ''));
     return Number.isFinite(parsed) ? parsed : null;
-}
-
-function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
-    const tariff = normalizeText(inv.tariff_type);
-    if (/c\s*&\s*i|commercial.*industrial|large\s*business/.test(tariff)) {
-        return 'c_and_i';
-    }
-    const demandCharges = inv.demand_charges ?? null;
-    if (demandCharges !== null && Number.isFinite(demandCharges) && demandCharges > 0) {
-        return 'c_and_i';
-    }
-    const demandKw = inv.demand_kw ?? null;
-    if (demandKw !== null && Number.isFinite(demandKw) && demandKw >= 100) {
-        return 'c_and_i';
-    }
-    const usage = inv.total_usage_kwh ?? null;
-    const days = inv.billing_days ?? null;
-    if (
-        usage !== null &&
-        days !== null &&
-        Number.isFinite(usage) &&
-        Number.isFinite(days) &&
-        days > 0
-    ) {
-        const annualUsage = (usage / days) * 365;
-        if (annualUsage >= 160_000) return 'c_and_i';
-    }
-    return 'sme';
 }
 
 function electricityGroupingKey(inv: ExtractedInvoice): string {
@@ -184,6 +354,11 @@ function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]): Set<
     const eligible = new Set<number>();
     const electricityGroups = new Map<string, number[]>();
 
+    /** If any electricity invoice in this run is C&I, drop all SME electricity from savings (report-wide, not per NMI only). */
+    const portfolioHasCAndIElectricity = invoices.some(
+        (inv) => inv.utility_type === 'Electricity' && classifyElectricityCustomerType(inv) === 'c_and_i',
+    );
+
     invoices.forEach((inv, index) => {
         if (inv.utility_type !== 'Electricity') {
             eligible.add(index);
@@ -196,15 +371,12 @@ function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]): Set<
     });
 
     electricityGroups.forEach((indices) => {
-        const hasCAndI = indices.some((idx) => classifyElectricityCustomerType(invoices[idx]) === 'c_and_i');
-        const mixedGroup = hasCAndI && indices.some((idx) => classifyElectricityCustomerType(invoices[idx]) === 'sme');
-
         const latestByNmi = new Map<string, number>();
         const withoutNmi: number[] = [];
 
         indices.forEach((idx) => {
             const inv = invoices[idx];
-            if (mixedGroup && classifyElectricityCustomerType(inv) === 'sme') return;
+            if (portfolioHasCAndIElectricity && classifyElectricityCustomerType(inv) === 'sme') return;
             const nmi = normalizeText(inv.nmi);
             if (!nmi) {
                 withoutNmi.push(idx);

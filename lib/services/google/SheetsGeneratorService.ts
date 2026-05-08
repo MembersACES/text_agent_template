@@ -762,17 +762,21 @@ export class SheetsGeneratorService {
         const summaryDualHeaderIdx = rows.length;
         pushRow(['Summary', '', 'Estimated Savings Per Year', '', '']);
 
+        const rollupBodyRowIndexes: number[] = [];
         toShowBench.forEach((g) => {
+            rollupBodyRowIndexes.push(rows.length);
             pushRow([
                 `${g.utilityType} ${g.optionKind} ${g.relatedCharges}`,
-                g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '',
                 '',
+                g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '',
                 '',
                 '',
             ]);
         });
 
+        let rollupTruncRowIdx = -1;
         if (benchmarkGroups.length > maxBench) {
+            rollupTruncRowIdx = rows.length;
             pushRow([`${benchmarkGroups.length - maxBench} more rows in full report.`, '', '', '', '']);
         }
 
@@ -973,6 +977,120 @@ export class SheetsGeneratorService {
                 },
                 cell: { userEnteredFormat: blueHeaderFormat },
                 fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+
+        const rollupBodyWrap = {
+            textFormat: { bold: false },
+            horizontalAlignment: 'LEFT' as const,
+            verticalAlignment: 'MIDDLE' as const,
+            wrapStrategy: 'WRAP',
+        };
+        const rollupMoneyWrap = {
+            textFormat: { bold: false },
+            horizontalAlignment: 'RIGHT' as const,
+            verticalAlignment: 'MIDDLE' as const,
+            wrapStrategy: 'WRAP',
+        };
+
+        rollupBodyRowIndexes.forEach((rowIdx) => {
+            requests.push({
+                mergeCells: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rowIdx,
+                        endRowIndex: rowIdx + 1,
+                        startColumnIndex: 0,
+                        endColumnIndex: 2,
+                    },
+                    mergeType: 'MERGE_ALL',
+                },
+            });
+            requests.push({
+                mergeCells: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rowIdx,
+                        endRowIndex: rowIdx + 1,
+                        startColumnIndex: 2,
+                        endColumnIndex: COLS,
+                    },
+                    mergeType: 'MERGE_ALL',
+                },
+            });
+            requests.push({
+                repeatCell: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rowIdx,
+                        endRowIndex: rowIdx + 1,
+                        startColumnIndex: 0,
+                        endColumnIndex: 2,
+                    },
+                    cell: { userEnteredFormat: rollupBodyWrap },
+                    fields:
+                        'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+                },
+            });
+            requests.push({
+                repeatCell: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rowIdx,
+                        endRowIndex: rowIdx + 1,
+                        startColumnIndex: 2,
+                        endColumnIndex: COLS,
+                    },
+                    cell: { userEnteredFormat: rollupMoneyWrap },
+                    fields:
+                        'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+                },
+            });
+        });
+
+        if (rollupTruncRowIdx >= 0) {
+            requests.push({
+                mergeCells: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rollupTruncRowIdx,
+                        endRowIndex: rollupTruncRowIdx + 1,
+                        startColumnIndex: 0,
+                        endColumnIndex: COLS,
+                    },
+                    mergeType: 'MERGE_ALL',
+                },
+            });
+            requests.push({
+                repeatCell: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rollupTruncRowIdx,
+                        endRowIndex: rollupTruncRowIdx + 1,
+                        startColumnIndex: 0,
+                        endColumnIndex: COLS,
+                    },
+                    cell: {
+                        userEnteredFormat: {
+                            textFormat: { italic: true, fontSize: 10 },
+                            horizontalAlignment: 'LEFT',
+                            wrapStrategy: 'WRAP',
+                        },
+                    },
+                    fields:
+                        'userEnteredFormat(textFormat,horizontalAlignment,wrapStrategy)',
+                },
+            });
+        }
+
+        requests.push({
+            autoResizeDimensions: {
+                dimensions: {
+                    sheetId,
+                    dimension: 'COLUMNS',
+                    startIndex: 0,
+                    endIndex: COLS,
+                },
             },
         });
 

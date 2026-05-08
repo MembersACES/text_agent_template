@@ -61,7 +61,7 @@ Step 3: EXTRACT ALL FIELDS
 
 Server-side savings behavior you must align with:
 - If multiple electricity invoices share one NMI, savings use the most recent invoice only (all invoices still appear in data tabs)
-- If a site/NMI group contains both SME and C&I electricity invoices, SME invoices are excluded from savings (but still shown in data tabs)
+- If **any** electricity invoice in the batch is classified as **C&I**, **every** SME electricity invoice is excluded from savings (still shown in data tabs). Server-side SME vs C&I uses tariff labels, **billing period length** / dates, **network vs usage cost split** (`network_charges_ex_gst` vs `usage_charges_ex_gst`), scale (kWh, max demand kW) — **demand dollars alone do not force C&I**.
 - Gas (server-side, from extracted fields):
   - **Unbundled** (\`tariff_type\` contains \"unbundled\"): compare commodity **$/GJ** (\`gas_rate_per_gj\`, or invoice ex-GST ÷ period GJ if needed) directly to **17.8 $/GJ**
   - **Bundled** (no \"unbundled\" in \`tariff_type\`): if annualized usage is **under 1,000 GJ/year**, no automated gas savings row; if **at/above 1,000 GJ/year**, compare **(invoice_ex_gst / usage_gj) × 75%** to **17.8 $/GJ**
