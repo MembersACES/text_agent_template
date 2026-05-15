@@ -128,11 +128,21 @@ export class EmailGeneratorService {
                         </td>
                     </tr>
                     <tr>
+                        <td style="padding: 24px 40px 32px 40px; border-top: 1px solid #e8e8e8;">
+                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">Kind regards,</p>
+                            <p style="margin: 0 0 4px 0; font-size: 16px; line-height: 1.5; color: #333333;"><strong>Amelia Williams</strong></p>
+                            <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.5; color: #444444;">Customer Success Manager (CSM) - Implementation: Connects onboarding directly to future success.</p>
+                            <p style="margin: 0 0 2px 0; font-size: 14px; line-height: 1.5; color: #333333;"><strong>Carbon Zero Australasia</strong></p>
+                            <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.5; color: #444444;">Australian Circular Economy Solutions Division</p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">Direct: Ph: 1300 938 638</p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">Email: <a href="mailto:business@acesolutions.com.au" style="color: #366092; text-decoration: none;">business@acesolutions.com.au</a></p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">470 St Kilda Road, Melbourne VIC 3004</p>
+                            <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #333333;">Ph: 1300 849 908 | Website: <a href="https://acesolutions.com.au" style="color: #366092; text-decoration: none;">acesolutions.com.au</a></p>
+                        </td>
+                    </tr>
+                    <tr>
                         <td style="background-color: #f5f5f5; padding: 20px 40px; text-align: center; border-top: 1px solid #e0e0e0;">
-                            <p style="margin: 0 0 8px 0; font-size: 12px; color: #666666;">Report generated: ${formatDate(generatedAt)}</p>
-                            <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #333333;">Australian Circular Economy Solution</p>
-                            <p style="margin: 0 0 4px 0; font-size: 12px; color: #666666;">470 St Kilda Road, Melbourne VIC 3004</p>
-                            <p style="margin: 0; font-size: 12px; color: #666666;">Ph: 1300 938 638 | Website: <a href="https://acesolutions.com.au" style="color: #366092; text-decoration: none;">acesolutions.com.au</a></p>
+                            <p style="margin: 0; font-size: 12px; color: #666666;">Report generated: ${formatDate(generatedAt)}</p>
                         </td>
                     </tr>
                 </table>
