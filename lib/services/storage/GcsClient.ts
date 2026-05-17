@@ -1,8 +1,27 @@
 import { Storage } from '@google-cloud/storage';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
-
 const logger = getLogger('GcsClient');
+
+/** Legacy: playbook was once merged into global prompt in GCS. Strip so editors stay clean. */
+const LEGACY_PLAYBOOK_HEADER = 'HONEST TO GOODNESS — SUPPORT PLAYBOOK (stakeholder rules)';
+const LEGACY_PLAYBOOK_SEP = '\n\n---\n\n';
+
+function stripLegacyMergedPlaybookFromGlobal(text: string): string {
+    const t = text.trimEnd();
+    const idx = t.indexOf(LEGACY_PLAYBOOK_HEADER);
+    if (idx === -1) {
+        return t.trim();
+    }
+    let cut = idx;
+    if (
+        idx >= LEGACY_PLAYBOOK_SEP.length
+        && t.slice(idx - LEGACY_PLAYBOOK_SEP.length, idx) === LEGACY_PLAYBOOK_SEP
+    ) {
+        cut = idx - LEGACY_PLAYBOOK_SEP.length;
+    }
+    return t.slice(0, cut).trimEnd();
+}
 
 const SETTINGS_FILENAME = 'settings.json';
 const AGENTS_DIR = 'agents';
@@ -61,7 +80,7 @@ const DEFAULT_GLOBAL_SYSTEM_PROMPT = `GLOBAL RULES FOR ALL AGENTS:
 4. **Uncertainty Handling**:
    - If you don't know something or the data is incomplete, clearly state that
    - Never fabricate information
-   - When a tool returns successful content, use it to answer directly instead of saying information was not found
+   - When a tool returns successful content, use it to answer directly instead of saying information was not found — unless the agent prompt requires asking retail vs wholesale before listing payment methods
 
 5. **Professional Tone**:
    - Be friendly, supportive, and professional
@@ -242,7 +261,9 @@ export class GcsClient {
     }
 
     async getSystemSettings(): Promise<SystemSettings> {
-        const defaultData: SystemSettings = { globalSystemPrompt: DEFAULT_GLOBAL_SYSTEM_PROMPT };
+        const defaultData: SystemSettings = {
+            globalSystemPrompt: DEFAULT_GLOBAL_SYSTEM_PROMPT,
+        };
 
         if (!this.bucketName) {
             logger.warn('GCS_BUCKET_NAME not configured, using default system settings.');
@@ -261,21 +282,48 @@ export class GcsClient {
 
             const [content] = await file.download();
             const rawData = JSON.parse(content.toString('utf-8'));
-            return { globalSystemPrompt: rawData.globalSystemPrompt || DEFAULT_GLOBAL_SYSTEM_PROMPT };
+            const rawPrompt = typeof rawData.globalSystemPrompt === 'string'
+                ? rawData.globalSystemPrompt
+                : DEFAULT_GLOBAL_SYSTEM_PROMPT;
+            const basePrompt = stripLegacyMergedPlaybookFromGlobal(rawPrompt);
+            return { globalSystemPrompt: basePrompt };
         } catch (error) {
             logger.error(`Error fetching system settings from GCS: ${error}`);
             return defaultData;
         }
     }
 
+    /**
+     * Global system prompt plus this agent's system prompt (same order as live chat, before KB tool overrides).
+     */
+    async buildGlobalAndAgentPrompt(agentId?: string): Promise<string> {
+        const [sys, agentPrompt] = await Promise.all([
+            this.getSystemSettings(),
+            this.getPromptTemplate(agentId),
+        ]);
+        const globalBase = stripLegacyMergedPlaybookFromGlobal(sys.globalSystemPrompt.trim());
+        return `${globalBase}\n\n---\n\n${agentPrompt}`;
+    }
+
     async saveSystemSettings(data: SystemSettings): Promise<void> {
         if (!this.bucketName) throw new Error('GCS_BUCKET_NAME not configured');
 
+        const basePrompt = stripLegacyMergedPlaybookFromGlobal(data.globalSystemPrompt.trim());
+
         const file = this.storage.bucket(this.bucketName).file(SYSTEM_SETTINGS_FILENAME);
-        await file.save(JSON.stringify(data, null, 2), {
-            contentType: 'application/json',
-            metadata: { cacheControl: 'no-cache' },
-        });
+        await file.save(
+            JSON.stringify(
+                {
+                    globalSystemPrompt: basePrompt,
+                },
+                null,
+                2,
+            ),
+            {
+                contentType: 'application/json',
+                metadata: { cacheControl: 'no-cache' },
+            },
+        );
     }
 }
 

@@ -26,7 +26,7 @@ export class ZohoAuthService {
         this.clientId = settings.zohoDesk.clientId;
         this.clientSecret = settings.zohoDesk.clientSecret;
         this.refreshToken = settings.zohoDesk.refreshToken;
-        this.tokenUrl = `https://accounts.zoho.${settings.zohoDesk.datacenter}/oauth/v2/token`;
+        this.tokenUrl = `https://${settings.zohoDesk.accountsHost}/oauth/v2/token`;
     }
 
     /**
@@ -45,6 +45,10 @@ export class ZohoAuthService {
             client_secret: this.clientSecret,
             refresh_token: this.refreshToken,
         });
+        const redirectUri = settings.zohoDesk.oauthRedirectUri;
+        if (redirectUri) {
+            params.set('redirect_uri', redirectUri);
+        }
 
         const response = await fetch(this.tokenUrl, {
             method: 'POST',
@@ -58,11 +62,20 @@ export class ZohoAuthService {
             throw new Error(`Zoho OAuth token refresh failed: ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = (await response.json()) as {
+            access_token?: string;
+            error?: string;
+            expires_in?: number;
+        };
 
-        if (!data.access_token) {
-            logger.error('Token response missing access_token field');
-            throw new Error('Zoho OAuth response missing access_token');
+        if (data.error || !data.access_token) {
+            const detail = JSON.stringify(data);
+            logger.error(`Zoho OAuth token response error: ${detail}`);
+            throw new Error(
+                data.error === 'invalid_code'
+                    ? 'Zoho OAuth invalid_code — check ZOHO_REFRESH_TOKEN (must be refresh_token from token JSON) and ZOHO_REDIRECT_URI for web clients'
+                    : `Zoho OAuth response missing access_token: ${detail}`,
+            );
         }
 
         this.cachedAccessToken = data.access_token as string;

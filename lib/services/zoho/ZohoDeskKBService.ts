@@ -38,8 +38,7 @@ export class ZohoDeskKBService {
 
     constructor() {
         this.orgId = settings.zohoDesk.orgId;
-        const dc = settings.zohoDesk.datacenter;
-        this.baseUrl = `https://desk.zoho.${dc}/api/v1`;
+        this.baseUrl = `https://${settings.zohoDesk.deskApiHost}/api/v1`;
     }
 
     // -------------------------------------------------------------------------

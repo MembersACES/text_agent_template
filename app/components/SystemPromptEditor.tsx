@@ -16,11 +16,9 @@ export default function SystemPromptEditor() {
         try {
             const res = await fetch('/api/system-settings');
             const data = await res.json();
-            if (data.globalSystemPrompt) {
+            if (typeof data.globalSystemPrompt === 'string') {
                 setGlobalSystemPrompt(data.globalSystemPrompt);
             }
-            // Note: If no saved settings exist, the API returns the default from code
-            // This ensures the editor always shows something editable
         } catch (error) {
             console.error('Failed to load system settings', error);
             setMessage({ type: 'error', text: 'Failed to load system settings' });
@@ -64,34 +62,31 @@ export default function SystemPromptEditor() {
 
     return (
         <div className="flex w-full flex-col gap-4">
-            {/* Header with Save button */}
             <div className="mb-1 flex items-center justify-between">
                 <div>
                     <h3 className="text-[15px] font-semibold tracking-tight text-gray-900">Global system prompt</h3>
                     <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
-                        These rules apply to all agents. Agent-specific prompts are added below this.
+                        These rules apply to all agents. Each agent&apos;s own instructions are configured on that
+                        agent&apos;s page.
                     </p>
                     <p className="mt-1 text-[11px] italic text-gray-400">
-                        Note: If no saved settings exist, the default from code is shown. Click Save to persist your changes.
+                        If no saved settings exist, the default from code is shown. Click Save to persist your changes.
                     </p>
                 </div>
                 <div className="flex items-center gap-4">
                     {message && (
-                        <span className={`text-[13px] font-medium ${message.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                        <span
+                            className={`text-[13px] font-medium ${message.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}
+                        >
                             {message.text}
                         </span>
                     )}
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="btn-primary"
-                    >
+                    <button onClick={handleSave} disabled={saving} className="btn-primary">
                         {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
             </div>
 
-            {/* Editor */}
             <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white">
                 <textarea
                     value={globalSystemPrompt}
@@ -104,4 +99,3 @@ export default function SystemPromptEditor() {
         </div>
     );
 }
-

@@ -8,33 +8,40 @@
  */
 
 import { NextResponse } from 'next/server';
+import { chatMessageTrace } from '@/lib/config/chatMessageTrace';
+import { getLogger } from '@/lib/config/logger';
 import { GeminiChatService } from '@/lib/services/chat/GeminiChatService';
 
+const logger = getLogger('ChatAPI');
+
 export async function POST(request: Request) {
+    const body = await request.json();
+    const { message, conversationHistory, useKnowledgeBase, agentId, uploadedFiles } = body;
+
+    if (!message) {
+        return NextResponse.json({ error: 'Message is required' }, { status: 400 });
+    }
+
     try {
-        const { message, conversationHistory, useKnowledgeBase, agentId, uploadedFiles } =
-            await request.json();
-
-        const chatService = new GeminiChatService();
-
-        if (!message) {
-            return NextResponse.json({ error: 'Message is required' }, { status: 400 });
-        }
-
-        const result = await chatService.chat({
-            message,
-            conversationHistory,
-            useKnowledgeBase,
-            agentId,
-            uploadedFiles,
-        });
+        const result = await chatMessageTrace.run(
+            { message, conversationHistory, useKnowledgeBase, agentId, uploadedFiles },
+            async () => {
+                const chatService = new GeminiChatService();
+                return chatService.chat({
+                    message,
+                    conversationHistory,
+                    useKnowledgeBase,
+                    agentId,
+                    uploadedFiles,
+                });
+            },
+        );
 
         return NextResponse.json(result);
-    } catch (error: any) {
-        console.error('[Chat API] Error:', error);
-        return NextResponse.json(
-            { error: error.message || 'Failed to process message' },
-            { status: 500 },
-        );
+    } catch (error: unknown) {
+        logger.error('Chat request failed', error);
+
+        const messageText = error instanceof Error ? error.message : 'Failed to process message';
+        return NextResponse.json({ error: messageText }, { status: 500 });
     }
 }

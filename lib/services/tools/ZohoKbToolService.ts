@@ -3,6 +3,9 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
+import { ComplaintsResponseGate } from '../chat/ComplaintsResponseGate';
+import { PaymentSegmentGate } from '../chat/PaymentSegmentGate';
+import { KbSearchQueryResolver } from '../chat/KbSearchQueryResolver';
 import { ZohoDeskClient, ZohoArticle } from '../zoho/ZohoDeskClient';
 import { traceable } from 'langsmith/traceable';
 
@@ -39,13 +42,16 @@ export class ZohoKbToolService implements AgentTool {
                         'Search support articles and FAQs to answer the user\'s question. ' +
                         'Call this tool when the user asks a support question, needs how-to guidance, ' +
                         'or is looking for information about a product or process. ' +
-                        'Always pass the user\'s actual question as the query — do NOT paraphrase or substitute generic terms.',
+                        'Pass the customer\'s actual support question as the query. ' +
+                        'If they only replied "retail" or "wholesale" after you asked the segment question, ' +
+                        'pass their earlier question (e.g. PayPal acceptance) — never search the segment word alone.',
                     parameters: {
                         type: SchemaType.OBJECT,
                         properties: {
                             query: {
                                 type: SchemaType.STRING,
-                                description: 'The user\'s exact question or topic, copied verbatim from their message.',
+                                description:
+                                    'The support question to search for. Use the earlier user question on segment-only follow-ups, not "retail"/"wholesale".',
                             },
                         },
                         required: ['query'],
@@ -60,19 +66,36 @@ export class ZohoKbToolService implements AgentTool {
     }
 
     async execute(params: ToolExecutionParams): Promise<ToolExecutionResult> {
-        const query = (params.userMessage ?? String(params.args.query ?? '')).trim();
+        const rawMessage = (params.userMessage ?? String(params.args.query ?? '')).trim();
+        const history = params.conversationHistory ?? [];
+        const query = KbSearchQueryResolver.resolveSearchQuery(rawMessage, history)
+            || String(params.args.query ?? '').trim();
 
         if (!query) {
             logger.warn('search_knowledge_base called with empty query');
             return { toolResponse: { status: 'error', message: 'No search query provided.' } };
         }
 
-        logger.info(`Executing search_knowledge_base with query: "${query}"`);
+        const segmentFollowUp = KbSearchQueryResolver.getSegmentFollowUp(rawMessage, history);
+        if (segmentFollowUp) {
+            logger.info(
+                `Segment follow-up: customer said "${segmentFollowUp.segmentAnswer}"; searching for "${query}"`,
+            );
+        } else {
+            logger.info(`Executing search_knowledge_base with query: "${query}"`);
+        }
 
         const agentConfig = await gcsClient.getPromptConfig(params.agentId);
         const zohoConfig = agentConfig.config?.zohoDesk;
 
-        const actualArgs = { query };
+        const actualArgs = {
+            query,
+            ...(segmentFollowUp && {
+                segmentAnswer: segmentFollowUp.segmentAnswer,
+                segmentLabel: segmentFollowUp.segmentLabel,
+                originalQuestion: segmentFollowUp.originalQuestion,
+            }),
+        };
 
         const [portalId, portalId2] = zohoConfig?.publicPortalIds ?? [];
 
@@ -104,10 +127,19 @@ export class ZohoKbToolService implements AgentTool {
             }
 
             const normalizedQuery = this.normalizeText(query);
-            const preferPortal2 = normalizedQuery.includes('group goodness');
+            const preferPortal2 = PaymentSegmentGate.mentionsGroupGoodness(query);
+            const preferPortal1 =
+                (PaymentSegmentGate.hasRetailSegment(query) || PaymentSegmentGate.hasSegmentStated(query)) &&
+                !preferPortal2;
+            const paymentIntent = PaymentSegmentGate.looksLikePaymentIntent(query);
             const cardBrandIntent = /(amex|american express|visa|mastercard|paypal|apple pay|google pay)/.test(normalizedQuery);
-            const portal1PriorityBoost = !preferPortal2 && cardBrandIntent ? 6 : 0;
-            const portal2PriorityBoost = preferPortal2 ? 3 : 0;
+            const retailComplaintIntent = ComplaintsResponseGate.prefersRetailPortal(query);
+            const portal1PriorityBoost =
+                !preferPortal2 && (cardBrandIntent || retailComplaintIntent || (preferPortal1 && paymentIntent))
+                    ? 10
+                    : 0;
+            const portal2PriorityBoost = preferPortal2 ? 5 : 0;
+            const portal2Penalty = preferPortal1 && paymentIntent ? 12 : 0;
             const candidates = [
                 {
                     label: 'portal 1',
@@ -119,7 +151,7 @@ export class ZohoKbToolService implements AgentTool {
                     label: 'portal 2',
                     articles: portal2Articles,
                     relevant: portal2Relevant,
-                    score: portal2Score + (preferPortal2 ? 1 : 0) + portal2PriorityBoost,
+                    score: portal2Score + (preferPortal2 ? 1 : 0) + portal2PriorityBoost - portal2Penalty,
                 },
             ].filter((candidate) => candidate.articles.length > 0);
 
@@ -143,7 +175,10 @@ export class ZohoKbToolService implements AgentTool {
             logger.info(
                 `Selected ${bestCandidate.label} with relevance=${bestCandidate.relevant} score=${bestCandidate.score} for query "${query}"`,
             );
-            const articles = this.rankArticlesForQuery(query, bestCandidate.articles);
+            let articles = this.rankArticlesForQuery(query, bestCandidate.articles);
+            if (paymentIntent) {
+                articles = this.promotePaymentArticle(articles);
+            }
 
             return {
                 toolResponse: {
@@ -163,6 +198,12 @@ export class ZohoKbToolService implements AgentTool {
                         summary: a.summary,
                         url: a.permalink,
                     })),
+                    ...(segmentFollowUp && {
+                        segmentFollowUp: {
+                            segmentAnswer: segmentFollowUp.segmentAnswer,
+                            originalQuestion: segmentFollowUp.originalQuestion,
+                        },
+                    }),
                 },
                 actualArgs,
             };
@@ -183,6 +224,10 @@ export class ZohoKbToolService implements AgentTool {
         articles: { title: string; summary: string }[],
         portalLabel: string,
     ): Promise<boolean> {
+        if (this.hasPaymentArticleMatch(query, articles)) {
+            logger.info(`Relevance check passed via payment article match (${portalLabel})`);
+            return true;
+        }
         if (this.hasStrongLexicalMatch(query, articles)) {
             logger.info(`Relevance check passed via lexical matching (${portalLabel})`);
             return true;
@@ -201,7 +246,9 @@ export class ZohoKbToolService implements AgentTool {
         if (fallbackQueries.length === 0) return primary;
 
         const primaryScore = this.scoreArticleSet(query, primary);
-        const shouldTryFallbacks = primary.length === 0 || primaryScore < 6;
+        const paymentIntent = PaymentSegmentGate.looksLikePaymentIntent(query);
+        const shouldTryFallbacks =
+            primary.length === 0 || primaryScore < 6 || (paymentIntent && fallbackQueries.length > 0);
         if (!shouldTryFallbacks) return primary;
 
         logger.info(
@@ -226,8 +273,11 @@ export class ZohoKbToolService implements AgentTool {
 
     private hasStrongLexicalMatch(query: string, articles: { title: string; summary: string }[]): boolean {
         const normalizedQuery = this.normalizeText(query);
-        const queryIsGroupGoodness = normalizedQuery.includes('group goodness');
+        const queryIsGroupGoodness = PaymentSegmentGate.mentionsGroupGoodness(query);
         if (queryIsGroupGoodness) {
+            if (PaymentSegmentGate.looksLikePaymentIntent(query) && this.findPaymentOptionsArticle(articles)) {
+                return true;
+            }
             const hasGroupGoodnessArticle = articles.some((article) => {
                 const corpus = this.normalizeText(`${article.title} ${article.summary}`);
                 return corpus.includes('group goodness') || corpus.includes('buying group');
@@ -390,6 +440,9 @@ export class ZohoKbToolService implements AgentTool {
 
         const fallbacks: string[] = ['payment options', 'payment methods'];
 
+        if (PaymentSegmentGate.mentionsGroupGoodness(query)) {
+            fallbacks.push('group goodness payment options', 'what payment options you offer');
+        }
         if (/(amex|american express)/.test(normalized)) {
             fallbacks.push('what payment options you offer', 'american express payment');
         }
@@ -498,5 +551,45 @@ export class ZohoKbToolService implements AgentTool {
         }
 
         return score;
+    }
+
+    private findPaymentOptionsArticle(
+        articles: { title: string; summary: string }[],
+    ): { title: string; summary: string } | undefined {
+        return articles.find((article) =>
+            /payment option|payment method/i.test(this.normalizeText(article.title)),
+        );
+    }
+
+    private promotePaymentArticle(articles: ZohoArticle[]): ZohoArticle[] {
+        const index = articles.findIndex((article) =>
+            /payment option|payment method/i.test(this.normalizeText(article.title)),
+        );
+        if (index <= 0) return articles;
+        const reordered = [...articles];
+        const [paymentArticle] = reordered.splice(index, 1);
+        return [paymentArticle, ...reordered];
+    }
+
+    private hasPaymentArticleMatch(
+        query: string,
+        articles: { title: string; summary: string }[],
+    ): boolean {
+        const paymentArticle = this.findPaymentOptionsArticle(articles);
+        if (!paymentArticle) return false;
+
+        const normalizedQuery = this.normalizeText(query);
+        const body = this.normalizeText(`${paymentArticle.title} ${paymentArticle.summary}`);
+
+        if (/(amex|american express)/.test(normalizedQuery)) {
+            return /(amex|american express)/.test(body);
+        }
+        if (/(two cards?|multiple cards?|split pay)/.test(normalizedQuery)) {
+            return /(credit card|bank transfer)/.test(body);
+        }
+        if (PaymentSegmentGate.looksLikePaymentIntent(normalizedQuery)) {
+            return /(pay|payment|visa|mastercard|amex|paypal|credit card|bank transfer)/.test(body);
+        }
+        return false;
     }
 }

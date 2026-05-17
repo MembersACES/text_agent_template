@@ -1,4 +1,5 @@
 import { FunctionDeclarationsTool } from '@google/generative-ai';
+import { ConversationMessage } from '../chat/ConversationHistoryService';
 
 export interface ToolMetadata {
     /** Human-readable name shown in the UI (e.g. "Analyse Invoices"). */
@@ -14,6 +15,7 @@ export interface ToolExecutionParams {
     agentId?: string;
     useKnowledgeBase: boolean;
     userMessage?: string;
+    conversationHistory?: ConversationMessage[];
 }
 
 export interface ToolExecutionResult {

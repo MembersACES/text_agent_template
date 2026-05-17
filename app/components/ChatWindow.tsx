@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { Fragment, useState, useRef, useEffect } from 'react';
 import { getBranchLogoUrl } from '@/lib/branch-logos';
 import Image from 'next/image';
 
@@ -13,6 +13,42 @@ interface Message {
         label: string;
         url: string;
     }>;
+}
+
+const CREDIT_FORM_URL_PATTERN =
+    /https:\/\/forms\.zohopublic\.com\/admin2553\/form\/ReturnsCreditForm\/[^\s]+/i;
+
+function linkLabelForUrl(url: string): string {
+    if (CREDIT_FORM_URL_PATTERN.test(url)) return 'Click here';
+    if (url.length > 72) return 'Click here';
+    return url;
+}
+
+/** Plain chat bubbles do not parse markdown; turn bare http(s) URLs into clickable links. */
+function MessageTextWithAutoLinks({ text, isUser }: { text: string; isUser: boolean }) {
+    const segments = text.split(/(https?:\/\/[^\s]+)/gi);
+    return (
+        <p className="whitespace-pre-line break-words pr-1">
+            {segments.map((segment, index) => {
+                if (/^https?:\/\//i.test(segment)) {
+                    return (
+                        <a
+                            key={index}
+                            href={segment}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`underline underline-offset-2 ${
+                                linkLabelForUrl(segment) === 'Click here' ? '' : 'break-all'
+                            } ${isUser ? 'text-white decoration-white/80' : 'text-blue-700 decoration-blue-600/80'}`}
+                        >
+                            {linkLabelForUrl(segment)}
+                        </a>
+                    );
+                }
+                return <Fragment key={index}>{segment}</Fragment>;
+            })}
+        </p>
+    );
 }
 
 interface ExtractedInvoice {
@@ -582,7 +618,7 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                                     : 'rounded-xl rounded-bl-md border border-gray-100 bg-white text-gray-800'
                             }`}
                         >
-                            <p className="whitespace-pre-line break-words pr-1">{message.content}</p>
+                            <MessageTextWithAutoLinks text={message.content} isUser={message.role === 'user'} />
                             {message.actions && message.actions.length > 0 && (
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {message.actions.map((action, actionIndex) => (

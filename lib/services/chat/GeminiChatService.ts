@@ -16,7 +16,7 @@
  *  - extractJsonFromResponse     → parses inline JSON from normal responses
  */
 
-import { GoogleGenerativeAI, Content } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, FunctionCallingMode } from '@google/generative-ai';
 import { traceable } from 'langsmith/traceable';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
@@ -26,17 +26,29 @@ import { AgentTool } from '../tools/AgentTool';
 import { AgentToolRegistry } from '../tools/AgentToolRegistry';
 import { ConversationHistoryService, ConversationMessage } from './ConversationHistoryService';
 import { ContextService } from './ContextService';
+import { chatMessageTrace } from '@/lib/config/chatMessageTrace';
+import { KbSearchQueryResolver } from './KbSearchQueryResolver';
+import { ComplaintsResponseGate } from './ComplaintsResponseGate';
+import { OrderStatusGate } from './OrderStatusGate';
+import { PaymentSegmentGate } from './PaymentSegmentGate';
+import { ProductAvailabilityGate } from './ProductAvailabilityGate';
+import { GroupGoodnessPaymentGate } from './GroupGoodnessPaymentGate';
 
 const logger = getLogger('GeminiChatService');
 const NO_RESULTS_FALLBACK_MESSAGE = "I couldn't find an article that directly answers this in the help center. You can still contact Honest to Goodness support via phone, email or web forms if you'd like more help.";
 const KB_UNAVAILABLE_FALLBACK_MESSAGE = "I'm having trouble reaching the help center right now. Please try again in a moment or contact support via phone, email or web forms.";
+const EMPTY_CLARIFICATION_RESPONSE =
+    "Sorry — I'm not quite sure how to help with that. Could you let me know a bit more about what you're looking for? I can help with payment options, shipping, order status, product availability, or returns and credits.";
 const HEALTH_FORCE_NO_RESULTS_TOKEN = '__HEALTH_FORCE_NO_RESULTS__';
 const HEALTH_FORCE_ERROR_TOKEN = '__HEALTH_FORCE_ERROR__';
 const KB_SUCCESS_INSTRUCTION = [
     'Tool result policy:',
-    '- If tool status is "success", answer using bestArticle first and optionally relatedArticles.',
+    '- If tool status is "success", answer using bestArticle and optionally relatedArticles.',
     '- Do not output no-results or KB-unavailable fallback text when status is "success".',
     '- Use no-results fallback only for status "no_results".',
+    '- Payment Critical Rule overrides no-results: if the message contains card/credit card/debit card or any payment brand and segment is unknown, the first response is ALWAYS the segment question — never "I couldn\'t find an article" even when the KB returned no or weak matches. Exception: Group Goodness / buying group / group admin / group coordinator / group order / group member / group cart — do not ask retail vs wholesale; use GG articles.',
+    '- Complaints override no-results: for damaged/missing/wrong item/wrong price/new credit issues, empathise and point to the credit form with scenario-specific intake reminders — never "I couldn\'t find an article". Existing claim follow-ups: escalate only, no credit form.',
+    '- Product availability override no-results: for in-stock, out-of-stock, or restock questions, empathise, explain live stock is not visible here, collect SKU or product name and pack size, and direct to support — never "I couldn\'t find an article".',
 ].join('\n');
 
 // ---------------------------------------------------------------------------
@@ -80,6 +92,12 @@ export class GeminiChatService {
 
     readonly chat = traceable(
         async (params: ChatParams): Promise<ChatResponse> => {
+            return this.ensureNonEmptyResponse(await this.runChat(params));
+        },
+        { name: 'chat', run_type: 'chain' },
+    );
+
+    private async runChat(params: ChatParams): Promise<ChatResponse> {
             const {
                 message,
                 conversationHistory = [],
@@ -103,6 +121,52 @@ export class GeminiChatService {
             // the model will call the tool instead.
             const hasKbTool = tools.some((t) => t.canHandle('search_knowledge_base'));
 
+            if (
+                useKnowledgeBase &&
+                hasKbTool &&
+                PaymentSegmentGate.needsSegmentQuestion(message, conversationHistory)
+            ) {
+                logger.info(
+                    'Payment segment gate: segment required before KB search; returning segment question.',
+                );
+                return { response: PaymentSegmentGate.getSegmentOpener(message) };
+            }
+
+            if (
+                useKnowledgeBase &&
+                hasKbTool &&
+                ComplaintsResponseGate.isExistingClaimDetailsReply(message, conversationHistory)
+            ) {
+                logger.info('Complaints gate: existing claim details reply; redirecting to support.');
+                return { response: ComplaintsResponseGate.buildExistingClaimDetailsReply() };
+            }
+
+            if (useKnowledgeBase && hasKbTool && OrderStatusGate.needsStuckPackingHandoff(message)) {
+                logger.info('Order status gate: stuck packing handoff; returning support template.');
+                return { response: OrderStatusGate.buildStuckPackingResponse() };
+            }
+
+            if (
+                useKnowledgeBase &&
+                hasKbTool &&
+                OrderStatusGate.isStuckPackingDetailsReply(message, conversationHistory)
+            ) {
+                logger.info('Order status gate: stuck packing details reply; redirecting to support.');
+                return { response: OrderStatusGate.buildStuckPackingDetailsReply() };
+            }
+
+            const complaintScenario = ComplaintsResponseGate.classify(message, conversationHistory);
+            if (
+                useKnowledgeBase &&
+                hasKbTool &&
+                complaintScenario === 'existing_claim_followup'
+            ) {
+                logger.info('Complaints gate: existing claim follow-up; skipping KB search.');
+                return {
+                    response: ComplaintsResponseGate.buildFallbackResponse(message, conversationHistory)!,
+                };
+            }
+
             const historyContext = this.historyService.format(conversationHistory);
             const fileContext = this.contextService.buildFileContext(uploadedFiles);
             const agentPrompt = await this.buildAgentPrompt(agentId);
@@ -121,8 +185,11 @@ export class GeminiChatService {
             const model = this.createModel(tools);
             const contents: Content[] = [{ role: 'user', parts: [{ text: initialPrompt }] }];
 
-            // Turn 1: send prompt
-            const firstResult = await this.generateTurn1(model, contents);
+            const forceKbTool =
+                useKnowledgeBase && hasKbTool && uploadedFiles.length === 0;
+
+            // Turn 1: send prompt (force KB tool when no uploads so support questions always search Zoho)
+            const firstResult = await this.generateTurn1(model, contents, forceKbTool);
             const firstResponse = firstResult.response;
 
             // Detect tool call from any registered tool
@@ -141,18 +208,42 @@ export class GeminiChatService {
                     agentId,
                     useKnowledgeBase,
                     userMessage: message,
+                    conversationHistory,
                 });
             }
 
-            if (hasKbTool) {
-                logger.warn('Model did not call knowledge-base tool; returning KB unavailable fallback.');
+            if (hasKbTool && useKnowledgeBase && this.shouldAutoInvokeKbSearch(message)) {
+                const kbTool = tools.find((t) => t.canHandle('search_knowledge_base'));
+                if (kbTool) {
+                    logger.info('Model skipped KB tool; running search_knowledge_base server-side.');
+                    return this.handleToolCall({
+                        functionCallPart: {
+                            functionCall: { name: 'search_knowledge_base', args: { query: message } },
+                        },
+                        tool: kbTool,
+                        model,
+                        contents,
+                        uploadedFiles,
+                        agentId,
+                        useKnowledgeBase,
+                        userMessage: message,
+                        conversationHistory,
+                    });
+                }
+                logger.warn('KB tool missing; returning KB unavailable fallback.');
                 return { response: KB_UNAVAILABLE_FALLBACK_MESSAGE };
             }
 
             return this.handleNormalResponse(firstResponse.text(), message);
-        },
-        { name: 'chat', run_type: 'chain' },
-    );
+    }
+
+    private ensureNonEmptyResponse(result: ChatResponse): ChatResponse {
+        if (!result.response?.trim()) {
+            logger.warn('Empty assistantReply detected; substituting clarification template.');
+            return { ...result, response: EMPTY_CLARIFICATION_RESPONSE };
+        }
+        return result;
+    }
 
     // -------------------------------------------------------------------------
     // Turn 1 prompt builder
@@ -257,8 +348,19 @@ export class GeminiChatService {
         agentId?: string;
         useKnowledgeBase: boolean;
         userMessage: string;
+        conversationHistory?: ConversationMessage[];
     }): Promise<ChatResponse> {
-        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase, userMessage } = options;
+        const {
+            functionCallPart,
+            tool,
+            model,
+            contents,
+            uploadedFiles,
+            agentId,
+            useKnowledgeBase,
+            userMessage,
+            conversationHistory = [],
+        } = options;
         const functionName: string = functionCallPart.functionCall.name;
         const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
@@ -271,6 +373,7 @@ export class GeminiChatService {
             agentId,
             useKnowledgeBase,
             userMessage,
+            conversationHistory,
         });
 
         // Turn 2: return the tool result to the model so it can write a human response.
@@ -280,6 +383,17 @@ export class GeminiChatService {
             ? { ...functionCallPart.functionCall, args: result.actualArgs }
             : functionCallPart.functionCall;
 
+        const segmentFollowUp = KbSearchQueryResolver.getSegmentFollowUp(userMessage, conversationHistory);
+        const kbTurn2Preamble =
+            functionName === 'search_knowledge_base'
+                ? [
+                    KB_SUCCESS_INSTRUCTION,
+                    ...(segmentFollowUp
+                        ? [KbSearchQueryResolver.buildTurn2Instruction(segmentFollowUp)]
+                        : []),
+                ].join('\n\n')
+                : '';
+
         const turn2Contents: Content[] = [
             ...contents,
             { role: 'model', parts: [{ functionCall: recordedFunctionCall }] },
@@ -287,7 +401,7 @@ export class GeminiChatService {
                 role: 'user',
                 parts: functionName === 'search_knowledge_base'
                     ? [
-                        { text: KB_SUCCESS_INSTRUCTION },
+                        { text: kbTurn2Preamble },
                         { functionResponse: { name: functionName, response: result.toolResponse } },
                     ]
                     : [{ functionResponse: { name: functionName, response: result.toolResponse } }],
@@ -299,6 +413,25 @@ export class GeminiChatService {
 
         if (functionName === 'search_knowledge_base') {
             if (status === 'no_results') {
+                if (PaymentSegmentGate.needsSegmentQuestion(userMessage, conversationHistory)) {
+                    logger.info(
+                        'Payment segment gate: no_results suppressed; asking retail/wholesale.',
+                    );
+                    return { response: PaymentSegmentGate.getSegmentOpener(userMessage) };
+                }
+                const complaintResponse = ComplaintsResponseGate.buildFallbackResponse(
+                    userMessage,
+                    conversationHistory,
+                );
+                if (complaintResponse) {
+                    logger.info('Complaints gate: no_results suppressed for complaint.');
+                    return { response: complaintResponse };
+                }
+                const availabilityResponse = ProductAvailabilityGate.buildFallbackResponse(userMessage);
+                if (availabilityResponse) {
+                    logger.info('Product availability gate: no_results suppressed.');
+                    return { response: availabilityResponse };
+                }
                 return { response: NO_RESULTS_FALLBACK_MESSAGE };
             }
             if (status === 'error') {
@@ -309,10 +442,86 @@ export class GeminiChatService {
         const responseText = this.cleanResponseText(secondResult.response.text());
         if (
             functionName === 'search_knowledge_base' &&
+            (OrderStatusGate.needsStuckPackingHandoff(userMessage) ||
+                OrderStatusGate.promisesFalseEscalation(responseText))
+        ) {
+            logger.warn('Order status gate: replacing false escalation promise with support template.');
+            return { response: OrderStatusGate.buildStuckPackingResponse() };
+        }
+        if (functionName === 'search_knowledge_base' && ProductAvailabilityGate.matches(userMessage)) {
+            if (
+                ProductAvailabilityGate.isNoResultsPhrasing(responseText) ||
+                ProductAvailabilityGate.isColdAvailabilityResponse(responseText)
+            ) {
+                const availabilityResponse = ProductAvailabilityGate.buildFallbackResponse(userMessage);
+                if (availabilityResponse) {
+                    logger.warn('Product availability gate: replacing cold/invalid availability reply.');
+                    return { response: availabilityResponse };
+                }
+            }
+        }
+        if (functionName === 'search_knowledge_base' && ComplaintsResponseGate.matches(userMessage)) {
+            const complaintScenario = ComplaintsResponseGate.classify(userMessage, conversationHistory);
+            const wronglyIncludesForm =
+                complaintScenario === 'existing_claim_followup' &&
+                /forms\.zohopublic\.com/i.test(responseText);
+            if (
+                ComplaintsResponseGate.isNoResultsPhrasing(responseText) ||
+                wronglyIncludesForm
+            ) {
+                const complaintResponse = ComplaintsResponseGate.buildFallbackResponse(
+                    userMessage,
+                    conversationHistory,
+                );
+                if (complaintResponse) {
+                    logger.warn('Complaints gate: replacing invalid complaint reply with template.');
+                    return { response: complaintResponse };
+                }
+            }
+        }
+        if (
+            functionName === 'search_knowledge_base' &&
+            status === 'success' &&
+            GroupGoodnessPaymentGate.isGroupGoodnessPaymentQuestion(userMessage)
+        ) {
+            const ggPaymentReply = GroupGoodnessPaymentGate.buildResponseFromToolResult(
+                userMessage,
+                result.toolResponse,
+            );
+            const articles = result.toolResponse.articles as Array<{ title?: string; summary?: string }> | undefined;
+            const kbPaymentArticle = articles?.find((a) =>
+                /payment option|payment method/i.test(a.title ?? ''),
+            );
+            if (
+                ggPaymentReply &&
+                (GroupGoodnessPaymentGate.isOverlyHedgedResponse(responseText) ||
+                    (kbPaymentArticle &&
+                        !GroupGoodnessPaymentGate.citesPaymentArticle(responseText, kbPaymentArticle)))
+            ) {
+                logger.warn('Group Goodness payment gate: replacing hedged reply with KB article template.');
+                return { response: ggPaymentReply };
+            }
+        }
+        if (
+            functionName === 'search_knowledge_base' &&
+            PaymentSegmentGate.needsSegmentQuestion(userMessage, conversationHistory) &&
+            (PaymentSegmentGate.violatesOpener(responseText) ||
+                PaymentSegmentGate.isNoResultsPhrasing(responseText))
+        ) {
+            logger.warn(
+                'Payment segment gate: invalid payment reply before segment; using segment opener.',
+            );
+            return { response: PaymentSegmentGate.getSegmentOpener(userMessage) };
+        }
+        if (
+            functionName === 'search_knowledge_base' &&
             status === 'success' &&
             this.isInvalidSuccessKbResponse(responseText)
         ) {
             logger.warn('Invalid KB success response detected; replacing with best article template.');
+            if (PaymentSegmentGate.needsSegmentQuestion(userMessage, conversationHistory)) {
+                return { response: PaymentSegmentGate.getSegmentOpener(userMessage) };
+            }
             return { response: this.buildBestArticleResponse(result.toolResponse) };
         }
 
@@ -452,20 +661,13 @@ export class GeminiChatService {
     // -------------------------------------------------------------------------
 
     private async buildAgentPrompt(agentId?: string): Promise<string> {
-        const [systemSettings, agentPrompt] = await Promise.all([
-            gcsClient.getSystemSettings(),
-            gcsClient.getPromptTemplate(agentId),
-        ]);
-        return `${systemSettings.globalSystemPrompt}
-
----
-
-${agentPrompt}
+        const stack = await gcsClient.buildGlobalAndAgentPrompt(agentId);
+        return `${stack}
 
 ---
 
 KNOWLEDGE BASE TOOL OVERRIDES:
-- If search_knowledge_base status is "success", you must answer using the returned article content.
+- If search_knowledge_base status is "success", answer using the returned article content unless your agent prompt has a payment-methods exception (retail vs wholesale must be asked first — that exception overrides this rule).
 - Only use the no-results fallback when status is "no_results".
 - Only use KB unavailable messaging when status is "error" or the tool was unavailable.
 - Never claim no information is available when status is "success".`;
@@ -481,11 +683,33 @@ KNOWLEDGE BASE TOOL OVERRIDES:
 
     /** Turn 1 Gemini generation wrapped in a LangSmith traceable span. */
     private readonly generateTurn1 = traceable(
-        async (model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>, contents: Content[]) => {
-            return model.generateContent({ contents });
+        async (
+            model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>,
+            contents: Content[],
+            forceKbTool = false,
+        ) => {
+            if (!forceKbTool) {
+                return model.generateContent({ contents });
+            }
+            return model.generateContent({
+                contents,
+                toolConfig: {
+                    functionCallingConfig: {
+                        mode: FunctionCallingMode.ANY,
+                        allowedFunctionNames: ['search_knowledge_base'],
+                    },
+                },
+            });
         },
         { name: 'generate_turn_1', run_type: 'llm' },
     );
+
+    /** Skip Zoho search for brief acknowledgments; run search for real support questions. */
+    private shouldAutoInvokeKbSearch(message: string): boolean {
+        const trimmed = message.trim();
+        if (!trimmed) return false;
+        return !/^(ok|okay|yes|no|thanks|thank you|cheers|go|yep|nope|hi|hello|hey|👍|👌)[!.?\s]*$/i.test(trimmed);
+    }
 
     /** Turn 2 Gemini generation (after tool result) wrapped in a LangSmith traceable span. */
     private readonly generateTurn2 = traceable(
@@ -505,5 +729,12 @@ KNOWLEDGE BASE TOOL OVERRIDES:
             ? prompt.substring(0, MAX_PREVIEW) + `\n\n[... ${prompt.length - MAX_PREVIEW} more characters ...]`
             : prompt;
         logger.info(`Prompt sent to AI (${prompt.length} chars):\n${'='.repeat(80)}\n${preview}\n${'='.repeat(80)}`);
+
+        if (chatMessageTrace.isCapturingTerminal()) {
+            chatMessageTrace.appendSection(
+                `FULL PROMPT SENT TO AI (${prompt.length} chars)`,
+                prompt,
+            );
+        }
     }
 }

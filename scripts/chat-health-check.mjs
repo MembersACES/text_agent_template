@@ -24,6 +24,10 @@ const singleTurnSuccessCases = [
   'How do I track my order?',
   'What is your returns policy?',
   'Can I become a wholesale customer?',
+  'Do you have organic almonds in stock?',
+  'When will turmeric powder be back in stock?',
+  "I'm a Group Goodness admin — can I pay with two cards?",
+  "I'm a retail customer, do you accept Amex?",
   // Group Goodness flows (4-5)
   'What is Group Goodness?',
   'How do I join Group Goodness?',

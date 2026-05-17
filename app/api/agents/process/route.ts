@@ -248,10 +248,8 @@ async function processInvoicesWithChat(
         })
         .join('\n\n---\n\n');
 
-    // Get system prompt and agent-specific prompt
-    const systemSettings = await gcsClient.getSystemSettings();
-    const agentPrompt = await gcsClient.getPromptTemplate(agentId);
-    const fullPrompt = `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
+    // Global system prompt + agent template (same order as live chat)
+    const fullPrompt = await gcsClient.buildGlobalAndAgentPrompt(agentId);
 
     // Always use KB if available
     const useKnowledgeBase = true;

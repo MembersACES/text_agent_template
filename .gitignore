@@ -20,6 +20,9 @@
 # production
 /build
 
+# local chat trace logs (per-message backend + response)
+.local/
+
 # misc
 .DS_Store
 *.pem

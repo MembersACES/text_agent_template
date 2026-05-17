@@ -173,11 +173,7 @@ export class PromptBuilderService {
      * template from GCS. Both calls are made in parallel for efficiency.
      */
     private async fetchAgentPrompt(agentId?: string): Promise<string> {
-        const [systemSettings, agentPrompt] = await Promise.all([
-            gcsClient.getSystemSettings(),
-            gcsClient.getPromptTemplate(agentId),
-        ]);
-        return `${systemSettings.globalSystemPrompt}\n\n---\n\n${agentPrompt}`;
+        return gcsClient.buildGlobalAndAgentPrompt(agentId);
     }
 
     // -------------------------------------------------------------------------
