@@ -1,3 +1,8 @@
+/** Safe at build time when env vars are not injected yet. */
+function envTrim(value: string | undefined, fallback = ''): string {
+    return (value ?? fallback).trim();
+}
+
 export const settings = {
     gemini: {
         apiKey: process.env.GEMINI_API_KEY!,
@@ -19,28 +24,28 @@ export const settings = {
         sitePassword: process.env.SITE_PASSWORD!,
     },
     zohoDesk: {
-        clientId: process.env.ZOHO_CLIENT_ID!.trim(),
-        clientSecret: process.env.ZOHO_CLIENT_SECRET!.trim(),
-        refreshToken: process.env.ZOHO_REFRESH_TOKEN!.trim(),
-        orgId: process.env.ZOHO_ORG_ID!.trim(),
-        datacenter: (process.env.ZOHO_DATACENTER || 'com.au').trim(),
+        clientId: envTrim(process.env.ZOHO_CLIENT_ID),
+        clientSecret: envTrim(process.env.ZOHO_CLIENT_SECRET),
+        refreshToken: envTrim(process.env.ZOHO_REFRESH_TOKEN),
+        orgId: envTrim(process.env.ZOHO_ORG_ID),
+        datacenter: envTrim(process.env.ZOHO_DATACENTER, 'com.au'),
         /**
          * Hostname only (no https). Defaults to accounts.zoho.${datacenter}.
          * Set ZOHO_ACCOUNTS_HOST=accounts.zoho.com when OAuth tokens show api_domain www.zohoapis.com.
          */
-        accountsHost: (
-            process.env.ZOHO_ACCOUNTS_HOST?.trim()
-            || `accounts.zoho.${(process.env.ZOHO_DATACENTER || 'com.au').trim()}`
-        ).trim(),
+        accountsHost: envTrim(
+            process.env.ZOHO_ACCOUNTS_HOST,
+            `accounts.zoho.${envTrim(process.env.ZOHO_DATACENTER, 'com.au')}`,
+        ),
         /**
          * Hostname only. Defaults to desk.zoho.${datacenter}.
          * Set ZOHO_DESK_HOST=desk.zoho.com if Desk REST is on the global host (not desk.zoho.com.au).
          */
-        deskApiHost: (
-            process.env.ZOHO_DESK_HOST?.trim()
-            || `desk.zoho.${(process.env.ZOHO_DATACENTER || 'com.au').trim()}`
-        ).trim(),
+        deskApiHost: envTrim(
+            process.env.ZOHO_DESK_HOST,
+            `desk.zoho.${envTrim(process.env.ZOHO_DATACENTER, 'com.au')}`,
+        ),
         /** Web-based Zoho clients: same redirect_uri as API Console when exchanging / refreshing tokens */
-        oauthRedirectUri: process.env.ZOHO_REDIRECT_URI?.trim() || '',
+        oauthRedirectUri: envTrim(process.env.ZOHO_REDIRECT_URI),
     },
 };
