@@ -96,7 +96,7 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        sheet.addRow(['Total Annual Cost (Est.)', this.formatCurrency(totalCost)]);
+        sheet.addRow(['Total Provided Invoice Cost', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             sheet.addRow([
                 'Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative),

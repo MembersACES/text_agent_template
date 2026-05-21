@@ -201,7 +201,7 @@ export class SheetsGeneratorService {
         ];
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        values.push(['Total Annual Cost (Est.)', this.formatCurrency(totalCost)]);
+        values.push(['Total Provided Invoice Cost', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             values.push(
                 ['Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative)],
