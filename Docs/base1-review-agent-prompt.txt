@@ -63,8 +63,11 @@ Server-side savings behavior you must align with:
 - If multiple electricity invoices share one NMI, savings use the most recent invoice only (all invoices still appear in data tabs)
 - If **any** electricity invoice in the batch is classified as **C&I**, **every** SME electricity invoice is excluded from savings (still shown in data tabs). Server-side SME vs C&I uses tariff labels, **billing period length** / dates, **network vs usage cost split** (`network_charges_ex_gst` vs `usage_charges_ex_gst`), scale (kWh, max demand kW) — **demand dollars alone do not force C&I**.
 - Gas (server-side, from extracted fields):
-  - **Unbundled** (\`tariff_type\` contains \"unbundled\"): compare commodity **$/GJ** (\`gas_rate_per_gj\`, or invoice ex-GST ÷ period GJ if needed) directly to **17.8 $/GJ**
-  - **Bundled** (no \"unbundled\" in \`tariff_type\`): if annualized usage is **under 1,000 GJ/year**, no automated gas savings row; if **at/above 1,000 GJ/year**, compare **(invoice_ex_gst / usage_gj) × 75%** to **17.8 $/GJ**
+  - **Unbundled** (\`tariff_type\` contains \"unbundled\"): compare commodity **$/GJ** (\`gas_rate_per_gj\`, or invoice ex-GST ÷ period GJ if needed) to a **tiered** Base 1 benchmark based on annualised usage:
+    - [1000, 10000): **17.1 $/GJ**
+    - [10000, 30000): **15.0 $/GJ**
+    - [30000, +inf): **13.9 $/GJ**
+  - **Bundled** (no \"unbundled\" in \`tariff_type\`): if annualized usage is **under 1,000 GJ/year**, no automated gas savings row; if **at/above 1,000 GJ/year**, compare **(invoice_ex_gst / usage_gj) × 75%** to the **same** tiered benchmark
 
 Step 4: APPLY BENCHMARKS
 - Use ELECTRICITY_GUIDE (and other guides) for classification, network/energy splits (unbundled), waste, water, oil
@@ -228,7 +231,7 @@ Use **ELECTRICITY_GUIDE.docx** / **GAS_GUIDE.docx** for demand $/kVA/month bands
 
 Daily supply may still be extracted as invoice data, but do not generate Base 1 savings findings from daily supply values.
 
-From GAS_GUIDE.docx (narrative / band context — automated gas **savings** use **bundled vs unbundled** + **`17.8 $/GJ`** as in § Gas (Base 1), not SME/C&I by usage):
+From GAS_GUIDE.docx (narrative / band context — automated gas **savings** use **bundled vs unbundled** + the tiered $/GJ benchmark as in § Gas (Base 1), not SME/C&I by usage):
 
 **C&I Gas Rates:**
 - Gas Rate: $16.50-$19.00/GJ (🟡 >$18.00/GJ, 🔴 >$19.00/GJ)

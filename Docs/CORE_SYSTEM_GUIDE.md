@@ -114,4 +114,4 @@ Legacy **.docx** names in the KB (ELECTRICITY_GUIDE.docx, etc.) map to those dom
 | “Exactly 8 sheets **in this order**: Overview, Electricity, …” | **Partially outdated.** There are **more than eight physical tabs** because **empty** utility sheets are still created; order is **Overview → non-empty utility tabs → empty utility tabs → Cost Summary → Meter Details → Base 1 Analysis**. |
 | Base 1 columns “Category \| Issue Type \| Flag \| …” | **Outdated.** Actual columns: **Category \| Option Type \| Amount Of Invoices \| Total Savings Per Year \| Related Charges**. |
 | “Critical Issues”, “Immediate Actions”, etc. | **Not generated** by current `ExcelGeneratorService` / `SheetsGeneratorService` — update expectations or reintroduce in code if mandatory. |
-| **GAS_GUIDE “customer sizing”** | Narrative OK; automated gas uses **bundled/unbundled** + **17.8** — see [GAS_ANALYSIS_GUIDE.md](./GAS_ANALYSIS_GUIDE.md). |
+| **GAS_GUIDE “customer sizing”** | Narrative OK; automated gas uses **bundled/unbundled** + tiered benchmarks by annual usage (**17.1 / 15.0 / 13.9 $/GJ**) — see [GAS_ANALYSIS_GUIDE.md](./GAS_ANALYSIS_GUIDE.md). |

@@ -22,7 +22,14 @@ const DEMAND_REPRICE_MIN_RELATIVE_OVER = 0.02;
  *
  * Demand repricing: only when recorded max is materially below billed (≥2% gap) and annual savings >$200.
  *
- * **Gas:** bundled vs unbundled (from `tariff_type`) selects the formula — bundled uses (invoice ex-GST / GJ) × 75% vs **17.8** with **≥1000 GJ/year** gate; unbundled compares commodity **$/GJ** vs **17.8** directly (usage does not flip bundled/unbundled).
+ * **Gas:** bundled vs unbundled (from `tariff_type`) selects the formula.
+ * Base 1 gas comparison is tiered by annualised usage:
+ * - [1000, 10000): **17.1 $/GJ**
+ * - [10000, 30000): **15.0 $/GJ**
+ * - [30000, +inf): **13.9 $/GJ**
+ *
+ * Bundled compares (invoice ex-GST / period GJ) × 75% vs the tiered benchmark.
+ * Unbundled compares commodity **$/GJ** directly vs the tiered benchmark.
  */
 export class DeterministicSavingsService {
     applyDeterministicFindings(invoices: ExtractedInvoice[]): ExtractedInvoice[] {
@@ -66,7 +73,8 @@ export class DeterministicSavingsService {
         const billingDays = this.positive(invoice.billing_days);
         const usageGjPeriod = this.positive(invoice.total_usage_gj);
         const annualUsageGj = this.annualize(usageGjPeriod, billingDays);
-        if (annualUsageGj === null) {
+        // Base 1 automation only emits gas savings for meaningful annualised usage.
+        if (annualUsageGj === null || annualUsageGj < 1000) {
             return { ...invoice, low_hanging_fruit: [] };
         }
 
@@ -76,14 +84,11 @@ export class DeterministicSavingsService {
         const invoiceExGst =
             this.positive(invoice.total_charges_ex_gst) ??
             (invoiceIncGst !== null && gst !== null ? invoiceIncGst - gst : null);
-        const benchmark = 17.8;
+        const benchmark = this.gasBenchmarkPerGj(annualUsageGj);
         let annualSavings: number | null = null;
         let message: string | null = null;
 
         if (bundledGas) {
-            if (annualUsageGj < 1000) {
-                return { ...invoice, low_hanging_fruit: [] };
-            }
             if (invoiceExGst === null || usageGjPeriod === null || usageGjPeriod <= 0) {
                 return { ...invoice, low_hanging_fruit: [] };
             }
@@ -343,11 +348,21 @@ export class DeterministicSavingsService {
 
     /**
      * **Unbundled** only when `tariff_type` mentions "unbundled"; otherwise **bundled** (including empty labels).
-     * Annual usage does not select this path — it only gates bundled savings (≥1000 GJ/year).
+     * The emission gate (annualised usage >= 1,000 GJ/year) is applied in `applyGas` (not in this selector).
      */
     private isGasBundledInvoice(invoice: ExtractedInvoice): boolean {
         const t = (invoice.tariff_type || '').trim().toLowerCase();
         return !/\bunbundl\b/.test(t);
+    }
+
+    /**
+     * Tiered Base 1 benchmark ($/GJ) based on annualised usage.
+     * Assumes annualUsageGj >= 1,000.
+     */
+    private gasBenchmarkPerGj(annualUsageGj: number): number {
+        if (annualUsageGj >= 30000) return 13.9;
+        if (annualUsageGj >= 10000) return 15;
+        return 17.1;
     }
 
     private positive(v: number | null | undefined): number | null {

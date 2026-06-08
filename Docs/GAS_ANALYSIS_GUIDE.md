@@ -46,8 +46,12 @@
 
 **Automated savings (implemented in `DeterministicSavingsService`):**
 
-- **Unbundled:** compare commodity **$/GJ** (`gas_rate_per_gj`, or invoice ex-GST ÷ period GJ if needed) to **17.8 $/GJ** (annualised); thresholds **>$200/year** etc. apply on the server.  
-- **Bundled:** only if annualised usage **≥ 1,000 GJ/year**; compare **(invoice ex-GST ÷ period `total_usage_gj`) × 75%** to **17.8 $/GJ**. Below **1,000 GJ/year** → no automated bundled gas row.  
+- **Unbundled:** compare commodity **$/GJ** (`gas_rate_per_gj`, or invoice ex-GST ÷ period GJ if needed) to the **tiered** Base 1 benchmark (annualised usage):
+  - [1000, 10000): **17.1 $/GJ**
+  - [10000, 30000): **15.0 $/GJ**
+  - [30000, +inf): **13.9 $/GJ**
+  (thresholds **>$200/year** etc. apply on the server).
+- **Bundled:** only if annualised usage **≥ 1,000 GJ/year**; compare **(invoice ex-GST ÷ period `total_usage_gj`) × 75%** to the **same** tiered benchmark above. Below **1,000 GJ/year** → no automated gas savings row.
 
 **Daily supply:** extract `daily_supply_charge` ($/day) as data only — **no** Base 1 gas savings row from daily supply.
 
@@ -86,7 +90,7 @@ gas_rate_per_gj = usage_charges_ex_gst / total_usage_gj
 
 ## Market benchmarks — Victoria 2026 (narrative / severity bands)
 
-These bands are **contextual** (messaging, non-automated review). **Automated Base 1 gas** uses **17.8 $/GJ** and bundled/unbundled logic above.
+These bands are **contextual** (messaging, non-automated review). **Automated Base 1 gas** uses the **tiered** benchmark above (17.1 / 15.0 / 13.9 $/GJ).
 
 **Large C&I gas rates**
 
@@ -122,7 +126,7 @@ annual_savings = excess_rate * annual_usage
 
 **Example (old C&I framing):** current **$19.50/GJ**, threshold **$18.00/GJ**, excess **$1.50/GJ**, annual usage **2,894 GJ** → **$4,341/year**.  
 
-Use this style only for **manual** checks; automated exports use **bundled vs unbundled** and **17.8 $/GJ**.
+Use this style only for **manual** checks; automated exports use **bundled vs unbundled** and the **tiered** $/GJ benchmark.
 
 ---
 
@@ -143,5 +147,5 @@ Use this style only for **manual** checks; automated exports use **bundled vs un
 | Original KB instruction | Update |
 |-------------------------|--------|
 | “Populate `low_hanging_fruit` array” for gas | **Incorrect for this app.** Extraction must use **`[]`**; `DeterministicSavingsService` adds gas findings. |
-| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses **17.8**, **bundled 75% rule**, **1000 GJ/year gate on bundled only**. |
+| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **bundled 75% rule**, and **≥ 1,000 GJ/year gate on gas overall**. |
 | Customer size by annual GJ | Still valid for **human classification** and tables — **does not** switch bundled vs unbundled. |

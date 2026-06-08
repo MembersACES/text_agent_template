@@ -35,7 +35,7 @@ CRITICAL INSTRUCTIONS:
    - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
    - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic classification and rules use these strings.
    - **C&I vs SME (automation):** populate \`billing_period_start\`, \`billing_period_end\`, \`usage_charges_ex_gst\`, \`network_charges_ex_gst\`, \`supply_charges_ex_gst\`, \`total_charges_ex_gst\` when printed — long cycles and network splits drive server-side classification alongside \`tariff_type\` and consumption.
-   - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. **Bundled vs unbundled** selects the gas savings formula; annual usage only gates the bundled path (≥ **1,000 GJ/year**).
+   - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. **Bundled vs unbundled** selects the gas savings formula; automated gas savings rows are only emitted when annualised usage is **≥ 1,000 GJ/year**. The benchmark ($/GJ) is tiered by annualised usage.
    - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
    - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
    - For waste: populate waste_services array with ALL line items and pickup dates
@@ -55,7 +55,14 @@ CRITICAL INSTRUCTIONS:
 
 4. **BENCHMARKING & low_hanging_fruit** (utility-specific):
    - **Electricity:** Deterministic Base 1 replaces all model-authored findings (retail TOU NSW 10/10/12 and non-NSW 9/7 shoulder rules, metering tiers, demand repricing). Always set **low_hanging_fruit** to **[]**.
-   - **Gas:** Deterministic Base 1 replaces gas findings (\`17.8 $/GJ\` compare; **bundled**: \`(invoice_ex_gst / usage_gj) × 75%\` vs benchmark only when annualized usage **≥ 1,000 GJ**; **unbundled**: retail **$/GJ** vs benchmark). Always set **low_hanging_fruit** to **[]**.
+   - **Gas:** Deterministic Base 1 replaces gas findings.
+     - Benchmark ($/GJ) tiered by annualised usage:
+       - [1000, 10000): **17.1 $/GJ**
+       - [10000, 30000): **15.0 $/GJ**
+       - [30000, +inf): **13.9 $/GJ**
+     - **Bundled:** compare \`(invoice_ex_gst / usage_gj) × 75%\` vs the tiered benchmark.
+     - **Unbundled:** compare retail **$/GJ** vs the tiered benchmark.
+     - Always set **low_hanging_fruit** to **[]**.
    - **Water, Waste, Oil, Cleaning:** Use **MARKET BENCHMARKS** from the KB context only. **Never invent** dollar or cent thresholds that do not appear above. Compare extracted values to KB thresholds when creating findings.
    - **Daily supply:** extract \`daily_supply_charge\` as data only — **no low_hanging_fruit** from daily supply for any utility type.
 
