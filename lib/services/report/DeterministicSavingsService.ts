@@ -351,8 +351,9 @@ export class DeterministicSavingsService {
      * The emission gate (annualised usage >= 1,000 GJ/year) is applied in `applyGas` (not in this selector).
      */
     private isGasBundledInvoice(invoice: ExtractedInvoice): boolean {
-        const t = (invoice.tariff_type || '').trim().toLowerCase();
-        return !/\bunbundl\b/.test(t);
+        const t = (invoice.tariff_type || '').trim();
+        // Substring match (case-insensitive) — \bunbundl\b fails on "unbundled" (trailing "ed").
+        return !/unbundl/i.test(t);
     }
 
     /**
