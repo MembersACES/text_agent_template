@@ -28,6 +28,8 @@ export const settings = {
     },
     auth: {
         sitePassword: process.env.SITE_PASSWORD!,
+        /** Shared secret for interface proxy → buckets / staff cross-check APIs */
+        base1AdminKey: process.env.BASE1_BUCKETS_ADMIN_KEY ?? '',
     },
     zohoDesk: {
         clientId: process.env.ZOHO_CLIENT_ID!,

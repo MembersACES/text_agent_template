@@ -394,7 +394,7 @@ function electricityGroupingKey(inv: ExtractedInvoice): string {
     return `fallback:${normalizeText(inv.business_name)}|${normalizeText(inv.account_number)}`;
 }
 
-function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]): Set<number> {
+export function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]): Set<number> {
     const eligible = new Set<number>();
     const electricityGroups = new Map<string, number[]>();
 

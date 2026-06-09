@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:savings": "npx tsx scripts/verify-deterministic-savings.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",

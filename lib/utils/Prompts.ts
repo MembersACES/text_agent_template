@@ -1,7 +1,14 @@
+import { buildBucketInjectionSummary, type Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+
 /**
  * Shared prompt templates for invoice extraction
  * This ensures consistency between chat/route.ts and agents/process/route.ts
  */
+
+/** Runtime injection — engine is authoritative; prompt defers to server-side savings. */
+export function appendBase1BucketInjection(prompt: string, buckets: Base1ComparisonBuckets): string {
+    return `${prompt}\n\n${buildBucketInjectionSummary(buckets)}`;
+}
 
 /**
  * Build the invoice extraction prompt for Base 1 Review processing

@@ -1,4 +1,6 @@
 import { Storage } from '@google-cloud/storage';
+import type { Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+import { DEFAULT_BASE1_COMPARISON_BUCKETS } from '@/lib/config/base1ComparisonBuckets';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 
@@ -7,6 +9,8 @@ const logger = getLogger('GcsClient');
 const SETTINGS_FILENAME = 'settings.json';
 const AGENTS_DIR = 'agents';
 const SYSTEM_SETTINGS_FILENAME = 'system-settings.json';
+const BASE1_BUCKETS_FILENAME = 'base1-comparison-buckets.json';
+const BASE1_RUNS_PREFIX = 'base1-runs/';
 
 const DEFAULT_PROMPT = `You are a friendly, conversational AI assistant helping users with step-by-step guidance.
 
@@ -100,6 +104,11 @@ export interface PromptConfig {
 
 export interface SystemSettings {
     globalSystemPrompt: string;
+}
+
+export interface GcsObjectWithGeneration<T> {
+    data: T;
+    generation: string;
 }
 
 export class GcsClient {
@@ -300,6 +309,85 @@ export class GcsClient {
             contentType: 'application/x-ndjson',
             metadata: { cacheControl: 'no-cache' },
         });
+    }
+
+    async getBase1ComparisonBuckets(): Promise<GcsObjectWithGeneration<Base1ComparisonBuckets>> {
+        const defaults: GcsObjectWithGeneration<Base1ComparisonBuckets> = {
+            data: { ...DEFAULT_BASE1_COMPARISON_BUCKETS },
+            generation: '0',
+        };
+        if (!this.bucketName) return defaults;
+
+        try {
+            const file = this.storage.bucket(this.bucketName).file(BASE1_BUCKETS_FILENAME);
+            const [exists] = await file.exists();
+            if (!exists) return defaults;
+
+            const [content] = await file.download();
+            const [meta] = await file.getMetadata();
+            const raw = JSON.parse(content.toString('utf-8')) as Base1ComparisonBuckets;
+            return {
+                data: raw,
+                generation: String(meta.generation ?? '0'),
+            };
+        } catch (error) {
+            logger.error(`Error fetching base1 buckets: ${error}`);
+            return defaults;
+        }
+    }
+
+    async saveBase1ComparisonBuckets(
+        data: Base1ComparisonBuckets,
+        ifGenerationMatch?: string,
+    ): Promise<GcsObjectWithGeneration<Base1ComparisonBuckets>> {
+        if (!this.bucketName) throw new Error('GCS_BUCKET_NAME not configured');
+
+        const file = this.storage.bucket(this.bucketName).file(BASE1_BUCKETS_FILENAME);
+        const saveOptions: { contentType: string; metadata: { cacheControl: string }; preconditionOpts?: { ifGenerationMatch: string } } = {
+            contentType: 'application/json',
+            metadata: { cacheControl: 'no-cache' },
+        };
+        if (ifGenerationMatch && ifGenerationMatch !== '0') {
+            saveOptions.preconditionOpts = { ifGenerationMatch };
+        }
+
+        await file.save(JSON.stringify(data, null, 2), saveOptions);
+        const [meta] = await file.getMetadata();
+        return { data, generation: String(meta.generation ?? '0') };
+    }
+
+    async saveBase1CrossCheckArtifacts(
+        runId: string,
+        jsonPayload: unknown,
+        xlsxBuffer: Buffer,
+    ): Promise<{ jsonPath: string; xlsxPath: string }> {
+        if (!this.bucketName) throw new Error('GCS_BUCKET_NAME not configured');
+
+        const prefix = `${BASE1_RUNS_PREFIX}${runId}/`;
+        const jsonPath = `${prefix}savings-crosscheck.json`;
+        const xlsxPath = `${prefix}savings-crosscheck.xlsx`;
+        const bucket = this.storage.bucket(this.bucketName);
+
+        await bucket.file(jsonPath).save(JSON.stringify(jsonPayload, null, 2), {
+            contentType: 'application/json',
+            metadata: { cacheControl: 'no-cache' },
+        });
+        await bucket.file(xlsxPath).save(xlsxBuffer, {
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            metadata: { cacheControl: 'no-cache' },
+        });
+
+        return { jsonPath, xlsxPath };
+    }
+
+    async getBase1CrossCheckXlsx(runId: string): Promise<Buffer | null> {
+        if (!this.bucketName) return null;
+        const path = `${BASE1_RUNS_PREFIX}${runId}/savings-crosscheck.xlsx`;
+        const file = this.storage.bucket(this.bucketName).file(path);
+        const [exists] = await file.exists();
+        if (!exists) return null;
+        const [content] = await file.download();
+        return Buffer.from(content);
     }
 
     /** Read a newline-delimited JSON file; returns one parsed object per non-empty line. */

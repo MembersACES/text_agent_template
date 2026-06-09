@@ -78,7 +78,11 @@ import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorag
 import { documentFetcherService } from '@/lib/services/google/DocumentFetcherService';
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
-import { deterministicSavingsService } from '@/lib/services/report/DeterministicSavingsService';
+import type { Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+import {
+    runDeterministicSavingsPipelineAsync,
+    type DeterministicPipelineOutput,
+} from '@/lib/services/report/deterministicSavingsPipeline';
 import {
     ExtractedInvoice,
     BusinessInfo,
@@ -86,9 +90,8 @@ import {
     calculateSavingsSummary,
     getElectricityClassificationDebug,
 } from '@/lib/types/ReportTypes';
-import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
+import { appendBase1BucketInjection, buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
-import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
 import {
     chunkSourceMatchesGuide,
     inferUtilitiesFromFilesContentAndNames,
@@ -243,8 +246,10 @@ Return ONLY the extracted text, no commentary.`
  */
 async function processInvoicesWithChat(
     files: ProcessedFile[],
-    agentId?: string
-): Promise<ExtractedInvoice[]> {
+    agentId?: string,
+    buckets?: Base1ComparisonBuckets,
+    configGeneration?: string,
+): Promise<{ invoices: ExtractedInvoice[]; pipeline: DeterministicPipelineOutput }> {
     // Build file context from uploaded files
     const TOTAL_FILE_BUDGET = 200000; // 200K chars for all uploaded files combined
     const maxLengthPerFile = Math.max(
@@ -360,6 +365,10 @@ async function processInvoicesWithChat(
         finalMessage = buildNoKBExtractionPrompt(fileContext);
     }
 
+    if (agentId === 'base-1-review' && buckets) {
+        finalMessage = appendBase1BucketInjection(finalMessage, buckets);
+    }
+
     // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(settings.gemini.apiKey);
     const model = genAI.getGenerativeModel({
@@ -378,11 +387,11 @@ async function processInvoicesWithChat(
     console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
     console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
 
-    // Extract JSON from response using shared utility, normalize keys, then deterministically
-    // calculate low_hanging_fruit so repeated runs with same invoices stay stable.
-    const extractedData: ExtractedInvoice[] = deterministicSavingsService.applyDeterministicFindings(
-        normalizeExtractedInvoices(extractJsonFromResponse(text)),
-    );
+    const pipeline = await runDeterministicSavingsPipelineAsync(extractJsonFromResponse(text), {
+        buckets,
+        configGeneration,
+    });
+    const extractedData = pipeline.invoices;
 
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
@@ -446,7 +455,7 @@ async function processInvoicesWithChat(
         }
     });
 
-    return extractedData;
+    return { invoices: extractedData, pipeline };
 }
 
 
@@ -670,8 +679,15 @@ export async function POST(request: Request) {
 
         console.log(`[Agent Process API] Files processed, extracting invoice data...`);
 
+        const bucketsSnapshot = await gcsClient.getBase1ComparisonBuckets();
+
         // Process invoices using chat logic
-        const extractedInvoices = await processInvoicesWithChat(processedFiles, agentId);
+        const { invoices: extractedInvoices, pipeline } = await processInvoicesWithChat(
+            processedFiles,
+            agentId,
+            bucketsSnapshot.data,
+            bucketsSnapshot.generation,
+        );
 
         console.log(`[Agent Process API] Extracted ${extractedInvoices.length} invoice(s)`);
 
@@ -723,11 +739,15 @@ export async function POST(request: Request) {
 
         // If metadata requested, return JSON with Excel as base64 + HTML email + metadata
         // Note: Using base64 for n8n compatibility (multipart is not easily parsed by n8n)
+        const includeStaffCrossCheck =
+            url.searchParams.get('includeStaffCrossCheck') === '1' ||
+            request.headers.get('x-base1-admin-key') === settings.auth.base1AdminKey;
+
         if (includeMetadata) {
             const htmlEmail = emailGeneratorService.generateEmail(reportData);
             const excelBase64 = excelBuffer.toString('base64');
 
-            return NextResponse.json({
+            const jsonBody: Record<string, unknown> = {
                 excelBase64,
                 htmlEmail,
                 businessInfo,
@@ -737,8 +757,28 @@ export async function POST(request: Request) {
                     invoiceCount: extractedInvoices.length,
                     generatedAt: reportData.generatedAt,
                     savingsSummary: reportData.savingsSummary,
+                    runId: pipeline.runId,
                 },
-            });
+            };
+
+            if (includeStaffCrossCheck) {
+                try {
+                    await gcsClient.saveBase1CrossCheckArtifacts(
+                        pipeline.runId,
+                        pipeline.crossCheck,
+                        pipeline.crossCheckXlsx,
+                    );
+                } catch (gcsErr) {
+                    console.warn('[Agent Process API] Cross-check GCS persist failed:', gcsErr);
+                }
+                jsonBody.savingsCrossCheck = pipeline.crossCheck;
+                jsonBody.savingsCrossCheckXlsx = {
+                    base64: pipeline.crossCheckXlsx.toString('base64'),
+                    fileName: `${pipeline.runId}-savings-crosscheck.xlsx`,
+                };
+            }
+
+            return NextResponse.json(jsonBody);
         }
 
         // Otherwise, return binary Excel only (backward-compatible)
