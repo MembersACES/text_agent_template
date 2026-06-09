@@ -158,6 +158,7 @@ export class DeterministicSavingsService {
         let annualSavings: number | null = null;
         let message: string | null = null;
         let formula = '';
+        let effectiveRatePerGj: number | null = null;
         const inputs: Record<string, number | string | boolean | null> = {
             annual_usage_gj: annualUsageGj,
             total_usage_gj: usageGjPeriod,
@@ -185,6 +186,7 @@ export class DeterministicSavingsService {
             inputs.invoice_ex_gst = invoiceExGst;
             inputs.bundled_rate_per_gj = bundledRate;
             inputs.energy_charge_per_gj = energyCharge;
+            effectiveRatePerGj = energyCharge;
             message =
                 `Calculated bundled gas energy charge ${energyCharge.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
                 `(bundled ${bundledRate.toFixed(2)} $/GJ × ${mult * 100}%).`;
@@ -207,6 +209,7 @@ export class DeterministicSavingsService {
             annualSavings = annualUsageGj * (retailRate - benchmark);
             formula = 'annual_saving = annual_gj × (retail_$/GJ - benchmark)';
             inputs.retail_rate_per_gj = retailRate;
+            effectiveRatePerGj = retailRate;
             message =
                 `Unbundled gas retail rate ${retailRate.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
         }
@@ -239,6 +242,13 @@ export class DeterministicSavingsService {
             comparisonsUsed: [{ bucketKey: benchmarkKey, value: benchmark, unit: '$/GJ' }],
             formula,
             steps: {
+                currentRate: effectiveRatePerGj,
+                comparisonRate: benchmark,
+                gap:
+                    effectiveRatePerGj !== null ? effectiveRatePerGj - benchmark : null,
+                gapUnit: '$/GJ',
+                periodValue: usageGjPeriod,
+                periodUnit: 'GJ',
                 annualSaving: annualSavings,
                 annualizationFormula: '(period_gj / billing_days) × 365',
                 annualizedValue: annualUsageGj,
@@ -588,9 +598,14 @@ export class DeterministicSavingsService {
             comparisonsUsed: [{ bucketKey, value: comparison, unit: '$/year' }],
             formula,
             steps: {
+                currentRate: annualMeter,
+                comparisonRate: comparison,
+                gap: savings,
+                gapUnit: '$/year',
+                periodValue: this.positive(invoice.meter_charges),
+                periodUnit: '$ (period)',
                 annualizedValue: annualMeter,
                 annualUnit: '$/year',
-                comparisonRate: comparison,
                 annualSaving: savings,
                 annualizationFormula: '(meter_charges / billing_days) × 365',
             },
@@ -719,6 +734,10 @@ export class DeterministicSavingsService {
             ],
             formula,
             steps: {
+                currentRate: billed,
+                comparisonRate: recorded,
+                periodValue: charges,
+                periodUnit: '$ (period)',
                 periodSaving: periodSavings,
                 annualSaving: annualSavings,
                 annualizationFormula: 'period_saving × (365 / billing_days)',

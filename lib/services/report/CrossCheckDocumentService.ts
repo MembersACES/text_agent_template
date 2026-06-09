@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import type { SavingsCrossCheck } from '@/lib/types/SavingsCrossCheckTypes';
+import { formatFindingForSheet } from '@/lib/services/report/crossCheckFindingDisplay';
 
 export class CrossCheckDocumentService {
     async generateWorkbook(crossCheck: SavingsCrossCheck): Promise<Buffer> {
@@ -40,8 +41,15 @@ export class CrossCheckDocumentService {
             { header: 'Invoice #', key: 'invoiceNumber', width: 14 },
             { header: 'NMI/MRIN', key: 'accountId', width: 14 },
             { header: 'Formula', key: 'formula', width: 40 },
-            { header: 'Comparison', key: 'comparison', width: 24 },
+            { header: 'Current', key: 'current', width: 14 },
+            { header: 'Current unit', key: 'currentUnit', width: 16 },
+            { header: 'Comparison (bucket)', key: 'comparison', width: 36 },
+            { header: 'Comparison value', key: 'comparisonValue', width: 14 },
+            { header: 'Comparison unit', key: 'comparisonUnit', width: 16 },
             { header: 'Gap', key: 'gap', width: 12 },
+            { header: 'Gap unit', key: 'gapUnit', width: 14 },
+            { header: 'Period usage', key: 'periodUsage', width: 18 },
+            { header: 'Annualized usage', key: 'annualUsage', width: 20 },
             { header: 'Annual saving', key: 'annualSaving', width: 14 },
             { header: 'Severity', key: 'severity', width: 10 },
             { header: 'In total', key: 'inTotal', width: 8 },
@@ -49,22 +57,7 @@ export class CrossCheckDocumentService {
             { header: 'Related charges', key: 'relatedCharges', width: 18 },
         ];
         crossCheck.findings.forEach((f) => {
-            const comp = f.comparisonsUsed.map((c) => `${c.bucketKey}=${c.value} ${c.unit}`).join('; ');
-            findings.addRow({
-                findingId: f.findingId,
-                type: f.type,
-                utility: f.utility,
-                invoiceNumber: f.invoiceRef.invoice_number ?? '',
-                accountId: f.invoiceRef.nmi ?? f.invoiceRef.mrin ?? '',
-                formula: f.formula,
-                comparison: comp,
-                gap: f.steps.gap ?? '',
-                annualSaving: f.steps.annualSaving ?? '',
-                severity: f.severity ?? '',
-                inTotal: f.includedInTotal ? 'Y' : 'N',
-                inCritical: f.includedInCriticalIssues ? 'Y' : 'N',
-                relatedCharges: f.clientSheetRelatedCharges ?? '',
-            });
+            findings.addRow(formatFindingForSheet(f));
         });
 
         const skipped = workbook.addWorksheet('Skipped');
