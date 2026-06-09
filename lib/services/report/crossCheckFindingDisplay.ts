@@ -23,10 +23,19 @@ export interface FindingSheetRow {
     relatedCharges: string;
 }
 
-function fmtQty(value: number | string | null | undefined, unit?: string | null): string {
-    if (value === null || value === undefined || value === '') return '';
+/** Narrow cross-check input/step values to sheet-safe scalars (excludes boolean). */
+function asSheetValue(value: unknown): number | string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'boolean') return '';
+    if (typeof value === 'number' || typeof value === 'string') return value;
+    return String(value);
+}
+
+function fmtQty(value: unknown, unit?: string | null): string {
+    const scalar = asSheetValue(value);
+    if (scalar === '') return '';
     const label = unit ? ` ${unit}` : '';
-    return `${value}${label}`;
+    return `${scalar}${label}`;
 }
 
 function fmtPct(ratio: number | null | undefined): string {
@@ -68,11 +77,12 @@ export function formatFindingForSheet(f: CrossCheckFindingRow): FindingSheetRow 
     }
 
     if (f.type === 'Metering charges above Base 1 comparison') {
-        const annualMeter = f.steps.annualizedValue ?? f.inputs.annual_meter;
+        const annualMeterRaw = f.steps.annualizedValue ?? f.inputs.annual_meter;
+        const annualMeter = asSheetValue(annualMeterRaw);
         const comparison = f.steps.comparisonRate ?? compFirst?.value;
         return {
             ...base,
-            current: annualMeter ?? '',
+            current: annualMeter,
             currentUnit: '$/year',
             comparison: comp,
             comparisonValue: comparison ?? '',
@@ -82,16 +92,17 @@ export function formatFindingForSheet(f: CrossCheckFindingRow): FindingSheetRow 
                     ? annualMeter - comparison
                     : f.steps.annualSaving ?? '',
             gapUnit: '$/year',
-            periodUsage: fmtQty(f.inputs.meter_charges as number | null, '$ (period)'),
-            annualUsage: fmtQty(annualMeter, '$/year'),
+            periodUsage: fmtQty(f.inputs.meter_charges, '$ (period)'),
+            annualUsage: fmtQty(annualMeterRaw, '$/year'),
         };
     }
 
     if (f.type === 'Gas energy rate above Base 1 comparison') {
-        const current =
+        const currentRaw =
             f.steps.currentRate ??
             f.inputs.retail_rate_per_gj ??
             f.inputs.energy_charge_per_gj;
+        const current = asSheetValue(currentRaw);
         const comparisonValue = f.steps.comparisonRate ?? compFirst?.value ?? '';
         const gap =
             f.steps.gap ??
@@ -100,29 +111,33 @@ export function formatFindingForSheet(f: CrossCheckFindingRow): FindingSheetRow 
                 : '');
         return {
             ...base,
-            current: current ?? '',
+            current,
             currentUnit: '$/GJ',
             comparison: comp,
             comparisonValue,
             comparisonUnit: compFirst?.unit ?? '$/GJ',
             gap,
             gapUnit: f.steps.gapUnit ?? '$/GJ',
-            periodUsage: fmtQty(f.inputs.total_usage_gj as number | null, 'GJ'),
+            periodUsage: fmtQty(f.inputs.total_usage_gj, 'GJ'),
             annualUsage: fmtQty(f.steps.annualizedValue, f.steps.annualUnit ?? 'GJ/year'),
         };
     }
 
     if (f.type === 'Demand charge vs recorded maximum demand') {
+        const relativeOverstatement =
+            typeof f.inputs.relative_overstatement === 'number'
+                ? f.inputs.relative_overstatement
+                : null;
         return {
             ...base,
-            current: f.inputs.demand_kw ?? '',
+            current: asSheetValue(f.inputs.demand_kw),
             currentUnit: 'kW (billed)',
             comparison: comp,
-            comparisonValue: f.inputs.recorded_max_demand_kw ?? '',
+            comparisonValue: asSheetValue(f.inputs.recorded_max_demand_kw),
             comparisonUnit: 'kW (recorded max)',
-            gap: fmtPct(f.inputs.relative_overstatement as number | null),
+            gap: fmtPct(relativeOverstatement),
             gapUnit: 'overstatement vs billed',
-            periodUsage: fmtQty(f.inputs.demand_charges as number | null, '$ (period)'),
+            periodUsage: fmtQty(f.inputs.demand_charges, '$ (period)'),
             annualUsage: fmtQty(f.steps.annualSaving, '$/year'),
         };
     }
