@@ -181,16 +181,25 @@ export function validateBase1ComparisonBuckets(
             num('electricity.retailTou.nsw.peakCPerKwh', nsw.peakCPerKwh, 0);
             num('electricity.retailTou.nsw.shoulderCPerKwh', nsw.shoulderCPerKwh, 0);
             num('electricity.retailTou.nsw.offPeakCPerKwh', nsw.offPeakCPerKwh, 0);
-            if (nsw.offPeakCPerKwh >= nsw.peakCPerKwh) {
-                errors.push({ path: 'electricity.retailTou.nsw', message: 'NSW off-peak must be < peak' });
-            }
         }
         if (other) {
             num('electricity.retailTou.other.peakCPerKwh', other.peakCPerKwh, 0);
             num('electricity.retailTou.other.offPeakCPerKwh', other.offPeakCPerKwh, 0);
-            if (other.offPeakCPerKwh >= other.peakCPerKwh) {
-                errors.push({ path: 'electricity.retailTou.other', message: 'Other off-peak must be < peak' });
-            }
+            num('electricity.retailTou.other.shoulderDefaultCPerKwh', other.shoulderDefaultCPerKwh, 0);
+            num('electricity.retailTou.other.shoulderWhenSameAsOffPeakCPerKwh', other.shoulderWhenSameAsOffPeakCPerKwh, 0);
+            num('electricity.retailTou.other.shoulderSameAsOffPeakTolerance', other.shoulderSameAsOffPeakTolerance, 0);
+        }
+        const metering = elec.metering as Record<string, unknown> | undefined;
+        if (metering) {
+            num('electricity.metering.noFindingMaxAnnual', metering.noFindingMaxAnnual, 0);
+            num('electricity.metering.midTierMaxAnnual', metering.midTierMaxAnnual, 0);
+            num('electricity.metering.midTierComparisonAnnual', metering.midTierComparisonAnnual, 0);
+            num('electricity.metering.highTierComparisonAnnual', metering.highTierComparisonAnnual, 0);
+            num('electricity.metering.highSeverityMinAnnual', metering.highSeverityMinAnnual, 0);
+        }
+        const demand = elec.demand as Record<string, unknown> | undefined;
+        if (demand) {
+            num('electricity.demand.minRelativeOverstatement', demand.minRelativeOverstatement, 0);
         }
     }
 
