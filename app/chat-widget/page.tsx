@@ -11,12 +11,22 @@ export const CHAT_WIDGET_MESSAGE_SOURCE = 'htg-chat-widget';
 
 const COLLAPSED_HEIGHT_PX = 88;
 const EXPANDED_HEIGHT_PX = 640;
+// Collapsed width hugs the launcher (56px circle + padding/shadow) so the parent iframe's
+// click hit-area no longer extends across the empty bottom strip and block page buttons.
+const COLLAPSED_WIDTH_PX = 96;
+const EXPANDED_WIDTH_PX = 380;
 
-function notifyParentHeight(expanded: boolean) {
+function notifyParentSize(expanded: boolean) {
   if (typeof window === 'undefined') return;
   const heightPx = expanded ? EXPANDED_HEIGHT_PX : COLLAPSED_HEIGHT_PX;
+  const widthPx = expanded ? EXPANDED_WIDTH_PX : COLLAPSED_WIDTH_PX;
   try {
-    window.parent.postMessage({ source: CHAT_WIDGET_MESSAGE_SOURCE, heightPx }, '*');
+    // Parent snippet uses these to size the iframe to the visible widget and to lift the
+    // collapsed launcher clear of store UI (e.g. the cart drawer's checkout button).
+    window.parent.postMessage(
+      { source: CHAT_WIDGET_MESSAGE_SOURCE, expanded, widthPx, heightPx },
+      '*'
+    );
   } catch {
     /* ignore cross-origin edge cases */
   }
@@ -51,7 +61,7 @@ function ChatWidgetPageContent() {
   }, []);
 
   useEffect(() => {
-    notifyParentHeight(open);
+    notifyParentSize(open);
   }, [open]);
 
   const logoSrc = getBranchLogoUrl(agentId);
