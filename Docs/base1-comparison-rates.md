@@ -36,9 +36,8 @@ Based on **annualised** gas consumption:
 
 `tariff_type` contains substring `"unbundled"` (case-insensitive) labels the bill; rate resolution is shared:
 
-1. Prefer **`gas_rate_per_gj`**, else usage charges ÷ GJ, else (invoice ex-GST − supply) ÷ GJ, else invoice ex-GST ÷ GJ.
-2. **Bundled** (no `"unbundled"` in `tariff_type`): multiply that rate **× 75%**, then compare to the tiered benchmark.
-3. **Unbundled:** compare the resolved rate as-is.
+1. **Bundled** (no `"unbundled"` in `tariff_type`): `(invoice_ex_gst / usage_gj) × 75%` (whole bill, supply included).
+2. **Unbundled:** prefer **`gas_rate_per_gj`**, else usage charges ÷ GJ, else invoice ex-GST ÷ GJ (no 75% haircut).
 
 ### Emission + severity rules (gas)
 

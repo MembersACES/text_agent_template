@@ -223,7 +223,8 @@ const tjajh: ExtractedInvoice = {
     billing_days: 61,
     total_usage_gj: 137.011,
     gas_rate_per_gj: 25.453,
-    total_charges_ex_gst: null,
+    total_charges_ex_gst: 3896.54 / 1.1,
+    gst_amount: 3896.54 - 3896.54 / 1.1,
     total_inc_gst: 3896.54,
     tariff_type: 'Business Select',
     low_hanging_fruit: [],
@@ -234,8 +235,9 @@ assert(!!tjajhF, 'TJAJH near-C&I finding expected');
 assert(tjajhF!.type === GAS_NEAR_CI_FINDING_TYPE, 'TJAJH finding type is potential near-C&I');
 const annualGjTj = (137.011 / 61) * 365;
 assert(annualGjTj >= 700 && annualGjTj < 1000, 'TJAJH annual GJ in near-C&I band');
-const expectedTj = annualGjTj * (25.453 * 0.75 - 17.1);
-assert(approx(parseFloat(tjajhF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedTj, 1), 'TJAJH bundled ×0.75 ~$1632');
+const tjAllIn = 3896.54 / 1.1 / 137.011;
+const expectedTj = annualGjTj * (tjAllIn * 0.75 - 17.1);
+assert(approx(parseFloat(tjajhF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedTj, 1), 'TJAJH whole-bill ×0.75 ~$1878');
 assert(/Potential:/.test(tjajhF!.message), 'TJAJH message flags Potential');
 const tjGroups = getBase1BenchmarkGroups([tjajhOut]);
 assert(tjGroups[0]?.optionKind === GAS_NEAR_CI_OPTION_KIND, 'TJAJH option is Potential (C&I 70%)');
@@ -247,7 +249,7 @@ assert(pressGroups.length === 0, 'Press Metal has no savings row after bundled �
 console.log('Step 0 verification: all paths passed.');
 console.log('- NSW TOU (10/10/12)');
 console.log('- Shoulder logic (7 when ≈ off-peak)');
-console.log('- Bundled gas ×0.75 on resolved rate (including gas_rate_per_gj)');
+console.log('- Bundled gas (invoice ex-GST / GJ) ×0.75 including supply');
 console.log('- Gas tier 17.1 / 15.0');
 console.log('- Press Metal bundled ×0.75 below 17.1 → skip');
 console.log('- Gas <700 GJ skipped');
