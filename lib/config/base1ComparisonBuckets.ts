@@ -216,6 +216,6 @@ export function buildBucketInjectionSummary(buckets: Base1ComparisonBuckets): st
     return `BASE 1 COMPARISON ENGINE (authoritative — server-side only; extract fields accurately; always low_hanging_fruit [] for Electricity/Gas):
 - Retail TOU savings are computed server-side from extracted energy-only c/kWh. NSW: peak ${nsw.peakCPerKwh}, shoulder ${nsw.shoulderCPerKwh}, off-peak ${nsw.offPeakCPerKwh} c/kWh. Other states: peak ${other.peakCPerKwh}, off-peak ${other.offPeakCPerKwh} c/kWh; shoulder uses off-peak comparison when billed same as off-peak (±${other.shoulderSameAsOffPeakTolerance}), else ${other.shoulderDefaultCPerKwh}.
 - Metering tiers: annual ≤${buckets.electricity.metering.noFindingMaxAnnual} no flag; (${buckets.electricity.metering.noFindingMaxAnnual}, ${buckets.electricity.metering.midTierMaxAnnual}] vs $${buckets.electricity.metering.midTierComparisonAnnual}/yr; >${buckets.electricity.metering.midTierMaxAnnual} vs $${buckets.electricity.metering.highTierComparisonAnnual}/yr.
-- Gas: min annual ${buckets.gas.minAnnualUsageGj} GJ; tiers ${gasTiers}; bundled ×${buckets.gas.bundledEnergyMultiplier} on ex-GST/GJ rate.
+- Gas: min annual ${buckets.gas.minAnnualUsageGj} GJ; tiers ${gasTiers}; prefer gas_rate_per_gj / usage charges / ex-supply rate; bundled all-in ×${buckets.gas.bundledEnergyMultiplier} only when no energy-only rate exists.
 - Emission gate: savings ≥ $${buckets.thresholds.minAnnualSavingsAud}/yr. Do not restate these figures as your own calculations — defer to the engine output.`;
 }

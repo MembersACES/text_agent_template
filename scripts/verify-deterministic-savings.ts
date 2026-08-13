@@ -147,8 +147,51 @@ assert(annualGjMid >= 10000 && annualGjMid < 30000, 'Mid tier annual GJ');
 const expectedMid = annualGjMid * (18 - 15);
 assert(approx(parseFloat(gasMidF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedMid), '15.0 tier');
 
+// Press Metal-style bundled retail plan WITH gas_rate_per_gj — must prefer energy rate (not ×0.75)
+const pressMetal: ExtractedInvoice = {
+    ...bundledGas,
+    business_name: 'Press Metal Aluminium (Australia) Pty Ltd',
+    supplier: 'EnergyAustralia',
+    site_address: '32 Southeast BVD Pakenham, VIC 3810',
+    mrin: '53203347912',
+    invoice_number: '155881053372',
+    billing_days: 63,
+    total_usage_gj: 399.48665,
+    gas_rate_per_gj: 21.077,
+    total_charges_ex_gst: 8500,
+    gst_amount: 850,
+    total_inc_gst: 9350,
+    tariff_type: 'Business Balance Plan 24',
+    low_hanging_fruit: [],
+};
+const [pressOut] = service.applyDeterministicFindings([pressMetal]);
+const pressF = pressOut.low_hanging_fruit?.[0];
+assert(!!pressF, 'Press Metal gas finding expected (prefer gas_rate over ×0.75)');
+const annualGjPm = (399.48665 / 63) * 365;
+const expectedPm = annualGjPm * (21.077 - 17.1);
+assert(approx(parseFloat(pressF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedPm, 1), 'Press Metal ~$9205');
+assert(pressF!.severity === 'high', 'Press Metal severity high');
+
+// Same Press Metal totals WITHOUT gas_rate — bundled ×0.75 should NOT emit (below benchmark)
+const pressMetalAllInOnly: ExtractedInvoice = {
+    ...pressMetal,
+    invoice_number: '155881053372-ALLIN',
+    gas_rate_per_gj: null,
+};
+const pressAllInResult = service.runPipeline([pressMetalAllInOnly]);
+assert(
+    (pressAllInResult.invoices[0].low_hanging_fruit?.length ?? 0) === 0,
+    'All-in bundled ×0.75 below benchmark → no finding',
+);
+assert(
+    pressAllInResult.recorder.skipped.some((s) => (s.computedAnnualSaving ?? 0) < 0),
+    'All-in path records negative computed saving',
+);
+
 console.log('Step 0 verification: all paths passed.');
 console.log('- NSW TOU (10/10/12)');
 console.log('- Shoulder logic (7 when ≈ off-peak)');
-console.log('- Bundled gas ×0.75');
+console.log('- Bundled gas ×0.75 (all-in fallback)');
 console.log('- Gas tier 17.1 / 15.0');
+console.log('- Press Metal: gas_rate preferred over bundled ×0.75');
+console.log('- Press Metal all-in-only: ×0.75 still skips below benchmark');

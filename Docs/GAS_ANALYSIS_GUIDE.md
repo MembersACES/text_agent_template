@@ -46,12 +46,18 @@
 
 **Automated savings (implemented in `DeterministicSavingsService`):**
 
-- **Unbundled:** compare commodity **$/GJ** (`gas_rate_per_gj`, or invoice ex-GST ÷ period GJ if needed) to the **tiered** Base 1 benchmark (annualised usage):
+- Annualised usage must be **≥ 1,000 GJ/year** (otherwise no gas savings row).
+- Resolve the **energy $/GJ** in this order (first match wins), then compare to the **tiered** Base 1 benchmark:
+  1. **`gas_rate_per_gj`** when present (preferred — energy/commodity rate excl. supply)
+  2. **`usage_charges_ex_gst` ÷ period GJ**
+  3. **`(invoice ex-GST − supply_charges_ex_gst) ÷ period GJ`** when supply is known
+  4. **Bundled fallback only:** `(invoice ex-GST ÷ period GJ) × 75%` when the bill is bundled and none of the above energy-only rates exist
+  5. **Unbundled fallback:** invoice ex-GST ÷ period GJ
+- Tiered benchmark (annualised usage):
   - [1000, 10000): **17.1 $/GJ**
   - [10000, 30000): **15.0 $/GJ**
   - [30000, +inf): **13.9 $/GJ**
   (thresholds **>$200/year** etc. apply on the server).
-- **Bundled:** only if annualised usage **≥ 1,000 GJ/year**; compare **(invoice ex-GST ÷ period `total_usage_gj`) × 75%** to the **same** tiered benchmark above. Below **1,000 GJ/year** → no automated gas savings row.
 
 **Daily supply:** extract `daily_supply_charge` ($/day) as data only — **no** Base 1 gas savings row from daily supply.
 
@@ -67,7 +73,7 @@
 | `account_number` | string |
 | `total_usage_mj`, `total_usage_gj` | **GJ = MJ ÷ 1000** |
 | `volume_m3` | number \| null |
-| `gas_rate_per_gj` | **Always extract or calculate** for unbundled commodity comparison where possible |
+| `gas_rate_per_gj` | **Always extract or calculate** (usage charges excl. supply ÷ GJ) — preferred input for Base 1 gas savings even on bundled retail plans |
 | `daily_supply_charge` | $/day |
 | `tariff_type` | Must include **“Unbundled”** when the bill is unbundled (substring match drives automation) |
 | `low_hanging_fruit` | Use **`[]`** in extraction JSON — **gas findings are computed deterministically** after extraction |
@@ -147,5 +153,5 @@ Use this style only for **manual** checks; automated exports use **bundled vs un
 | Original KB instruction | Update |
 |-------------------------|--------|
 | “Populate `low_hanging_fruit` array” for gas | **Incorrect for this app.** Extraction must use **`[]`**; `DeterministicSavingsService` adds gas findings. |
-| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **bundled 75% rule**, and **≥ 1,000 GJ/year gate on gas overall**. |
+| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **energy-rate preference** (with bundled ×75% only as all-in fallback), and **≥ 1,000 GJ/year gate on gas overall**. |
 | Customer size by annual GJ | Still valid for **human classification** and tables — **does not** switch bundled vs unbundled. |

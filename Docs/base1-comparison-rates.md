@@ -33,9 +33,13 @@ Based on **annualised** gas consumption:
 
 ### Bundled vs Unbundled (from `tariff_type`)
 
-`tariff_type` contains substring `"unbundled"` (case-insensitive):
-- **Unbundled:** compare commodity retail **$/GJ** directly to the tiered benchmark.
-- **Bundled:** compare `(invoice_ex_gst / usage_gj) × 75%` to the tiered benchmark.
+`tariff_type` contains substring `"unbundled"` (case-insensitive) labels the bill; rate resolution is shared:
+
+1. Prefer **`gas_rate_per_gj`**, else usage charges ÷ GJ, else (invoice ex-GST − supply) ÷ GJ.
+2. **Bundled all-in fallback only:** `(invoice_ex_gst / usage_gj) × 75%` when no energy-only rate is available.
+3. **Unbundled fallback:** `invoice_ex_gst / usage_gj`.
+
+Compare the resolved energy $/GJ to the tiered benchmark.
 
 ### Emission + severity rules (gas)
 
