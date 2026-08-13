@@ -48,12 +48,13 @@
 
 - Annualised usage must be **≥ 700 GJ/year** (otherwise no gas savings row).
 - **Near-C&I [700, 1000) GJ/year:** same **17.1 $/GJ** as the 1,000 GJ C&I tier (70% of the C&I usage cut). Included in Expected/Conservative totals; labelled **Potential (C&I 70%)** on email and Base 1 Analysis.
-- Resolve the **energy $/GJ** in this order (first match wins), then compare to the **tiered** Base 1 benchmark:
-  1. **`gas_rate_per_gj`** when present (preferred — energy/commodity rate excl. supply)
+- Resolve the **usage $/GJ** in this order (first match wins):
+  1. **`gas_rate_per_gj`** when present (usage excl. supply)
   2. **`usage_charges_ex_gst` ÷ period GJ**
   3. **`(invoice ex-GST − supply_charges_ex_gst) ÷ period GJ`** when supply is known
-  4. **Bundled fallback only:** `(invoice ex-GST ÷ period GJ) × 75%` when the bill is bundled and none of the above energy-only rates exist
-  5. **Unbundled fallback:** invoice ex-GST ÷ period GJ
+  4. **Fallback:** invoice ex-GST ÷ period GJ
+- **Bundled** (no “unbundled” in `tariff_type`): then multiply that rate **× 75%** before comparing to the tiered benchmark (so a bundled retail rate is not compared raw to the C&I energy $/GJ).
+- **Unbundled:** compare the resolved rate as-is.
 - Tiered benchmark (annualised usage):
   - [700, 1000): **17.1 $/GJ** (Potential / near-C&I)
   - [1000, 10000): **17.1 $/GJ**
@@ -155,5 +156,5 @@ Use this style only for **manual** checks; automated exports use **bundled vs un
 | Original KB instruction | Update |
 |-------------------------|--------|
 | “Populate `low_hanging_fruit` array” for gas | **Incorrect for this app.** Extraction must use **`[]`**; `DeterministicSavingsService` adds gas findings. |
-| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **energy-rate preference** (with bundled ×75% only as all-in fallback), **≥ 700 GJ/year gate**, and **[700, 1000) near-C&I** labelled Potential (C&I 70%). |
+| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **bundled ×75% on the resolved usage rate**, **≥ 700 GJ/year gate**, and **[700, 1000) near-C&I** labelled Potential (C&I 70%). |
 | Customer size by annual GJ | Still valid for **human classification** and tables — **does not** switch bundled vs unbundled. |

@@ -204,11 +204,7 @@ export class DeterministicSavingsService {
             : 'Gas energy rate above Base 1 comparison';
 
         const annualSavings = annualUsageGj * (effectiveRatePerGj - benchmark);
-        let message =
-            source === 'bundled_all_in_x_mult'
-                ? `Calculated bundled gas energy charge ${effectiveRatePerGj.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
-                  `(all-in ${Number(extras.bundled_rate_per_gj).toFixed(2)} $/GJ × ${buckets.gas.bundledEnergyMultiplier * 100}%).`
-                : `${messagePrefix} ${effectiveRatePerGj.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
+        let message = `${messagePrefix} ${effectiveRatePerGj.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
         if (nearCi) {
             const near = buckets.gas.nearCi;
             message +=
@@ -273,8 +269,7 @@ export class DeterministicSavingsService {
     }
 
     /**
-     * Prefer an explicit/derived energy-only $/GJ over the bundled all-in ×75% haircut.
-     * ×75% applies only when the bill is bundled and we only have an all-in invoice total.
+     * Resolve usage/commodity $/GJ, then apply bundled ×75% whenever the bill is not unbundled.
      */
     private resolveGasEffectiveRatePerGj(params: {
         invoice: ExtractedInvoice;
@@ -289,7 +284,39 @@ export class DeterministicSavingsService {
         messagePrefix: string;
         extras: Record<string, number | string | boolean | null>;
     } | null {
-        const { invoice, invoiceExGst, usageGjPeriod, bundledGas, bundledMultiplier } = params;
+        const raw = this.resolveGasRawRatePerGj(params);
+        if (raw === null) return null;
+        if (!params.bundledGas) return raw;
+
+        const haircut = raw.rate * params.bundledMultiplier;
+        return {
+            rate: haircut,
+            source: `${raw.source}_x_bundled_mult`,
+            formula: `${raw.formula}; energy_rate = that × ${params.bundledMultiplier}`,
+            messagePrefix: `Bundled gas energy charge (${raw.rate.toFixed(2)} $/GJ × ${params.bundledMultiplier * 100}%)`,
+            extras: {
+                ...raw.extras,
+                pre_haircut_rate_per_gj: raw.rate,
+                bundled_multiplier: params.bundledMultiplier,
+                energy_charge_per_gj: haircut,
+            },
+        };
+    }
+
+    private resolveGasRawRatePerGj(params: {
+        invoice: ExtractedInvoice;
+        invoiceExGst: number | null;
+        usageGjPeriod: number | null;
+        bundledGas: boolean;
+        bundledMultiplier: number;
+    }): {
+        rate: number;
+        source: string;
+        formula: string;
+        messagePrefix: string;
+        extras: Record<string, number | string | boolean | null>;
+    } | null {
+        const { invoice, invoiceExGst, usageGjPeriod } = params;
         const extras: Record<string, number | string | boolean | null> = {};
 
         const explicit = this.positive(invoice.gas_rate_per_gj);
@@ -299,7 +326,7 @@ export class DeterministicSavingsService {
                 rate: explicit,
                 source: 'gas_rate_per_gj',
                 formula: 'energy_rate = gas_rate_per_gj',
-                messagePrefix: bundledGas
+                messagePrefix: params.bundledGas
                     ? 'Bundled gas energy rate'
                     : 'Unbundled gas retail rate',
                 extras,
@@ -349,24 +376,13 @@ export class DeterministicSavingsService {
 
         const allIn = invoiceExGst / usageGjPeriod;
         extras.bundled_rate_per_gj = allIn;
-
-        if (bundledGas) {
-            const rate = allIn * bundledMultiplier;
-            extras.energy_charge_per_gj = rate;
-            return {
-                rate,
-                source: 'bundled_all_in_x_mult',
-                formula: `energy_rate = (invoice_ex_gst / period_gj) × ${bundledMultiplier}`,
-                messagePrefix: 'Calculated bundled gas energy charge',
-                extras,
-            };
-        }
-
         return {
             rate: allIn,
             source: 'invoice_ex_gst',
             formula: 'energy_rate = invoice_ex_gst / period_gj',
-            messagePrefix: 'Unbundled gas retail rate',
+            messagePrefix: params.bundledGas
+                ? 'Calculated bundled gas energy charge'
+                : 'Unbundled gas retail rate',
             extras,
         };
     }

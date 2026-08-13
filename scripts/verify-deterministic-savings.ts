@@ -152,7 +152,7 @@ assert(annualGjMid >= 10000 && annualGjMid < 30000, 'Mid tier annual GJ');
 const expectedMid = annualGjMid * (18 - 15);
 assert(approx(parseFloat(gasMidF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedMid), '15.0 tier');
 
-// Press Metal-style bundled retail plan WITH gas_rate_per_gj — must prefer energy rate (not ×0.75)
+// Press Metal-style bundled retail plan WITH gas_rate_per_gj — still ×0.75 (21.077×0.75 < 17.1 → skip)
 const pressMetal: ExtractedInvoice = {
     ...bundledGas,
     business_name: 'Press Metal Aluminium (Australia) Pty Ltd',
@@ -169,15 +169,15 @@ const pressMetal: ExtractedInvoice = {
     tariff_type: 'Business Balance Plan 24',
     low_hanging_fruit: [],
 };
-const [pressOut] = service.applyDeterministicFindings([pressMetal]);
-const pressF = pressOut.low_hanging_fruit?.[0];
-assert(!!pressF, 'Press Metal gas finding expected (prefer gas_rate over ×0.75)');
-const annualGjPm = (399.48665 / 63) * 365;
-const expectedPm = annualGjPm * (21.077 - 17.1);
-assert(approx(parseFloat(pressF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedPm, 1), 'Press Metal ~$9205');
-assert(pressF!.severity === 'high', 'Press Metal severity high');
+const pressResult = service.runPipeline([pressMetal]);
+const [pressOut] = pressResult.invoices;
+assert((pressOut.low_hanging_fruit?.length ?? 0) === 0, 'Press Metal bundled ×0.75 below 17.1 → no finding');
+assert(
+    pressResult.recorder.skipped.some((s) => (s.computedAnnualSaving ?? 0) < 0),
+    'Press Metal records negative computed saving after ×0.75',
+);
 
-// Same Press Metal totals WITHOUT gas_rate — bundled ×0.75 should NOT emit (below benchmark)
+// Same Press Metal totals WITHOUT gas_rate — bundled all-in ×0.75 should also skip
 const pressMetalAllInOnly: ExtractedInvoice = {
     ...pressMetal,
     invoice_number: '155881053372-ALLIN',
@@ -234,22 +234,21 @@ assert(!!tjajhF, 'TJAJH near-C&I finding expected');
 assert(tjajhF!.type === GAS_NEAR_CI_FINDING_TYPE, 'TJAJH finding type is potential near-C&I');
 const annualGjTj = (137.011 / 61) * 365;
 assert(annualGjTj >= 700 && annualGjTj < 1000, 'TJAJH annual GJ in near-C&I band');
-const expectedTj = annualGjTj * (25.453 - 17.1);
-assert(approx(parseFloat(tjajhF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedTj, 1), 'TJAJH ~$6848');
+const expectedTj = annualGjTj * (25.453 * 0.75 - 17.1);
+assert(approx(parseFloat(tjajhF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedTj, 1), 'TJAJH bundled ×0.75 ~$1632');
 assert(/Potential:/.test(tjajhF!.message), 'TJAJH message flags Potential');
 const tjGroups = getBase1BenchmarkGroups([tjajhOut]);
 assert(tjGroups[0]?.optionKind === GAS_NEAR_CI_OPTION_KIND, 'TJAJH option is Potential (C&I 70%)');
 assert(approx(tjGroups[0]!.totalSavings, expectedTj, 1), 'TJAJH included in Expected grouping');
 
 const pressGroups = getBase1BenchmarkGroups([pressOut]);
-assert(pressGroups[0]?.optionKind === 'Profile Reset', 'Press Metal stays Profile Reset (>=1000 GJ)');
+assert(pressGroups.length === 0, 'Press Metal has no savings row after bundled ×0.75');
 
 console.log('Step 0 verification: all paths passed.');
 console.log('- NSW TOU (10/10/12)');
 console.log('- Shoulder logic (7 when ≈ off-peak)');
-console.log('- Bundled gas ×0.75 (all-in fallback)');
+console.log('- Bundled gas ×0.75 on resolved rate (including gas_rate_per_gj)');
 console.log('- Gas tier 17.1 / 15.0');
-console.log('- Press Metal: gas_rate preferred over bundled ×0.75');
-console.log('- Press Metal all-in-only: ×0.75 still skips below benchmark');
+console.log('- Press Metal bundled ×0.75 below 17.1 → skip');
 console.log('- Gas <700 GJ skipped');
 console.log('- Near-C&I 700–999 GJ at 17.1 labelled Potential (C&I 70%)');
