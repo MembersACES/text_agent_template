@@ -12,7 +12,7 @@ Most comparisons are annualised using:
 
 `annual_value = (period_value / billing_days) * 365`
 
-The engine only emits gas findings when **annualised gas usage >= 1,000 GJ**.
+The engine only emits gas findings when **annualised gas usage >= 700 GJ**.
 
 ---
 
@@ -21,12 +21,13 @@ The engine only emits gas findings when **annualised gas usage >= 1,000 GJ**.
 ### Emission gate
 
 No automated gas savings rows when:
-- annualised usage is `null` or `< 1,000 GJ/year`
+- annualised usage is `null` or `< 700 GJ/year`
 
 ### Tiered benchmark ($/GJ)
 
 Based on **annualised** gas consumption:
 
+- `[700, 1,000)` GJ/year: compare with **17.1 $/GJ** (near-C&I — labelled **Potential (C&I 70%)**, included in Expected)
 - `[1,000, 10,000)` GJ/year: compare with **17.1 $/GJ**
 - `[10,000, 30,000)` GJ/year: compare with **15.0 $/GJ**
 - `>= 30,000` GJ/year: compare with **13.9 $/GJ**

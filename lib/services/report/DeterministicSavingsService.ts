@@ -1,7 +1,10 @@
 import {
     Base1ComparisonBuckets,
     DEFAULT_BASE1_COMPARISON_BUCKETS,
+    GAS_NEAR_CI_FINDING_TYPE,
     gasBenchmarkPerGj,
+    isGasNearCiUsage,
+    normalizeBase1ComparisonBuckets,
 } from '@/lib/config/base1ComparisonBuckets';
 import { getLogger } from '@/lib/config/logger';
 import { base1RelatedChargesLabel } from '@/lib/utils/base1AnalysisLabels';
@@ -27,7 +30,11 @@ export interface DeterministicPipelineResult {
 }
 
 export class DeterministicSavingsService {
-    constructor(private readonly buckets: Base1ComparisonBuckets = DEFAULT_BASE1_COMPARISON_BUCKETS) {}
+    private readonly buckets: Base1ComparisonBuckets;
+
+    constructor(buckets: Base1ComparisonBuckets = DEFAULT_BASE1_COMPARISON_BUCKETS) {
+        this.buckets = normalizeBase1ComparisonBuckets(buckets);
+    }
 
     applyDeterministicFindings(
         invoices: ExtractedInvoice[],
@@ -40,7 +47,7 @@ export class DeterministicSavingsService {
         invoices: ExtractedInvoice[],
         options?: ApplyDeterministicOptions,
     ): DeterministicPipelineResult {
-        const buckets = options?.buckets ?? this.buckets;
+        const buckets = normalizeBase1ComparisonBuckets(options?.buckets ?? this.buckets);
         const recorder = options?.recorder ?? new SavingsCrossCheckRecorder();
         const eligible = buildSavingsEligibleInvoiceIndexSet(invoices);
 
@@ -190,18 +197,30 @@ export class DeterministicSavingsService {
         inputs.rate_source = source;
         inputs.energy_rate_per_gj = effectiveRatePerGj;
 
+        const nearCi = isGasNearCiUsage(annualUsageGj, buckets);
+        inputs.near_ci = nearCi;
+        const findingType = nearCi
+            ? GAS_NEAR_CI_FINDING_TYPE
+            : 'Gas energy rate above Base 1 comparison';
+
         const annualSavings = annualUsageGj * (effectiveRatePerGj - benchmark);
-        const message =
+        let message =
             source === 'bundled_all_in_x_mult'
                 ? `Calculated bundled gas energy charge ${effectiveRatePerGj.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ ` +
                   `(all-in ${Number(extras.bundled_rate_per_gj).toFixed(2)} $/GJ × ${buckets.gas.bundledEnergyMultiplier * 100}%).`
                 : `${messagePrefix} ${effectiveRatePerGj.toFixed(2)} $/GJ exceeds Base 1 comparison of ${benchmark.toFixed(2)} $/GJ.`;
+        if (nearCi) {
+            const near = buckets.gas.nearCi;
+            message +=
+                ` Potential: annualised usage ${annualUsageGj.toFixed(0)} GJ is in the ${near.minGj}–${near.maxGj - 1} GJ near-C&I band ` +
+                `(70% of the ${near.maxGj} GJ C&I threshold); compared at the ${near.maxGj} GJ rate.`;
+        }
 
         const savingsFormula = `${formula}; annual_saving = annual_gj × (energy_rate - benchmark)`;
         const minSavings = buckets.thresholds.minAnnualSavingsAud;
         if (annualSavings < minSavings) {
             recorder.recordSkipped({
-                type: 'Gas energy rate above Base 1 comparison',
+                type: findingType,
                 utility: 'Gas',
                 invoiceRef: ref,
                 reason: `Annual saving $${annualSavings.toFixed(2)} below $${minSavings} gate`,
@@ -216,7 +235,7 @@ export class DeterministicSavingsService {
         const severity: Severity = annualSavings >= highTh ? 'high' : 'medium';
 
         recorder.recordEmitted({
-            type: 'Gas energy rate above Base 1 comparison',
+            type: findingType,
             utility: 'Gas',
             invoiceRef: ref,
             inputs,
@@ -238,15 +257,12 @@ export class DeterministicSavingsService {
             passedMinSavingsGate: true,
             severity,
             severityRule: `high if annual_saving >= $${highTh}`,
-            clientSheetRelatedCharges: base1RelatedChargesLabel(
-                'Gas energy rate above Base 1 comparison',
-                'Gas',
-            ),
+            clientSheetRelatedCharges: base1RelatedChargesLabel(findingType, 'Gas'),
         });
 
         const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [
             {
-                type: 'Gas energy rate above Base 1 comparison',
+                type: findingType,
                 severity,
                 message,
                 potential_savings: this.moneyPerYear(annualSavings),

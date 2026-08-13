@@ -1,6 +1,9 @@
 import { randomUUID } from 'crypto';
 import type { Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
-import { DEFAULT_BASE1_COMPARISON_BUCKETS } from '@/lib/config/base1ComparisonBuckets';
+import {
+    DEFAULT_BASE1_COMPARISON_BUCKETS,
+    normalizeBase1ComparisonBuckets,
+} from '@/lib/config/base1ComparisonBuckets';
 import { buildSavingsCrossCheck } from '@/lib/services/report/buildSavingsCrossCheck';
 import { crossCheckDocumentService } from '@/lib/services/report/CrossCheckDocumentService';
 import {
@@ -26,7 +29,7 @@ export function runDeterministicSavingsPipeline(
         generatedAt?: string;
     },
 ): DeterministicPipelineOutput {
-    const buckets = options?.buckets ?? DEFAULT_BASE1_COMPARISON_BUCKETS;
+    const buckets = normalizeBase1ComparisonBuckets(options?.buckets ?? DEFAULT_BASE1_COMPARISON_BUCKETS);
     const normalized = normalizeExtractedInvoices(rawInvoices);
     const service = createDeterministicSavingsService(buckets);
     const { invoices, recorder } = service.runPipeline(normalized);

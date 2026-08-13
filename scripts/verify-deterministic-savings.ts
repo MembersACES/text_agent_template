@@ -2,9 +2,14 @@
  * Step 0: verify unconfirmed DeterministicSavingsService paths against synthetic invoices.
  * Run: npx tsx scripts/verify-deterministic-savings.ts
  */
-import { DEFAULT_BASE1_COMPARISON_BUCKETS } from '../lib/config/base1ComparisonBuckets';
+import {
+    DEFAULT_BASE1_COMPARISON_BUCKETS,
+    GAS_NEAR_CI_FINDING_TYPE,
+    GAS_NEAR_CI_OPTION_KIND,
+} from '../lib/config/base1ComparisonBuckets';
 import { createDeterministicSavingsService } from '../lib/services/report/DeterministicSavingsService';
 import type { ExtractedInvoice } from '../lib/types/ReportTypes';
+import { getBase1BenchmarkGroups } from '../lib/utils/base1AnalysisLabels';
 
 function assert(cond: boolean, msg: string): void {
     if (!cond) throw new Error(msg);
@@ -188,6 +193,57 @@ assert(
     'All-in path records negative computed saving',
 );
 
+const gasBase = bundledGas;
+
+// Below 700 GJ — still skip
+const below700: ExtractedInvoice = {
+    ...gasBase,
+    invoice_number: 'GAS-699',
+    billing_days: 365,
+    total_usage_gj: 699,
+    gas_rate_per_gj: 25.453,
+    total_charges_ex_gst: null,
+    tariff_type: 'Business Select',
+};
+const below700Result = service.runPipeline([below700]);
+assert((below700Result.invoices[0].low_hanging_fruit?.length ?? 0) === 0, '699 GJ must skip');
+assert(
+    below700Result.recorder.skipped.some((s) => String(s.reason).includes('700')),
+    '699 GJ skip reason cites 700 gate',
+);
+
+// TJAJH-style near-C&I 820 GJ at $25.453 vs 17.1
+const tjajh: ExtractedInvoice = {
+    ...gasBase,
+    business_name: 'TJAJH ENTERPRISES PTY LTD',
+    supplier: 'Origin',
+    site_address: '348 Bridge RD Richmond VIC 3121',
+    mrin: '53214118733',
+    invoice_number: '133775323',
+    billing_days: 61,
+    total_usage_gj: 137.011,
+    gas_rate_per_gj: 25.453,
+    total_charges_ex_gst: null,
+    total_inc_gst: 3896.54,
+    tariff_type: 'Business Select',
+    low_hanging_fruit: [],
+};
+const [tjajhOut] = service.applyDeterministicFindings([tjajh]);
+const tjajhF = tjajhOut.low_hanging_fruit?.[0];
+assert(!!tjajhF, 'TJAJH near-C&I finding expected');
+assert(tjajhF!.type === GAS_NEAR_CI_FINDING_TYPE, 'TJAJH finding type is potential near-C&I');
+const annualGjTj = (137.011 / 61) * 365;
+assert(annualGjTj >= 700 && annualGjTj < 1000, 'TJAJH annual GJ in near-C&I band');
+const expectedTj = annualGjTj * (25.453 - 17.1);
+assert(approx(parseFloat(tjajhF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedTj, 1), 'TJAJH ~$6848');
+assert(/Potential:/.test(tjajhF!.message), 'TJAJH message flags Potential');
+const tjGroups = getBase1BenchmarkGroups([tjajhOut]);
+assert(tjGroups[0]?.optionKind === GAS_NEAR_CI_OPTION_KIND, 'TJAJH option is Potential (C&I 70%)');
+assert(approx(tjGroups[0]!.totalSavings, expectedTj, 1), 'TJAJH included in Expected grouping');
+
+const pressGroups = getBase1BenchmarkGroups([pressOut]);
+assert(pressGroups[0]?.optionKind === 'Profile Reset', 'Press Metal stays Profile Reset (>=1000 GJ)');
+
 console.log('Step 0 verification: all paths passed.');
 console.log('- NSW TOU (10/10/12)');
 console.log('- Shoulder logic (7 when ≈ off-peak)');
@@ -195,3 +251,5 @@ console.log('- Bundled gas ×0.75 (all-in fallback)');
 console.log('- Gas tier 17.1 / 15.0');
 console.log('- Press Metal: gas_rate preferred over bundled ×0.75');
 console.log('- Press Metal all-in-only: ×0.75 still skips below benchmark');
+console.log('- Gas <700 GJ skipped');
+console.log('- Near-C&I 700–999 GJ at 17.1 labelled Potential (C&I 70%)');

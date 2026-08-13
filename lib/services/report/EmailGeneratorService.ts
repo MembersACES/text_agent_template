@@ -1,3 +1,4 @@
+import { GAS_NEAR_CI_OPTION_KIND } from '@/lib/config/base1ComparisonBuckets';
 import { ReportData } from '@/lib/types/ReportTypes';
 import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
@@ -21,6 +22,8 @@ export class EmailGeneratorService {
         const summaryAreas = utilityTypesWithIssues.length > 0
             ? utilityTypesWithIssues.slice(0, 4).join(', ') + (utilityTypesWithIssues.length > 4 ? ' and others' : '')
             : 'your utilities';
+
+        const hasNearCiPotential = benchmarkGroups.some((g) => g.optionKind === GAS_NEAR_CI_OPTION_KIND);
 
         const formatCurrency = (amount: number) =>
             new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -104,6 +107,11 @@ export class EmailGeneratorService {
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.conservative)}</strong> to
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.moderate)}</strong>.
                                 </p>
+                                ${hasNearCiPotential ? `
+                                <p style="margin: 12px 0 0 0; font-size: 14px; line-height: 1.5; color: #4a5568;">
+                                    Gas items labelled <strong>Potential (C&I 70%)</strong> are sites with annualised usage of 700–999 GJ
+                                    (70% of the 1,000 GJ C&amp;I threshold), compared at the 1,000 GJ Base 1 rate.
+                                </p>` : ''}
                             </div>
                         </td>
                     </tr>` : ''}

@@ -17,6 +17,11 @@ export interface Base1ComparisonBuckets {
     gas: {
         minAnnualUsageGj: number;
         bundledEnergyMultiplier: number;
+        /**
+         * Annual GJ band treated as near-C&I (70% of the 1,000 GJ C&I cut).
+         * Uses the first full C&I tier $/GJ; findings are labelled Potential (C&I 70%).
+         */
+        nearCi: { minGj: number; maxGj: number };
         tiers: Array<{ minGj: number; maxGj: number | null; benchmarkPerGj: number }>;
     };
 
@@ -55,8 +60,9 @@ export const DEFAULT_BASE1_COMPARISON_BUCKETS: Base1ComparisonBuckets = {
         highSeverityRateGapCPerKwh: 5,
     },
     gas: {
-        minAnnualUsageGj: 1000,
+        minAnnualUsageGj: 700,
         bundledEnergyMultiplier: 0.75,
+        nearCi: { minGj: 700, maxGj: 1000 },
         tiers: [
             { minGj: 1000, maxGj: 10000, benchmarkPerGj: 17.1 },
             { minGj: 10000, maxGj: 30000, benchmarkPerGj: 15.0 },
@@ -87,8 +93,46 @@ export const DEFAULT_BASE1_COMPARISON_BUCKETS: Base1ComparisonBuckets = {
     },
 };
 
+export const GAS_NEAR_CI_OPTION_KIND = 'Potential (C&I 70%)' as const;
+export const GAS_NEAR_CI_FINDING_TYPE =
+    'Gas energy rate above Base 1 comparison (potential near-C&I)' as const;
+
+export function isGasNearCiUsage(annualUsageGj: number, buckets: Base1ComparisonBuckets): boolean {
+    const near = buckets.gas.nearCi;
+    if (!near) return false;
+    return annualUsageGj >= near.minGj && annualUsageGj < near.maxGj;
+}
+
+export function isGasNearCiFindingType(findingType: string): boolean {
+    return /near-c&i|potential \(c&i 70%\)/i.test(findingType);
+}
+
+/** Fill near-C&I defaults so older GCS bucket JSON still emits the 700–999 GJ band. */
+export function normalizeBase1ComparisonBuckets(raw: Base1ComparisonBuckets): Base1ComparisonBuckets {
+    const firstTierMin = raw.gas?.tiers?.[0]?.minGj ?? 1000;
+    const hadNearCi = raw.gas?.nearCi != null;
+    const nearCi = raw.gas?.nearCi ?? {
+        minGj: DEFAULT_BASE1_COMPARISON_BUCKETS.gas.nearCi.minGj,
+        maxGj: firstTierMin,
+    };
+    const minAnnualUsageGj = hadNearCi
+        ? raw.gas.minAnnualUsageGj
+        : Math.min(raw.gas?.minAnnualUsageGj ?? firstTierMin, nearCi.minGj);
+    return {
+        ...raw,
+        gas: {
+            ...raw.gas,
+            nearCi,
+            minAnnualUsageGj,
+        },
+    };
+}
+
 export function gasBenchmarkPerGj(annualUsageGj: number, buckets: Base1ComparisonBuckets): number {
     const tiers = buckets.gas.tiers;
+    if (isGasNearCiUsage(annualUsageGj, buckets)) {
+        return tiers[0]?.benchmarkPerGj ?? 17.1;
+    }
     for (let i = tiers.length - 1; i >= 0; i--) {
         if (annualUsageGj >= tiers[i].minGj) {
             return tiers[i].benchmarkPerGj;
@@ -142,6 +186,23 @@ export function validateBase1ComparisonBuckets(
     } else {
         num('gas.minAnnualUsageGj', gas.minAnnualUsageGj, 0);
         num('gas.bundledEnergyMultiplier', gas.bundledEnergyMultiplier, 0, 1);
+        const nearCi = gas.nearCi as Record<string, unknown> | undefined;
+        if (nearCi) {
+            num('gas.nearCi.minGj', nearCi.minGj, 0);
+            num('gas.nearCi.maxGj', nearCi.maxGj, 0);
+            const tiersArr = gas.tiers as Array<{ minGj: number }> | undefined;
+            const firstTierMin = Array.isArray(tiersArr) ? tiersArr[0]?.minGj : undefined;
+            if (
+                typeof nearCi.maxGj === 'number' &&
+                firstTierMin !== undefined &&
+                nearCi.maxGj !== firstTierMin
+            ) {
+                errors.push({
+                    path: 'gas.nearCi.maxGj',
+                    message: `Must equal first C&I tier minGj (${firstTierMin})`,
+                });
+            }
+        }
         const tiers = gas.tiers;
         if (!Array.isArray(tiers) || tiers.length === 0) {
             errors.push({ path: 'gas.tiers', message: 'At least one tier required' });
@@ -216,6 +277,6 @@ export function buildBucketInjectionSummary(buckets: Base1ComparisonBuckets): st
     return `BASE 1 COMPARISON ENGINE (authoritative — server-side only; extract fields accurately; always low_hanging_fruit [] for Electricity/Gas):
 - Retail TOU savings are computed server-side from extracted energy-only c/kWh. NSW: peak ${nsw.peakCPerKwh}, shoulder ${nsw.shoulderCPerKwh}, off-peak ${nsw.offPeakCPerKwh} c/kWh. Other states: peak ${other.peakCPerKwh}, off-peak ${other.offPeakCPerKwh} c/kWh; shoulder uses off-peak comparison when billed same as off-peak (±${other.shoulderSameAsOffPeakTolerance}), else ${other.shoulderDefaultCPerKwh}.
 - Metering tiers: annual ≤${buckets.electricity.metering.noFindingMaxAnnual} no flag; (${buckets.electricity.metering.noFindingMaxAnnual}, ${buckets.electricity.metering.midTierMaxAnnual}] vs $${buckets.electricity.metering.midTierComparisonAnnual}/yr; >${buckets.electricity.metering.midTierMaxAnnual} vs $${buckets.electricity.metering.highTierComparisonAnnual}/yr.
-- Gas: min annual ${buckets.gas.minAnnualUsageGj} GJ; tiers ${gasTiers}; prefer gas_rate_per_gj / usage charges / ex-supply rate; bundled all-in ×${buckets.gas.bundledEnergyMultiplier} only when no energy-only rate exists.
+- Gas: min annual ${buckets.gas.minAnnualUsageGj} GJ; near-C&I [${buckets.gas.nearCi.minGj}, ${buckets.gas.nearCi.maxGj}) uses first-tier $/GJ labelled Potential (C&I 70%); tiers ${gasTiers}; prefer gas_rate_per_gj / usage charges / ex-supply rate; bundled all-in ×${buckets.gas.bundledEnergyMultiplier} only when no energy-only rate exists.
 - Emission gate: savings ≥ $${buckets.thresholds.minAnnualSavingsAud}/yr. Do not restate these figures as your own calculations — defer to the engine output.`;
 }

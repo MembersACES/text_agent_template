@@ -46,7 +46,8 @@
 
 **Automated savings (implemented in `DeterministicSavingsService`):**
 
-- Annualised usage must be **≥ 1,000 GJ/year** (otherwise no gas savings row).
+- Annualised usage must be **≥ 700 GJ/year** (otherwise no gas savings row).
+- **Near-C&I [700, 1000) GJ/year:** same **17.1 $/GJ** as the 1,000 GJ C&I tier (70% of the C&I usage cut). Included in Expected/Conservative totals; labelled **Potential (C&I 70%)** on email and Base 1 Analysis.
 - Resolve the **energy $/GJ** in this order (first match wins), then compare to the **tiered** Base 1 benchmark:
   1. **`gas_rate_per_gj`** when present (preferred — energy/commodity rate excl. supply)
   2. **`usage_charges_ex_gst` ÷ period GJ**
@@ -54,6 +55,7 @@
   4. **Bundled fallback only:** `(invoice ex-GST ÷ period GJ) × 75%` when the bill is bundled and none of the above energy-only rates exist
   5. **Unbundled fallback:** invoice ex-GST ÷ period GJ
 - Tiered benchmark (annualised usage):
+  - [700, 1000): **17.1 $/GJ** (Potential / near-C&I)
   - [1000, 10000): **17.1 $/GJ**
   - [10000, 30000): **15.0 $/GJ**
   - [30000, +inf): **13.9 $/GJ**
@@ -153,5 +155,5 @@ Use this style only for **manual** checks; automated exports use **bundled vs un
 | Original KB instruction | Update |
 |-------------------------|--------|
 | “Populate `low_hanging_fruit` array” for gas | **Incorrect for this app.** Extraction must use **`[]`**; `DeterministicSavingsService` adds gas findings. |
-| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **energy-rate preference** (with bundled ×75% only as all-in fallback), and **≥ 1,000 GJ/year gate on gas overall**. |
+| Savings from SME/C&I benchmark tables | **Not** how automated savings are calculated. Bands are **narrative**; automation uses the **tiered** $/GJ benchmark (17.1 / 15.0 / 13.9), **energy-rate preference** (with bundled ×75% only as all-in fallback), **≥ 700 GJ/year gate**, and **[700, 1000) near-C&I** labelled Potential (C&I 70%). |
 | Customer size by annual GJ | Still valid for **human classification** and tables — **does not** switch bundled vs unbundled. |

@@ -1,13 +1,23 @@
 import {
+    GAS_NEAR_CI_OPTION_KIND,
+    isGasNearCiFindingType,
+} from '@/lib/config/base1ComparisonBuckets';
+import {
     getSavingsEligibleOpportunities,
     type ExtractedInvoice,
     type SavingsFilterOptions,
 } from '@/lib/types/ReportTypes';
 
-export type Base1OptionKind = 'Profile Reset' | 'Discrepancy';
+export type Base1OptionKind = 'Profile Reset' | 'Discrepancy' | typeof GAS_NEAR_CI_OPTION_KIND;
 
-/** Label shown in Base 1 Analysis — Waste uses Discrepancy; all other utilities Profile Reset. */
-export function base1OptionKind(utilityType: ExtractedInvoice['utility_type']): Base1OptionKind {
+/** Label shown in Base 1 Analysis — Waste uses Discrepancy; near-C&I gas uses Potential (C&I 70%). */
+export function base1OptionKind(
+    utilityType: ExtractedInvoice['utility_type'],
+    findingType?: string,
+): Base1OptionKind {
+    if (utilityType === 'Gas' && findingType && isGasNearCiFindingType(findingType)) {
+        return GAS_NEAR_CI_OPTION_KIND;
+    }
     return utilityType === 'Waste' ? 'Discrepancy' : 'Profile Reset';
 }
 
@@ -55,8 +65,8 @@ export function getBase1BenchmarkGroups(
 
     getSavingsEligibleOpportunities(invoices, options).forEach((opp) => {
         const relatedCharges = base1RelatedChargesLabel(opp.type, opp.utilityType);
-        const optionKind = base1OptionKind(opp.utilityType);
-        const key = `${opp.utilityType}|${relatedCharges}`;
+        const optionKind = base1OptionKind(opp.utilityType, opp.type);
+        const key = `${opp.utilityType}|${optionKind}|${relatedCharges}`;
         if (!map.has(key)) {
             map.set(key, {
                 utilityType: opp.utilityType,

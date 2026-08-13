@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
-import { validateBase1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+import {
+    normalizeBase1ComparisonBuckets,
+    validateBase1ComparisonBuckets,
+} from '@/lib/config/base1ComparisonBuckets';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
 
@@ -38,7 +41,7 @@ export async function PUT(request: Request) {
         }
 
         const payload = {
-            ...validated.data,
+            ...normalizeBase1ComparisonBuckets(validated.data),
             updatedAt: new Date().toISOString(),
             updatedBy: typeof body.updatedBy === 'string' ? body.updatedBy : validated.data.updatedBy,
         };

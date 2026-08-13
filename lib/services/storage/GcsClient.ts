@@ -1,6 +1,9 @@
 import { Storage } from '@google-cloud/storage';
 import type { Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
-import { DEFAULT_BASE1_COMPARISON_BUCKETS } from '@/lib/config/base1ComparisonBuckets';
+import {
+    DEFAULT_BASE1_COMPARISON_BUCKETS,
+    normalizeBase1ComparisonBuckets,
+} from '@/lib/config/base1ComparisonBuckets';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 
@@ -327,7 +330,7 @@ export class GcsClient {
             const [meta] = await file.getMetadata();
             const raw = JSON.parse(content.toString('utf-8')) as Base1ComparisonBuckets;
             return {
-                data: raw,
+                data: normalizeBase1ComparisonBuckets(raw),
                 generation: String(meta.generation ?? '0'),
             };
         } catch (error) {
