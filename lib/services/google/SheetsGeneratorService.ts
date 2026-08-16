@@ -3,6 +3,7 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
 const logger = getLogger('SheetsGeneratorService');
 
@@ -11,6 +12,15 @@ const TOTALS_BG_COLOR = { red: 1.0, green: 0.851, blue: 0.4 }; // #FFD966
 const OVERVIEW_SECTION_BG = { red: 0.906, green: 0.902, blue: 0.902 }; // #E7E6E6
 
 export class SheetsGeneratorService {
+    private formatCurrency(amount: number): string {
+        return new Intl.NumberFormat('en-AU', {
+            style: 'currency',
+            currency: 'AUD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    }
+
     async createSheet(data: ReportData, folderId?: string): Promise<{ spreadsheetId: string; url: string }> {
         const auth = googleAuthService.getWriteAuth();
 
@@ -191,12 +201,11 @@ export class SheetsGeneratorService {
         ];
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        values.push(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
+        values.push(['Total Provided Invoice Cost', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
             values.push(
-                ['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`],
-                ['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`],
-                ['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]
+                ['Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative)],
+                ['Potential Savings (Expected)', this.formatCurrency(data.savingsSummary.moderate)]
             );
         }
 
@@ -687,150 +696,285 @@ export class SheetsGeneratorService {
         await this.formatSheetHeader(sheets, spreadsheetId, sheetId);
     }
 
-    private shortIssueSummary(issue: string, maxLen = 80): string {
-        const trimmed = (issue || '').trim();
-        const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
-        if (firstSentence.length <= maxLen) return firstSentence;
-        return firstSentence.slice(0, maxLen).trim() + '…';
-    }
-
     private async populateBase1AnalysisSheet(sheets: any, spreadsheetId: string, sheetId: number, data: ReportData) {
+        const COLS = 5;
+        const pad = (cells: string[]): string[] => [...cells, ...Array(Math.max(0, COLS - cells.length)).fill('')];
+
         const rows: string[][] = [];
-        const maxCol = 4;
-        const pad = (arr: string[], len: number): string[] => [...arr, ...Array(Math.max(0, len - arr.length)).fill('')];
+        const pushRow = (cells: string[]) => rows.push(pad(cells));
 
-        // One-line savings at top (lead with the number)
-        if (data.savingsSummary) {
-            const c = data.savingsSummary.conservative;
-            const o = data.savingsSummary.optimistic;
-            rows.push(pad([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`], maxCol));
-            rows.push(pad([], maxCol));
-        }
+        const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, { hideWasteForMemberReport: true });
+        const totalEstimated = data.savingsSummary?.moderate ?? benchmarkGroups.reduce((sum, g) => sum + g.totalSavings, 0);
+        const firstMonthFee = totalEstimated / 12;
 
-        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
-        rows.push(pad(['Benchmarking summary'], maxCol));
-        rows.push(pad([], maxCol));
-        rows.push(pad(['Category', 'Issue type', 'Count', 'Est. total savings per year'], maxCol));
+        // Title bar + subtitle
+        const titleIdx = rows.length;
+        pushRow(['Base 1 Review — Savings Analysis', '', '', '', '']);
+        pushRow([]);
+        const subtitleIdx = rows.length;
+        pushRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
+        pushRow([]);
 
-        const groupKey = (u: string, t: string) => `${u}|${t}`;
-        const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
-        data.invoices.forEach(inv => {
-            (inv.low_hanging_fruit || []).forEach(opp => {
-                const key = groupKey(inv.utility_type, opp.type);
-                if (!grouped.has(key)) {
-                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
-                }
-                const g = grouped.get(key)!;
-                g.count += 1;
-                if (opp.potential_savings) {
-                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
-                }
-            });
+        // KPI labels + values (left/right blocks)
+        const kpiLabelIdx = rows.length;
+        pushRow(['ESTIMATED ANNUAL SAVINGS', '', '', 'OUR FEE (FIRST MONTH ONLY)', '']);
+        const kpiValueIdx = rows.length;
+        pushRow([this.formatCurrency(Math.round(totalEstimated)), '', '', this.formatCurrency(Math.round(firstMonthFee)), '']);
+        pushRow([]);
+
+        // Breakdown table
+        const breakdownTitleIdx = rows.length;
+        pushRow(['Breakdown by Category', '', '', '', '']);
+        const benchmarkHeaderIdx = rows.length;
+        pushRow(['Category', 'Option', 'Inv.', 'Charge Type', 'Savings P.A.']);
+
+        benchmarkGroups.forEach((g) => {
+            pushRow([g.utilityType, g.optionKind, String(g.invoiceCount), g.relatedCharges, g.totalSavings > 0 ? this.formatCurrency(g.totalSavings) : '']);
         });
-        const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
-        const maxBenchmarkingRows = 8;
-        const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
-        toShowGroups.forEach(g => {
-            rows.push(pad([g.category, g.type, g.count.toString(), g.savings > 0 ? `$${g.savings.toFixed(2)}` : ''], maxCol));
-        });
-        if (sortedGroups.length > maxBenchmarkingRows) {
-            rows.push(pad([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', ''], maxCol));
-        }
 
-        rows.push(pad([], maxCol));
-        rows.push(pad(['Total potential savings (estimate)'], maxCol));
-        rows.push(pad([], maxCol));
-        if (data.savingsSummary) {
-            rows.push(pad(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`], maxCol));
-            rows.push(pad(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`], maxCol));
-            rows.push(pad(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`], maxCol));
-        }
+        const estTotalRowIdx = rows.length;
+        pushRow(['Estimated Savings', '', '', '', this.formatCurrency(totalEstimated)]);
 
-        rows.push(pad([], maxCol));
-        if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
-            const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 3;
-            const toShow = issues.slice(0, maxShow);
-            rows.push(pad(['Critical issues (top items – see full report for detail)'], maxCol));
-            rows.push(pad([], maxCol));
-            rows.push(pad(['Summary', 'Est. savings per year'], maxCol));
-            toShow.forEach(issue => {
-                rows.push(pad([this.shortIssueSummary(issue.issue), `$${issue.savings.toFixed(2)}`], maxCol));
-            });
-            if (issues.length > maxShow) {
-                rows.push(pad([`${issues.length - maxShow} more critical issue(s) in full report.`, ''], maxCol));
-            }
-        }
-
-        const colLetter = (n: number) => {
-            let s = '';
-            while (n >= 0) {
-                s = String.fromCharCode(65 + (n % 26)) + s;
-                n = Math.floor(n / 26) - 1;
-            }
-            return s;
-        };
-        const range = `Base 1 Analysis!A1:${colLetter(maxCol - 1)}${rows.length}`;
         await sheets.spreadsheets.values.update({
             spreadsheetId,
-            range,
+            range: `Base 1 Analysis!A1:E${rows.length}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: rows },
         });
 
-        // Row index of table header (Category, Issue type, ...): with savings at top: 0,1,2,3,4 so header at 4. Without: 0,1,2 so header at 2.
-        const tableHeaderRowIndex = data.savingsSummary ? 4 : 2;
-        const benchmarkingTitleRowIndex = data.savingsSummary ? 2 : 0;
-        const requests: object[] = [
-            {
-                repeatCell: {
-                    range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
-                    cell: {
-                        userEnteredFormat: {
-                            textFormat: { bold: true, fontSize: 12 },
-                        },
+        const blueBannerFormat = {
+            backgroundColor: HEADER_BG_COLOR,
+            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 12 },
+            horizontalAlignment: 'CENTER' as const,
+        };
+        const kpiLabelFormat = {
+            backgroundColor: OVERVIEW_SECTION_BG,
+            textFormat: { foregroundColor: { red: 0.2, green: 0.227, blue: 0.286 }, bold: true, fontSize: 9 },
+            horizontalAlignment: 'LEFT' as const,
+        };
+
+        const blueHeaderFormat = {
+            backgroundColor: HEADER_BG_COLOR,
+            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+            horizontalAlignment: 'CENTER' as const,
+        };
+
+        const requests: object[] = [];
+
+        // Title row
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: titleIdx, endRowIndex: titleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: titleIdx, endRowIndex: titleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: HEADER_BG_COLOR,
+                        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 14 },
+                        horizontalAlignment: 'CENTER',
                     },
-                    fields: 'userEnteredFormat.textFormat',
+                },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: subtitleIdx, endRowIndex: subtitleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: subtitleIdx, endRowIndex: subtitleIdx + 1, startColumnIndex: 0, endColumnIndex: COLS },
+                cell: {
+                    userEnteredFormat: {
+                        textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.29, green: 0.333, blue: 0.408 } },
+                        horizontalAlignment: 'LEFT',
+                    },
+                },
+                fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
+            },
+        });
+
+        // KPI section
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                cell: { userEnteredFormat: kpiLabelFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiLabelIdx, endRowIndex: kpiLabelIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                cell: { userEnteredFormat: kpiLabelFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            mergeCells: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                cell: {
+                    userEnteredFormat: {
+                        textFormat: { bold: true, fontSize: 24, foregroundColor: { red: 0.063, green: 0.165, blue: 0.263 } },
+                        horizontalAlignment: 'LEFT',
+                    },
+                },
+                fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: { sheetId, startRowIndex: kpiValueIdx, endRowIndex: kpiValueIdx + 1, startColumnIndex: 3, endColumnIndex: 5 },
+                cell: {
+                    userEnteredFormat: {
+                        textFormat: { bold: true, fontSize: 24, foregroundColor: { red: 0.063, green: 0.165, blue: 0.263 } },
+                        horizontalAlignment: 'LEFT',
+                    },
+                },
+                fields: 'userEnteredFormat(textFormat,horizontalAlignment)',
+            },
+        });
+
+        requests.push({
+            mergeCells: {
+                range: {
+                    sheetId,
+                    startRowIndex: breakdownTitleIdx,
+                    endRowIndex: breakdownTitleIdx + 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: COLS,
+                },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: {
+                    sheetId,
+                    startRowIndex: benchmarkHeaderIdx,
+                    endRowIndex: benchmarkHeaderIdx + 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: COLS,
+                },
+                cell: { userEnteredFormat: blueHeaderFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+
+        requests.push({
+            mergeCells: {
+                range: {
+                    sheetId,
+                    startRowIndex: estTotalRowIdx,
+                    endRowIndex: estTotalRowIdx + 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: 4,
+                },
+                mergeType: 'MERGE_ALL',
+            },
+        });
+        requests.push({
+            repeatCell: {
+                range: {
+                    sheetId,
+                    startRowIndex: estTotalRowIdx,
+                    endRowIndex: estTotalRowIdx + 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: 5,
+                },
+                cell: { userEnteredFormat: blueHeaderFormat },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+            },
+        });
+
+        requests.push({
+            autoResizeDimensions: {
+                dimensions: {
+                    sheetId,
+                    dimension: 'COLUMNS',
+                    startIndex: 0,
+                    endIndex: COLS,
                 },
             },
-            {
-                repeatCell: {
-                    range: { sheetId, startRowIndex: benchmarkingTitleRowIndex, endRowIndex: benchmarkingTitleRowIndex + 1 },
-                    cell: {
-                        userEnteredFormat: {
-                            textFormat: { bold: true, fontSize: 14 },
-                        },
-                    },
-                    fields: 'userEnteredFormat.textFormat',
-                },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 },
+                properties: { pixelSize: 150 },
+                fields: 'pixelSize',
             },
-            {
-                repeatCell: {
-                    range: { sheetId, startRowIndex: tableHeaderRowIndex, endRowIndex: tableHeaderRowIndex + 1 },
-                    cell: {
-                        userEnteredFormat: {
-                            backgroundColor: HEADER_BG_COLOR,
-                            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
-                            horizontalAlignment: 'CENTER',
-                        },
-                    },
-                    fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-                },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 },
+                properties: { pixelSize: 140 },
+                fields: 'pixelSize',
             },
-            {
-                updateSheetProperties: {
-                    properties: {
-                        sheetId,
-                        gridProperties: {
-                            rowCount: Math.max(rows.length + 2, 50),
-                            frozenRowCount: data.savingsSummary ? 5 : 3,
-                        },
-                    },
-                    fields: 'gridProperties(rowCount,frozenRowCount)',
-                },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 },
+                properties: { pixelSize: 80 },
+                fields: 'pixelSize',
             },
-        ];
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 3, endIndex: 4 },
+                properties: { pixelSize: 165 },
+                fields: 'pixelSize',
+            },
+        });
+        requests.push({
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 4, endIndex: 5 },
+                properties: { pixelSize: 120 },
+                fields: 'pixelSize',
+            },
+        });
+
+        requests.push({
+            updateSheetProperties: {
+                properties: {
+                    sheetId,
+                    gridProperties: {
+                        rowCount: Math.max(rows.length + 2, 50),
+                        frozenRowCount: Math.min(benchmarkHeaderIdx + 1, rows.length),
+                    },
+                },
+                fields: 'gridProperties(rowCount,frozenRowCount)',
+            },
+        });
+
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
             requestBody: { requests },

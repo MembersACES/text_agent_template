@@ -3,12 +3,14 @@ import { settings } from '@/lib/config/settings';
 import { googleAuthService } from '@/lib/services/google/GoogleAuthService';
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
-import { ReportData, ExtractedInvoice, BusinessInfo, calculateSavingsSummary } from '@/lib/types/ReportTypes';
+import { runDeterministicSavingsPipelineAsync } from '@/lib/services/report/deterministicSavingsPipeline';
+import { gcsClient } from '@/lib/services/storage/GcsClient';
+import { ReportData, BusinessInfo, calculateSavingsSummary } from '@/lib/types/ReportTypes';
 
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { invoices, businessInfo, agentId, uploadedFiles } = body;
+        const { invoices, businessInfo, agentId } = body;
 
         if (!Array.isArray(invoices) || invoices.length === 0) {
             return NextResponse.json(
@@ -24,117 +26,76 @@ export async function POST(request: Request) {
             );
         }
 
-        // Build report data
+        const bucketsSnapshot = await gcsClient.getBase1ComparisonBuckets();
+        const pipeline = await runDeterministicSavingsPipelineAsync(invoices, {
+            buckets: bucketsSnapshot.data,
+            configGeneration: bucketsSnapshot.generation,
+        });
+        const normalizedInvoices = pipeline.invoices;
+
         const reportData: ReportData = {
             businessInfo: businessInfo as BusinessInfo,
-            invoices: invoices as ExtractedInvoice[],
+            invoices: normalizedInvoices,
             generatedAt: new Date().toISOString(),
-            savingsSummary: calculateSavingsSummary(invoices as ExtractedInvoice[]),
+            savingsSummary: calculateSavingsSummary(normalizedInvoices),
         };
 
-        // Generate Excel workbook
         const excelBuffer = await excelGeneratorService.generateWorkbook(reportData);
 
-        // Upload to GCS and get signed URL
         const storage = googleAuthService.getStorageClient();
         const bucket = storage.bucket(settings.gcs.bucketName);
         const fileName = `base1-review-${businessInfo.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.xlsx`;
         const file = bucket.file(`reports/${fileName}`);
 
-        // Save file with metadata including creation timestamp for cleanup
         await file.save(excelBuffer, {
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             metadata: {
                 cacheControl: 'public, max-age=3600',
                 created: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // 2 days from now
+                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
             },
         });
 
-        // Generate signed URL (valid for 1 hour)
         const [downloadUrl] = await file.getSignedUrl({
             action: 'read',
-            expires: Date.now() + 3600000, // 1 hour
+            expires: Date.now() + 3600000,
         });
 
-        // Drive upload feature is currently disabled
-        // Upload to Google Drive if folder is specified (for Base 1 Review agent)
-        // const BASE1_REPORTS_FOLDER_ID = '1wZpdNFOIYPQ1Bl9FHaVsBqRj4KUEG3LK';
-        // const folderId = agentId === 'base-1-review' ? BASE1_REPORTS_FOLDER_ID : undefined;
-        
         let driveUploads: Array<{ fileId: string; url: string; fileName: string }> = [];
-        let driveUploadError: string | null = null;
+        const driveUploadError: string | null = null;
 
-        // Drive upload feature is currently disabled
-        // if (folderId) {
-        //     try {
-        //         console.log('[Report API] Attempting to upload files to Google Drive folder:', folderId);
-        //         
-        //         // Prepare files to upload
-        //         const filesToUpload: Array<{ buffer: Buffer; fileName: string; mimeType: string }> = [
-        //             {
-        //                 buffer: excelBuffer,
-        //                 fileName: fileName,
-        //                 mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        //             },
-        //         ];
-
-        //         // Add uploaded invoice files if provided
-        //         if (uploadedFiles && Array.isArray(uploadedFiles)) {
-        //             for (const uploadedFile of uploadedFiles) {
-        //                 if (uploadedFile.name && uploadedFile.fileBufferBase64) {
-        //                     // Convert base64 back to buffer (original file)
-        //                     const fileBuffer = Buffer.from(uploadedFile.fileBufferBase64, 'base64');
-        //                     
-        //                     // Use MIME type from upload, or determine from extension
-        //                     let mimeType = uploadedFile.mimeType || 'application/octet-stream';
-        //                     if (mimeType === 'application/octet-stream') {
-        //                         const extension = uploadedFile.name.split('.').pop()?.toLowerCase();
-        //                         const mimeTypes: Record<string, string> = {
-        //                             'pdf': 'application/pdf',
-        //                             'jpg': 'image/jpeg',
-        //                             'jpeg': 'image/jpeg',
-        //                             'png': 'image/png',
-        //                             'xls': 'application/vnd.ms-excel',
-        //                             'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        //                             'doc': 'application/msword',
-        //                             'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        //                             'txt': 'text/plain',
-        //                         };
-        //                         if (extension && mimeTypes[extension]) {
-        //                             mimeType = mimeTypes[extension];
-        //                         }
-        //                     }
-
-        //                     filesToUpload.push({
-        //                         buffer: fileBuffer,
-        //                         fileName: `Invoice - ${uploadedFile.name}`,
-        //                         mimeType: mimeType,
-        //                     });
-        //                 }
-        //             }
-        //         }
-
-        //         // Upload all files to Drive
-        //         driveUploads = await uploadFilesToDrive(filesToUpload, folderId);
-        //         console.log(`[Report API] Successfully uploaded ${driveUploads.length} file(s) to Drive`);
-        //     } catch (uploadError: any) {
-        //         console.error('[Report API] Drive upload failed:', uploadError?.message || uploadError);
-        //         driveUploadError = uploadError?.message || 'Failed to upload files to Google Drive';
-        //         // Continue - Excel file is still available for download
-        //     }
-        // }
-
-        // Generate HTML email
         const htmlEmail = emailGeneratorService.generateEmail(reportData);
 
-        return NextResponse.json({
+        const includeStaffCrossCheck =
+            request.headers.get('x-base1-admin-key') === settings.auth.base1AdminKey;
+
+        const response: Record<string, unknown> = {
             success: true,
             downloadUrl,
             fileName,
             htmlEmail,
             note: 'Excel file is available for download. Drive upload feature is currently disabled.',
-        });
+            metadata: { runId: pipeline.runId },
+        };
+
+        if (includeStaffCrossCheck) {
+            try {
+                await gcsClient.saveBase1CrossCheckArtifacts(
+                    pipeline.runId,
+                    pipeline.crossCheck,
+                    pipeline.crossCheckXlsx,
+                );
+            } catch (gcsErr) {
+                console.warn('[Report API] Cross-check GCS persist failed:', gcsErr);
+            }
+            response.savingsCrossCheck = pipeline.crossCheck;
+            response.savingsCrossCheckXlsx = {
+                base64: pipeline.crossCheckXlsx.toString('base64'),
+                fileName: `${pipeline.runId}-savings-crosscheck.xlsx`,
+            };
+        }
+
+        return NextResponse.json(response);
     } catch (error) {
         console.error('Error generating report:', error);
         return NextResponse.json(
@@ -143,5 +104,3 @@ export async function POST(request: Request) {
         );
     }
 }
-
-

@@ -31,6 +31,7 @@
  * 
  * Returns:
  * - Excel file (.xlsx) as binary response with Content-Disposition header
+ * - Or with ?format=json or Accept: application/json: JSON with excelBase64, htmlEmail, businessInfo, invoices (full extracted row per invoice), metadata
  * 
  * Example (curl - multipart):
  * curl -X POST http://localhost:3000/api/agents/process \
@@ -77,9 +78,25 @@ import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorag
 import { documentFetcherService } from '@/lib/services/google/DocumentFetcherService';
 import { excelGeneratorService } from '@/lib/services/report/ExcelGeneratorService';
 import { emailGeneratorService } from '@/lib/services/report/EmailGeneratorService';
-import { ExtractedInvoice, BusinessInfo, ReportData, calculateSavingsSummary } from '@/lib/types/ReportTypes';
-import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
+import type { Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+import {
+    runDeterministicSavingsPipelineAsync,
+    type DeterministicPipelineOutput,
+} from '@/lib/services/report/deterministicSavingsPipeline';
+import {
+    ExtractedInvoice,
+    BusinessInfo,
+    ReportData,
+    calculateSavingsSummary,
+    getElectricityClassificationDebug,
+} from '@/lib/types/ReportTypes';
+import { appendBase1BucketInjection, buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
+import {
+    chunkSourceMatchesGuide,
+    inferUtilitiesFromFilesContentAndNames,
+    sortGuideChunksForExtraction,
+} from '@/lib/config/knowledgeBaseGuides';
 
 interface ProcessedFile {
     name: string;
@@ -229,8 +246,10 @@ Return ONLY the extracted text, no commentary.`
  */
 async function processInvoicesWithChat(
     files: ProcessedFile[],
-    agentId?: string
-): Promise<ExtractedInvoice[]> {
+    agentId?: string,
+    buckets?: Base1ComparisonBuckets,
+    configGeneration?: string,
+): Promise<{ invoices: ExtractedInvoice[]; pipeline: DeterministicPipelineOutput }> {
     // Build file context from uploaded files
     const TOTAL_FILE_BUDGET = 200000; // 200K chars for all uploaded files combined
     const maxLengthPerFile = Math.max(
@@ -262,41 +281,28 @@ async function processInvoicesWithChat(
     if (useKnowledgeBase) {
         const kb = await knowledgeBaseStorage.getCached(agentId);
         if (kb) {
-            // Use guide documents directly (like chat API) to ensure benchmark sections are included
-            const guideDocuments = ['ELECTRICITY_GUIDE', 'GAS_GUIDE', 'WATER_GUIDE', 'WASTE_GUIDE', 'OIL_GUIDE'];
-            
-            // Get all chunks from guide documents
-            const guideChunks = kb.chunks.filter((chunk: any) => {
-                const source = chunk.source || '';
-                return guideDocuments.some(guide => source.includes(guide));
-            });
+            // All guide chunks, sorted by benchmark keywords + optional utility inference (we do not drop
+            // other utilities — that removed too much context vs the previous 20-chunk mix).
+            const allGuideChunks = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+            const utilityHint = inferUtilitiesFromFilesContentAndNames(
+                fileContext,
+                files.map((f) => f.name),
+            );
+            if (utilityHint && utilityHint.size > 0) {
+                console.log(
+                    `[Agent Process API] Guide utility hint: ${[...utilityHint].join(', ')} (sort tie-break; all guide families still in pool)`,
+                );
+            }
             
             let similarChunks: any[] = [];
             let useKBContext = false;
 
-            if (guideChunks.length > 0) {
-                // Prioritize chunks that contain "benchmark" or "metering" to ensure benchmark sections are included
-                similarChunks = guideChunks
-                    .map(chunk => ({
-                        ...chunk,
-                        priority: (chunk.text.toLowerCase().includes('benchmark') || 
-                                 chunk.text.toLowerCase().includes('metering') ||
-                                 chunk.text.toLowerCase().includes('dma') ||
-                                 chunk.text.toLowerCase().includes('market benchmark')) ? 1 : 0
-                    }))
-                    .sort((a, b) => {
-                        // Sort by priority first, then by source (prefer ELECTRICITY_GUIDE)
-                        if (a.priority !== b.priority) return b.priority - a.priority;
-                        const aIsElec = (a.source || '').includes('ELECTRICITY_GUIDE');
-                        const bIsElec = (b.source || '').includes('ELECTRICITY_GUIDE');
-                        if (aIsElec && !bIsElec) return -1;
-                        if (!aIsElec && bIsElec) return 1;
-                        return 0;
-                    })
-                    .slice(0, 20); // Get top 20 chunks from guides
-                
+            if (allGuideChunks.length > 0) {
+                similarChunks = sortGuideChunksForExtraction(allGuideChunks, utilityHint).slice(0, 20);
                 useKBContext = true;
-                console.log(`[Agent Process API] Found ${guideChunks.length} guide document chunks, using ${similarChunks.length} for benchmarking`);
+                console.log(
+                    `[Agent Process API] Found ${allGuideChunks.length} guide document chunks, using ${similarChunks.length} for benchmarking (top 20 by priority)`,
+                );
             } else {
                 console.warn(`[Agent Process API] No guide document chunks found. Available sources: ${[...new Set(kb.chunks.map((c: any) => c.source))].join(', ')}`);
             }
@@ -359,6 +365,10 @@ async function processInvoicesWithChat(
         finalMessage = buildNoKBExtractionPrompt(fileContext);
     }
 
+    if (agentId === 'base-1-review' && buckets) {
+        finalMessage = appendBase1BucketInjection(finalMessage, buckets);
+    }
+
     // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(settings.gemini.apiKey);
     const model = genAI.getGenerativeModel({
@@ -377,15 +387,49 @@ async function processInvoicesWithChat(
     console.log(`[Agent Process API] Gemini response length: ${text.length} characters`);
     console.log(`[Agent Process API] Response preview: ${text.substring(0, 500)}...`);
 
-    // Extract JSON from response using shared utility
-    const extractedData: ExtractedInvoice[] = extractJsonFromResponse(text);
+    const pipeline = await runDeterministicSavingsPipelineAsync(extractJsonFromResponse(text), {
+        buckets,
+        configGeneration,
+    });
+    const extractedData = pipeline.invoices;
 
     if (extractedData.length === 0) {
         throw new Error('No invoice data could be extracted from the uploaded files. Please ensure the files contain valid invoice information.');
     }
 
+    console.log(
+        `[Agent Process API] Full extracted invoices (normalized JSON):\n${JSON.stringify(extractedData, null, 2)}`,
+    );
+
     // Log detailed benchmarking information for debugging
     console.log(`[Agent Process API] Extracted ${extractedData.length} invoice(s)`);
+
+    const electricityWithClass = extractedData
+        .map((inv, index) => ({ index, inv, dbg: inv.utility_type === 'Electricity' ? getElectricityClassificationDebug(inv) : null }))
+        .filter((x) => x.dbg !== null) as Array<{
+            index: number;
+            inv: ExtractedInvoice;
+            dbg: ReturnType<typeof getElectricityClassificationDebug>;
+        }>;
+    const portfolioHasCAndI = electricityWithClass.some((x) => x.dbg.classification === 'c_and_i');
+    if (electricityWithClass.length > 0) {
+        console.log(`\n[Agent Process API] Electricity classification diagnostics:`);
+        console.log(`  - Portfolio has C&I electricity: ${portfolioHasCAndI}`);
+        electricityWithClass.forEach(({ index, inv, dbg }) => {
+            const excludedByPortfolioRule = portfolioHasCAndI && dbg.classification === 'sme';
+            console.log(
+                `  - Invoice ${index + 1} (${inv.invoice_number || 'N/A'} | NMI ${inv.nmi || 'N/A'}): ` +
+                `class=${dbg.classification.toUpperCase()} (C&I=${dbg.cAndSignals}, SME=${dbg.smeSignals}) ` +
+                `excludedByPortfolioRule=${excludedByPortfolioRule}`,
+            );
+            if (dbg.reasons.length > 0) {
+                dbg.reasons.forEach((r) => console.log(`      * ${r}`));
+            } else {
+                console.log(`      * no heuristic signals fired (default fallback)`);
+            }
+        });
+    }
+
     extractedData.forEach((invoice, index) => {
         console.log(`\n[Agent Process API] Invoice ${index + 1} Details:`);
         console.log(`  - Business: ${invoice.business_name || 'N/A'}`);
@@ -411,7 +455,7 @@ async function processInvoicesWithChat(
         }
     });
 
-    return extractedData;
+    return { invoices: extractedData, pipeline };
 }
 
 
@@ -560,19 +604,6 @@ export async function POST(request: Request) {
             }
         }
 
-        // Check agent configuration for upload permission BEFORE processing files
-        if (agentId) {
-            const config = await gcsClient.getPromptConfig(agentId);
-            const allowUploads = config.config?.allowFileUploads === true;
-
-            if (!allowUploads) {
-                return NextResponse.json(
-                    { error: 'File uploads are disabled for this agent' },
-                    { status: 403 }
-                );
-            }
-        }
-
         // If Google Drive folder ID is provided, fetch all files from that folder
         if (googleDriveFolderId) {
             console.log(`[Agent Process API] Fetching files from Google Drive folder: ${googleDriveFolderId}`);
@@ -648,8 +679,15 @@ export async function POST(request: Request) {
 
         console.log(`[Agent Process API] Files processed, extracting invoice data...`);
 
+        const bucketsSnapshot = await gcsClient.getBase1ComparisonBuckets();
+
         // Process invoices using chat logic
-        const extractedInvoices = await processInvoicesWithChat(processedFiles, agentId);
+        const { invoices: extractedInvoices, pipeline } = await processInvoicesWithChat(
+            processedFiles,
+            agentId,
+            bucketsSnapshot.data,
+            bucketsSnapshot.generation,
+        );
 
         console.log(`[Agent Process API] Extracted ${extractedInvoices.length} invoice(s)`);
 
@@ -671,10 +709,9 @@ export async function POST(request: Request) {
         
         // Log savings summary calculation details
         console.log(`\n[Agent Process API] Savings Summary Calculation:`);
-        console.log(`  - Total Raw Savings: $${savingsSummary.optimistic.toFixed(2)}`);
-        console.log(`  - Conservative (70%): $${savingsSummary.conservative.toFixed(2)}`);
-        console.log(`  - Moderate (85%): $${savingsSummary.moderate.toFixed(2)}`);
-        console.log(`  - Optimistic (100%): $${savingsSummary.optimistic.toFixed(2)}`);
+        console.log(`  - Total Raw Savings (100%): $${savingsSummary.moderate.toFixed(2)}`);
+        console.log(`  - Conservative (80%): $${savingsSummary.conservative.toFixed(2)}`);
+        console.log(`  - Expected (100%): $${savingsSummary.moderate.toFixed(2)}`);
         console.log(`  - Critical Issues: ${savingsSummary.criticalIssues.length}`);
         savingsSummary.criticalIssues.forEach((issue, idx) => {
             console.log(`    ${idx + 1}. ${issue.issue}: $${issue.savings.toFixed(2)}/year (${issue.severity})`);
@@ -702,21 +739,46 @@ export async function POST(request: Request) {
 
         // If metadata requested, return JSON with Excel as base64 + HTML email + metadata
         // Note: Using base64 for n8n compatibility (multipart is not easily parsed by n8n)
+        const includeStaffCrossCheck =
+            url.searchParams.get('includeStaffCrossCheck') === '1' ||
+            request.headers.get('x-base1-admin-key') === settings.auth.base1AdminKey;
+
         if (includeMetadata) {
             const htmlEmail = emailGeneratorService.generateEmail(reportData);
             const excelBase64 = excelBuffer.toString('base64');
 
-            return NextResponse.json({
+            const jsonBody: Record<string, unknown> = {
                 excelBase64,
                 htmlEmail,
                 businessInfo,
+                invoices: extractedInvoices,
                 metadata: {
                     fileName,
                     invoiceCount: extractedInvoices.length,
                     generatedAt: reportData.generatedAt,
                     savingsSummary: reportData.savingsSummary,
+                    runId: pipeline.runId,
                 },
-            });
+            };
+
+            if (includeStaffCrossCheck) {
+                try {
+                    await gcsClient.saveBase1CrossCheckArtifacts(
+                        pipeline.runId,
+                        pipeline.crossCheck,
+                        pipeline.crossCheckXlsx,
+                    );
+                } catch (gcsErr) {
+                    console.warn('[Agent Process API] Cross-check GCS persist failed:', gcsErr);
+                }
+                jsonBody.savingsCrossCheck = pipeline.crossCheck;
+                jsonBody.savingsCrossCheckXlsx = {
+                    base64: pipeline.crossCheckXlsx.toString('base64'),
+                    fileName: `${pipeline.runId}-savings-crosscheck.xlsx`,
+                };
+            }
+
+            return NextResponse.json(jsonBody);
         }
 
         // Otherwise, return binary Excel only (backward-compatible)

@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { ReportData, ExtractedInvoice } from '@/lib/types/ReportTypes';
+import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
 const HEADER_BG_COLOR = '366092'; // Blue
 const TOTALS_BG_COLOR = 'FFD966'; // Yellow
@@ -7,20 +8,17 @@ const OVERVIEW_TITLE_BG = '366092'; // Same blue as headers
 const OVERVIEW_SECTION_BG = 'E7E6E6'; // Light grey for business block
 
 export class ExcelGeneratorService {
+    private formatCurrency(amount: number): string {
+        return new Intl.NumberFormat('en-AU', {
+            style: 'currency',
+            currency: 'AUD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    }
+
     async generateWorkbook(data: ReportData): Promise<Buffer> {
         const workbook = new ExcelJS.Workbook();
-
-        const overviewSheet = workbook.addWorksheet('Overview');
-        const electricitySheet = workbook.addWorksheet('Electricity Data');
-        const gasSheet = workbook.addWorksheet('Gas Data');
-        const wasteSheet = workbook.addWorksheet('Waste Data');
-        const waterSheet = workbook.addWorksheet('Water Data');
-        const oilSheet = workbook.addWorksheet('Oil Data');
-        const costSummarySheet = workbook.addWorksheet('Cost Summary');
-        const meterDetailsSheet = workbook.addWorksheet('Meter Details');
-        const base1AnalysisSheet = workbook.addWorksheet('Base 1 Analysis');
-
-        this.buildOverviewSheet(overviewSheet, data);
 
         const electricityInvoices = data.invoices.filter(i => i.utility_type === 'Electricity');
         const gasInvoices = data.invoices.filter(i => i.utility_type === 'Gas');
@@ -28,11 +26,36 @@ export class ExcelGeneratorService {
         const waterInvoices = data.invoices.filter(i => i.utility_type === 'Water');
         const oilInvoices = data.invoices.filter(i => i.utility_type === 'Oil');
 
-        this.buildElectricitySheet(electricitySheet, electricityInvoices);
-        this.buildGasSheet(gasSheet, gasInvoices);
-        this.buildWasteSheet(wasteSheet, wasteInvoices);
-        this.buildWaterSheet(waterSheet, waterInvoices);
-        this.buildOilSheet(oilSheet, oilInvoices);
+        const utilitySheets: { name: string; invoices: ExtractedInvoice[]; build: (s: ExcelJS.Worksheet, inv: ExtractedInvoice[]) => void }[] = [
+            { name: 'Electricity Data', invoices: electricityInvoices, build: this.buildElectricitySheet.bind(this) },
+            { name: 'Gas Data', invoices: gasInvoices, build: this.buildGasSheet.bind(this) },
+            { name: 'Waste Data', invoices: wasteInvoices, build: this.buildWasteSheet.bind(this) },
+            { name: 'Water Data', invoices: waterInvoices, build: this.buildWaterSheet.bind(this) },
+            { name: 'Oil Data', invoices: oilInvoices, build: this.buildOilSheet.bind(this) },
+        ];
+
+        // 1. Overview always first
+        const overviewSheet = workbook.addWorksheet('Overview');
+        this.buildOverviewSheet(overviewSheet, data);
+
+        // 2. Tabs with data (so data tabs appear 2nd, 3rd, … after Overview)
+        for (const { name, invoices, build } of utilitySheets) {
+            if (invoices.length > 0) {
+                const sheet = workbook.addWorksheet(name);
+                build(sheet, invoices);
+            }
+        }
+        // 3. Empty utility tabs after data tabs
+        for (const { name, invoices, build } of utilitySheets) {
+            if (invoices.length === 0) {
+                const sheet = workbook.addWorksheet(name);
+                build(sheet, []);
+            }
+        }
+        // 4. Cost Summary, Meter Details, Base 1 Analysis
+        const costSummarySheet = workbook.addWorksheet('Cost Summary');
+        const meterDetailsSheet = workbook.addWorksheet('Meter Details');
+        const base1AnalysisSheet = workbook.addWorksheet('Base 1 Analysis');
         this.buildCostSummarySheet(costSummarySheet, data.invoices);
         this.buildMeterDetailsSheet(meterDetailsSheet, data.invoices);
         this.buildBase1AnalysisSheet(base1AnalysisSheet, data);
@@ -73,14 +96,21 @@ export class ExcelGeneratorService {
         sheet.addRow([]);
 
         const totalCost = data.invoices.reduce((sum, inv) => sum + (inv.total_inc_gst || 0), 0);
-        sheet.addRow(['Total annual cost (est.)', `$${totalCost.toFixed(2)}`]);
+        sheet.addRow(['Total Provided Invoice Cost', this.formatCurrency(totalCost)]);
         if (data.savingsSummary) {
-            sheet.addRow(['Potential savings (conservative)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Potential savings (moderate)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Potential savings (optimistic)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
+            sheet.addRow([
+                'Potential Savings (Conservative)', this.formatCurrency(data.savingsSummary.conservative),
+                'Our Costs – Conservative (1st Month Savings)', this.formatCurrency(data.savingsSummary.conservative / 12)
+            ]);
+            sheet.addRow([
+                'Potential Savings (Expected)', this.formatCurrency(data.savingsSummary.moderate),
+                'Our Costs – Expected (1st Month Savings)', this.formatCurrency(data.savingsSummary.moderate / 12)
+            ]);
         }
         sheet.getColumn(1).width = 32;
         sheet.getColumn(2).width = 18;
+        sheet.getColumn(3).width = 42;
+        sheet.getColumn(4).width = 18;
     }
 
     private buildElectricitySheet(sheet: ExcelJS.Worksheet, invoices: ExtractedInvoice[]) {
@@ -472,101 +502,108 @@ export class ExcelGeneratorService {
     }
 
     private buildBase1AnalysisSheet(sheet: ExcelJS.Worksheet, data: ReportData) {
-        // One-line savings highlight at top (lead with the number)
-        if (data.savingsSummary) {
-            const c = data.savingsSummary.conservative;
-            const o = data.savingsSummary.optimistic;
-            sheet.addRow([`Estimated annual savings: $${c.toFixed(0)} – $${o.toFixed(0)} (conservative to optimistic)`]);
-            sheet.getRow(1).font = { bold: true, size: 12 };
-            sheet.addRow([]);
-        }
+        const BENCHMARK_COLS = 5;
 
-        // Benchmarking summary – grouped by (Category, Issue type), cap at top 8
-        sheet.addRow(['Benchmarking summary']);
-        sheet.getRow(sheet.rowCount).font = { bold: true, size: 14 };
-        sheet.addRow([]);
-        sheet.addRow(['Category', 'Issue type', 'Count', 'Est. total savings per year']);
-        const tableHeaderRow = sheet.getRow(sheet.rowCount);
-        tableHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-        tableHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
-        tableHeaderRow.alignment = { horizontal: 'center' };
-
-        const groupKey = (u: string, t: string) => `${u}|${t}`;
-        const grouped = new Map<string, { category: string; type: string; count: number; savings: number }>();
-        data.invoices.forEach(inv => {
-            (inv.low_hanging_fruit || []).forEach(opp => {
-                const key = groupKey(inv.utility_type, opp.type);
-                if (!grouped.has(key)) {
-                    grouped.set(key, { category: inv.utility_type, type: opp.type, count: 0, savings: 0 });
-                }
-                const g = grouped.get(key)!;
-                g.count += 1;
-                if (opp.potential_savings) {
-                    const m = opp.potential_savings.match(/[\d,]+\.?\d*/);
-                    if (m) g.savings += parseFloat(m[0].replace(/,/g, ''));
-                }
-            });
-        });
-        const sortedGroups = [...grouped.values()].sort((a, b) => b.savings - a.savings);
-        const maxBenchmarkingRows = 8;
-        const toShowGroups = sortedGroups.slice(0, maxBenchmarkingRows);
-        toShowGroups.forEach(g => {
-            sheet.addRow([g.category, g.type, g.count, g.savings > 0 ? `$${g.savings.toFixed(2)}` : '']);
-        });
-        if (sortedGroups.length > maxBenchmarkingRows) {
-            sheet.addRow([`${sortedGroups.length - maxBenchmarkingRows} more opportunity types in full report.`, '', '', '']);
-        }
-        sheet.getColumn(4).numFmt = '$#,##0.00';
-
-        sheet.addRow([]);
-
-        // Total Potential Savings section
-        if (data.savingsSummary) {
-            sheet.addRow(['Total potential savings (estimate)']);
-            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
-            sheet.addRow([]);
-            sheet.addRow(['Conservative (70%)', `$${data.savingsSummary.conservative.toFixed(2)}`]);
-            sheet.addRow(['Moderate (85%)', `$${data.savingsSummary.moderate.toFixed(2)}`]);
-            sheet.addRow(['Optimistic (100%)', `$${data.savingsSummary.optimistic.toFixed(2)}`]);
-            sheet.getColumn(2).numFmt = '$#,##0.00';
-        }
-
-        sheet.addRow([]);
-
-        // Critical issues – top 3 only, one-line summary
-        if (data.savingsSummary && data.savingsSummary.criticalIssues.length > 0) {
-            const issues = data.savingsSummary.criticalIssues;
-            const maxShow = 3;
-            const toShow = issues.slice(0, maxShow);
-
-            sheet.addRow(['Critical issues (top items – see full report for detail)']);
-            sheet.getRow(sheet.rowCount).font = { bold: true, size: 12 };
-            sheet.addRow([]);
-            sheet.addRow(['Summary', 'Est. savings per year']);
-            const critHeaderRow = sheet.getRow(sheet.rowCount);
-            critHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
-            critHeaderRow.font = { color: { argb: 'FFFFFF' }, bold: true };
-
-            toShow.forEach(issue => {
-                const summary = this.shortIssueSummary(issue.issue);
-                const row = sheet.addRow([summary, `$${issue.savings.toFixed(2)}`]);
-                row.getCell(1).alignment = { wrapText: true };
-            });
-            if (issues.length > maxShow) {
-                sheet.addRow([`${issues.length - maxShow} more critical issue(s) in full report.`, '']);
+        const applyBlueHeaderCells = (rowIdx: number, colCount: number) => {
+            const r = sheet.getRow(rowIdx);
+            for (let c = 1; c <= colCount; c++) {
+                const cell = r.getCell(c);
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+                cell.font = { color: { argb: 'FFFFFF' }, bold: true };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
             }
-            sheet.getColumn(1).width = 50;
-            sheet.getColumn(2).width = 18;
-            sheet.getColumn(2).numFmt = '$#,##0.00';
+        };
+
+        const benchmarkGroups = getBase1BenchmarkGroups(data.invoices, {
+            hideWasteForMemberReport: true,
+        });
+        const totalEstimated = data.savingsSummary?.moderate ?? benchmarkGroups.reduce((s, g) => s + g.totalSavings, 0);
+        const firstMonthFee = totalEstimated / 12;
+
+        // Top title bar
+        sheet.addRow(['Base 1 Review — Savings Analysis', '', '', '', '']);
+        const topTitleIdx = sheet.rowCount;
+        sheet.mergeCells(`A${topTitleIdx}:E${topTitleIdx}`);
+        const topTitle = sheet.getRow(topTitleIdx).getCell(1);
+        topTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+        topTitle.font = { color: { argb: 'FFFFFF' }, bold: true, size: 14 };
+        topTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        sheet.addRow([]);
+        sheet.addRow([`${data.businessInfo.name} • Generated summary`, '', '', '', '']);
+        const subtitleIdx = sheet.rowCount;
+        sheet.mergeCells(`A${subtitleIdx}:E${subtitleIdx}`);
+        const subtitle = sheet.getRow(subtitleIdx).getCell(1);
+        subtitle.font = { italic: true, size: 10, color: { argb: '4A5568' } };
+        subtitle.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        sheet.addRow([]);
+
+        // KPI labels
+        sheet.addRow(['ESTIMATED ANNUAL SAVINGS', '', '', 'OUR FEE (FIRST MONTH ONLY)', '']);
+        const kpiLabelIdx = sheet.rowCount;
+        sheet.mergeCells(`A${kpiLabelIdx}:C${kpiLabelIdx}`);
+        sheet.mergeCells(`D${kpiLabelIdx}:E${kpiLabelIdx}`);
+        for (const col of [1, 4] as const) {
+            const cell = sheet.getRow(kpiLabelIdx).getCell(col);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E5E7EB' } };
+            cell.font = { bold: true, size: 9, color: { argb: '334155' } };
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
         }
+
+        // KPI values
+        sheet.addRow([totalEstimated, '', '', firstMonthFee, '']);
+        const kpiValueIdx = sheet.rowCount;
+        sheet.mergeCells(`A${kpiValueIdx}:C${kpiValueIdx}`);
+        sheet.mergeCells(`D${kpiValueIdx}:E${kpiValueIdx}`);
+        const estCell = sheet.getRow(kpiValueIdx).getCell(1);
+        estCell.numFmt = '$#,##0';
+        estCell.font = { bold: true, size: 24, color: { argb: '102A43' } };
+        estCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        const feeCell = sheet.getRow(kpiValueIdx).getCell(4);
+        feeCell.numFmt = '$#,##0';
+        feeCell.font = { bold: true, size: 24, color: { argb: '102A43' } };
+        feeCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        sheet.addRow([]);
+
+        // Breakdown table
+        sheet.addRow(['Breakdown by Category']);
+        const breakdownTitleIdx = sheet.rowCount;
+        sheet.mergeCells(`A${breakdownTitleIdx}:E${breakdownTitleIdx}`);
+        sheet.getRow(breakdownTitleIdx).getCell(1).font = { bold: true, size: 11, color: { argb: '1A202C' } };
+
+        sheet.addRow(['Category', 'Option', 'Inv.', 'Charge type', 'Savings p.a']);
+        applyBlueHeaderCells(sheet.rowCount, BENCHMARK_COLS);
+
+        benchmarkGroups.forEach((g) => {
+            const row = sheet.addRow([g.utilityType, g.optionKind, g.invoiceCount, g.relatedCharges, g.totalSavings || null]);
+            row.getCell(5).numFmt = '$#,##0.00';
+        });
+
+        sheet.addRow(['Estimated Savings', '', '', '', totalEstimated]);
+        const estRowIdx = sheet.rowCount;
+        sheet.mergeCells(`A${estRowIdx}:D${estRowIdx}`);
+        const estLabel = sheet.getRow(estRowIdx).getCell(1);
+        estLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+        estLabel.font = { color: { argb: 'FFFFFF' }, bold: true };
+        estLabel.alignment = { horizontal: 'left', vertical: 'middle' };
+        const estValue = sheet.getRow(estRowIdx).getCell(5);
+        estValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_BG_COLOR } };
+        estValue.font = { color: { argb: 'FFFFFF' }, bold: true };
+        estValue.numFmt = '$#,##0.00';
+        estValue.alignment = { horizontal: 'right', vertical: 'middle' };
+
+        this.applyCompactColumnWidthsBase1Analysis(sheet);
     }
 
-    /** One-line summary for client-facing sheets and email (Base 1 estimate). */
-    private shortIssueSummary(issue: string, maxLen = 80): string {
-        const trimmed = (issue || '').trim();
-        const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
-        if (firstSentence.length <= maxLen) return firstSentence;
-        return firstSentence.slice(0, maxLen).trim() + '…';
+    /** Fixed compact widths to keep Base 1 concise and consistent. */
+    private applyCompactColumnWidthsBase1Analysis(sheet: ExcelJS.Worksheet) {
+        sheet.getColumn(1).width = 23;
+        sheet.getColumn(2).width = 19;
+        sheet.getColumn(3).width = 8;
+        sheet.getColumn(4).width = 21;
+        sheet.getColumn(5).width = 13;
     }
 }
 

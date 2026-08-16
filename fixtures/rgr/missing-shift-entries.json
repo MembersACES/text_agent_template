@@ -1,0 +1,15 @@
+{
+  "schema": "gvaca_rgr_entry_v1",
+  "venue_id": "frankston-rsl-pilot",
+  "recorded_at_utc": "2026-04-09T06:45:00.000Z",
+  "entry_date": "2026-04-07",
+  "entry_time": "22:30",
+  "incident_time": "15:00",
+  "staff_name": "Sam Okonkwo",
+  "interaction_type": "other",
+  "description": "Retrospective RGR gap closure: duty review identified no Responsible Gambling Register entries between 15:00 and 18:00 despite active gaming floor and three staff rotations. No specific patron incidents were reported for that window; environmental checks (signage, brochure stock, YourPlay kiosk) were not documented at the time. This entry records the gap and confirms corrective documentation is being completed after shift handover.",
+  "action_taken": "Duty manager notified; template checklist attached to shift report. Staff briefed that minimum 2–3 RGR touchpoints per day are required per VGCCC-style expectations and venue program.",
+  "follow_up_required": true,
+  "follow_up_delegate": "Gaming Manager",
+  "follow_up_detail": "Confirm rostered RGR responsibility for 15:00–18:00 7 Apr and add standing reminder on pre-shift brief; review with Brett before next inspection."
+}

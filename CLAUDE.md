@@ -171,7 +171,7 @@ The chat endpoint (`POST /api/chat`) is a thin controller that delegates to `Gem
 
 - **`GeminiChatService`** — orchestrator; drives a **two-turn Gemini function-calling flow** when invoice files are uploaded (Turn 1: user prompt + tool declaration → Turn 2: tool result → human-readable response)
 - **`ContextService`** — builds all context strings: file content (with budget capping), KB semantic search results (`buildKnowledgeBaseContext`), and full guide-document context for invoice extraction (`buildGuideDocumentContext`)
-- **`InvoiceToolService`** — owns the `process_invoices` Gemini function declaration and executes the extraction pipeline; the extraction itself is a separate Gemini call using the prompt templates from `lib/prompts.ts`
+- **`InvoiceToolService`** — owns the `process_invoices` Gemini function declaration and executes the extraction pipeline; the extraction itself is a separate Gemini call using the prompt templates from `lib/utils/Prompts.ts`
 - **`ConversationHistoryService`** — formats conversation history for injection into prompts
 - **`PromptBuilderService`** — (exists alongside `GeminiChatService`; the chat route currently uses `GeminiChatService` directly, which has absorbed this logic inline)
 
@@ -182,7 +182,7 @@ The final LLM prompt uses `{{context}}` and `{{message}}` placeholders, which th
 When a user uploads files and the agent has the knowledge base enabled, `GeminiChatService` attaches the `process_invoices` tool. If Gemini decides to call it:
 
 1. `InvoiceToolService.execute()` calls `ContextService.buildGuideDocumentContext()` to retrieve ALL chunks from files prefixed `ELECTRICITY_GUIDE`, `GAS_GUIDE`, `WATER_GUIDE`, `WASTE_GUIDE`, `OIL_GUIDE` in the KB (these are benchmark/rules documents, not subject to semantic search)
-2. The combined context is injected into `buildInvoiceExtractionPrompt()` from `lib/prompts.ts`
+2. The combined context is injected into `buildInvoiceExtractionPrompt()` from `lib/utils/Prompts.ts`
 3. A second Gemini call runs the extraction and returns structured JSON
 4. The JSON is parsed by `lib/json-parser.ts` and passed back as `extractedData`
 5. When `generateReport: true`, the frontend triggers Excel report generation via `POST /api/export/generate-report`
@@ -206,6 +206,8 @@ When a user uploads files and the agent has the knowledge base enabled, `GeminiC
 ### Prompt template conventions
 
 Agent prompts must contain `{{context}}` and `{{message}}` placeholders. The `{{context}}` slot receives conversation history, KB results, and/or uploaded file content depending on mode.
+
+Canonical copies for manual sync (e.g. into Google Drive KB or GCS agent settings): [`Docs/base1-review-agent-prompt.txt`](Docs/base1-review-agent-prompt.txt) (Base 1 Review agent text), [`Docs/ELECTRICITY_ANALYSIS_GUIDE.md`](Docs/ELECTRICITY_ANALYSIS_GUIDE.md) (electricity KB).
 
 The AI model used throughout is `gemini-2.5-flash` with `temperature: 0.1` and `maxOutputTokens: 65536`.
 

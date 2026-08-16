@@ -18,6 +18,7 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';
 import { extractJsonFromResponse } from '@/lib/utils/JsonParser';
+import { normalizeExtractedInvoices } from '@/lib/utils/normalizeExtractedInvoices';
 import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
 import { ContextService } from '../chat/ContextService';
 
@@ -98,7 +99,12 @@ export class InvoiceToolService implements AgentTool {
         const { uploadedFiles, agentId, useKnowledgeBase } = params;
 
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
-        const extractionPrompt = await this.buildExtractionPrompt(fileContext, agentId, useKnowledgeBase);
+        const extractionPrompt = await this.buildExtractionPrompt(
+            fileContext,
+            agentId,
+            useKnowledgeBase,
+            uploadedFiles,
+        );
 
         logger.info(`Running extraction prompt (${extractionPrompt.length} chars)`);
 
@@ -114,12 +120,16 @@ export class InvoiceToolService implements AgentTool {
         fileContext: string,
         agentId: string | undefined,
         useKnowledgeBase: boolean,
+        uploadedFiles: any[] | undefined,
     ): Promise<string> {
         if (!useKnowledgeBase) {
             return buildNoKBExtractionPrompt(fileContext);
         }
 
-        const { kbContext, fileListContext } = await this.contextService.buildGuideDocumentContext(agentId);
+        const { kbContext, fileListContext } = await this.contextService.buildGuideDocumentContext(agentId, {
+            fileContext,
+            fileNames: Array.isArray(uploadedFiles) ? uploadedFiles.map((f: { name?: string }) => f.name || '') : [],
+        });
 
         if (!kbContext) {
             // KB exists but has no guide chunks — fall back to no-KB prompt
@@ -151,10 +161,15 @@ export class InvoiceToolService implements AgentTool {
 
     private buildToolResult(text: string, fileCount: number): ToolExecutionResult {
         const extractedJson = extractJsonFromResponse(text);
+        const normalizedList =
+            extractedJson.length > 0 ? normalizeExtractedInvoices(extractedJson) : [];
 
-        const extractedData = extractedJson.length > 0
-            ? (extractedJson.length === 1 ? extractedJson[0] : extractedJson)
-            : null;
+        const extractedData =
+            normalizedList.length > 0
+                ? normalizedList.length === 1
+                    ? normalizedList[0]
+                    : normalizedList
+                : null;
 
         const extractedCount = Array.isArray(extractedData)
             ? extractedData.length

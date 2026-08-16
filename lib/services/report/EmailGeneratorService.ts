@@ -1,12 +1,6 @@
+import { GAS_NEAR_CI_OPTION_KIND } from '@/lib/config/base1ComparisonBuckets';
 import { ReportData } from '@/lib/types/ReportTypes';
-
-/** One-line summary for client-facing email (Base 1 estimate). */
-function shortIssueSummary(issue: string, maxLen = 80): string {
-    const trimmed = (issue || '').trim();
-    const firstSentence = trimmed.split(/[.!?]/)[0]?.trim() || trimmed;
-    if (firstSentence.length <= maxLen) return firstSentence;
-    return firstSentence.slice(0, maxLen).trim() + '…';
-}
+import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
 export class EmailGeneratorService {
     generateEmail(data: ReportData): string {
@@ -20,13 +14,16 @@ export class EmailGeneratorService {
             return acc;
         }, {} as Record<string, { count: number; totalCost: number }>);
 
-        const allOpportunities = invoices
-            .flatMap(inv => (inv.low_hanging_fruit || []).map(opp => ({ ...opp, utilityType: inv.utility_type })));
-        const opportunityCount = allOpportunities.length;
-        const utilityTypesWithIssues = [...new Set(allOpportunities.map(o => o.utilityType))];
+        const benchmarkGroups = getBase1BenchmarkGroups(invoices, {
+            hideWasteForMemberReport: true,
+        });
+        const opportunityCount = benchmarkGroups.length;
+        const utilityTypesWithIssues = [...new Set(benchmarkGroups.map(g => g.utilityType))];
         const summaryAreas = utilityTypesWithIssues.length > 0
             ? utilityTypesWithIssues.slice(0, 4).join(', ') + (utilityTypesWithIssues.length > 4 ? ' and others' : '')
             : 'your utilities';
+
+        const hasNearCiPotential = benchmarkGroups.some((g) => g.optionKind === GAS_NEAR_CI_OPTION_KIND);
 
         const formatCurrency = (amount: number) =>
             new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -45,18 +42,14 @@ export class EmailGeneratorService {
                 <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">${formatCurrency(stats.totalCost)}</td>
             </tr>`).join('');
 
-        const criticalIssues = savingsSummary?.criticalIssues || [];
-        const maxCriticalInEmail = 3;
-        const criticalToShow = criticalIssues.slice(0, maxCriticalInEmail);
-        const criticalIssuesList = criticalToShow.length > 0
-            ? criticalToShow.map(issue => `
-                <li style="margin-bottom: 8px; padding-left: 8px; font-size: 14px;">
-                    ${shortIssueSummary(issue.issue)} — ${formatCurrency(issue.savings)}/year
-                </li>`).join('')
-            : '<li style="margin-bottom: 8px; padding-left: 8px; color: #666;">No critical issues identified.</li>';
-        const moreIssuesNote = criticalIssues.length > maxCriticalInEmail
-            ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Full details and ${criticalIssues.length - maxCriticalInEmail} additional item(s) are in the attached report.</p>`
-            : '';
+        const keyItemsRows = benchmarkGroups.length > 0
+            ? benchmarkGroups
+                .map((g) => `
+                <div style="margin-bottom: 10px; font-size: 14px; line-height: 1.5; color: #333333;">
+                    ${g.utilityType} ${g.optionKind} ${g.relatedCharges} ${formatCurrency(g.totalSavings)}
+                </div>`)
+                .join('')
+            : '<div style="margin-bottom: 8px; color: #666;">No key savings areas identified.</div>';
 
         return `
 <!DOCTYPE html>
@@ -101,7 +94,7 @@ export class EmailGeneratorService {
                     ${opportunityCount > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
-                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">We identified <strong>${opportunityCount} potential savings opportunities</strong> across ${summaryAreas}. The attached report contains the full breakdown; below is a high-level estimate and the main items to address.</p>
+                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">We identified <strong>${opportunityCount} areas of potential savings</strong> across ${summaryAreas}. The attached report contains the full breakdown; below is a high-level estimate and the main items to address.</p>
                         </td>
                     </tr>` : ''}
                     ${savingsSummary ? `
@@ -110,19 +103,24 @@ export class EmailGeneratorService {
                             <div style="background-color: #e3f2fd; border-left: 4px solid #366092; padding: 20px; margin-bottom: 24px;">
                                 <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #366092;">Estimated Annual Savings</h3>
                                 <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #333333;">
-                                    Based on our analysis, we estimate potential annual savings in the range of
+                                    Based on our analysis, we estimate potential annual savings in the range of (Conservative to Expected)
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.conservative)}</strong> to
                                     <strong style="color: #366092;">${formatCurrency(savingsSummary.moderate)}</strong>.
                                 </p>
+                                ${hasNearCiPotential ? `
+                                <p style="margin: 12px 0 0 0; font-size: 14px; line-height: 1.5; color: #4a5568;">
+                                    Gas items labelled <strong>Potential (C&I 70%)</strong> are sites with annualised usage of 700–999 GJ
+                                    (70% of the 1,000 GJ C&amp;I threshold), compared at the 1,000 GJ Base 1 rate.
+                                </p>` : ''}
                             </div>
                         </td>
                     </tr>` : ''}
-                    ${criticalToShow.length > 0 ? `
+                    ${benchmarkGroups.length > 0 ? `
                     <tr>
                         <td style="padding: 0 40px 20px 40px;">
                             <div style="background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 20px; margin-bottom: 24px;">
-                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Key items to address</h3>
-                                <ul style="margin: 0; padding-left: 20px; color: #333333; font-size: 15px; line-height: 1.6;">${criticalIssuesList}</ul>${moreIssuesNote}
+                                <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #d32f2f;">Key Items to Address</h3>
+                                <div style="margin: 0; color: #333333; font-size: 15px; line-height: 1.6;">${keyItemsRows}</div>
                             </div>
                         </td>
                     </tr>` : ''}
@@ -138,11 +136,21 @@ export class EmailGeneratorService {
                         </td>
                     </tr>
                     <tr>
+                        <td style="padding: 24px 40px 32px 40px; border-top: 1px solid #e8e8e8;">
+                            <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">Kind regards,</p>
+                            <p style="margin: 0 0 4px 0; font-size: 16px; line-height: 1.5; color: #333333;"><strong>Amelia Williams</strong></p>
+                            <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.5; color: #444444;">Customer Success Manager (CSM) - Implementation: Connects onboarding directly to future success.</p>
+                            <p style="margin: 0 0 2px 0; font-size: 14px; line-height: 1.5; color: #333333;"><strong>Carbon Zero Australasia</strong></p>
+                            <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.5; color: #444444;">Australian Circular Economy Solutions Division</p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">Direct: Ph: 1300 938 638</p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">Email: <a href="mailto:business@acesolutions.com.au" style="color: #366092; text-decoration: none;">business@acesolutions.com.au</a></p>
+                            <p style="margin: 0 0 4px 0; font-size: 14px; line-height: 1.5; color: #333333;">470 St Kilda Road, Melbourne VIC 3004</p>
+                            <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #333333;">Ph: 1300 849 908 | Website: <a href="https://acesolutions.com.au" style="color: #366092; text-decoration: none;">acesolutions.com.au</a></p>
+                        </td>
+                    </tr>
+                    <tr>
                         <td style="background-color: #f5f5f5; padding: 20px 40px; text-align: center; border-top: 1px solid #e0e0e0;">
-                            <p style="margin: 0 0 8px 0; font-size: 12px; color: #666666;">Report generated: ${formatDate(generatedAt)}</p>
-                            <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #333333;">Australian Circular Economy Solution</p>
-                            <p style="margin: 0 0 4px 0; font-size: 12px; color: #666666;">470 St Kilda Road, Melbourne VIC 3004</p>
-                            <p style="margin: 0; font-size: 12px; color: #666666;">Ph: 1300 938 638 | Website: <a href="https://acesolutions.com.au" style="color: #366092; text-decoration: none;">acesolutions.com.au</a></p>
+                            <p style="margin: 0; font-size: 12px; color: #666666;">Report generated: ${formatDate(generatedAt)}</p>
                         </td>
                     </tr>
                 </table>

@@ -39,6 +39,8 @@ export interface ChatParams {
     useKnowledgeBase?: boolean;
     agentId?: string;
     uploadedFiles?: any[];
+    /** When set (e.g. venue-scoped chat route), tools receive it as ToolExecutionParams.venueId. */
+    venueId?: string;
 }
 
 export interface ChatResponse {
@@ -75,9 +77,10 @@ export class GeminiChatService {
             useKnowledgeBase = false,
             agentId,
             uploadedFiles = [],
+            venueId,
         } = params;
 
-        const tools = AgentToolRegistry.getTools(agentId, this.contextService);
+        const tools = await AgentToolRegistry.getTools(agentId, this.contextService);
 
         const historyContext = this.historyService.format(conversationHistory);
         const fileContext = this.contextService.buildFileContext(uploadedFiles);
@@ -115,6 +118,7 @@ export class GeminiChatService {
                 contents,
                 uploadedFiles,
                 agentId,
+                venueId,
                 useKnowledgeBase,
                 userMessage: message,
             });
@@ -159,13 +163,7 @@ export class GeminiChatService {
     }): Promise<string> {
         const { message, agentPrompt, historyContext, fileContext, agentId } = options;
 
-        // Check if this agent uses Zoho Desk KB instead of Google Drive KB
-        const agentConfig = await gcsClient.getPromptConfig(agentId);
-        const zohoConfig = agentConfig.config?.zohoDesk;
-
-        const { kbContext, fileListContext } = zohoConfig?.enabled
-            ? await this.contextService.buildZohoDeskKBContext(message, zohoConfig)
-            : await this.retrieveKBContext(message, agentId);
+        const { kbContext, fileListContext } = await this.retrieveKBContext(message, agentId);
 
         const contextParts = [
             historyContext,
@@ -230,10 +228,11 @@ export class GeminiChatService {
         contents: Content[];
         uploadedFiles: any[];
         agentId?: string;
+        venueId?: string;
         useKnowledgeBase: boolean;
         userMessage: string;
     }): Promise<ChatResponse> {
-        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, useKnowledgeBase, userMessage } = options;
+        const { functionCallPart, tool, model, contents, uploadedFiles, agentId, venueId, useKnowledgeBase, userMessage } = options;
         const functionName: string = functionCallPart.functionCall.name;
         const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
@@ -244,6 +243,7 @@ export class GeminiChatService {
             args,
             uploadedFiles,
             agentId,
+            venueId,
             useKnowledgeBase,
             userMessage,
         });

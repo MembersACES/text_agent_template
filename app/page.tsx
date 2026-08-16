@@ -48,6 +48,12 @@ const WarningIcon = () => (
   </svg>
 );
 
+const PencilIcon = () => (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+  </svg>
+);
+
 /* ─────────────────────  Lock Screen  ───────────────────── */
 
 interface LockScreenProps {
@@ -72,8 +78,7 @@ function LockScreen({ onUnlock }: LockScreenProps) {
         setError(true);
         setTimeout(() => setError(false), 2000);
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       setError(true);
       setTimeout(() => setError(false), 2000);
     }
@@ -83,17 +88,34 @@ function LockScreen({ onUnlock }: LockScreenProps) {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="auth-icon-wrapper"><LockIcon /></div>
-          <div className="auth-title">ACCESS RESTRICTED</div>
+          <div className="auth-icon-wrapper">
+            <LockIcon />
+          </div>
+          <div className="auth-title">Restricted workspace</div>
+          <p className="text-[11px] text-gray-400">Enter the shared passphrase to continue.</p>
         </div>
-        <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <input type="password" className="auth-input" placeholder="ENTER PASSWORD"
-            value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
-          {error && <div className="error-msg">ACCESS DENIED</div>}
-          <button type="submit" className="auth-btn">UNLOCK</button>
+        <form
+          onSubmit={handleSubmit}
+          className="w-full flex flex-col gap-4"
+        >
+          <input
+            type="password"
+            className="auth-input"
+            placeholder="Enter password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+          />
+          {error && <div className="error-msg">Incorrect password. Try again.</div>}
+          <button type="submit" className="auth-btn">
+            Unlock workspace
+          </button>
         </form>
+        <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gray-50 px-2.5 py-1 text-[10px] font-medium text-gray-500 border border-gray-200/70">
+          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-gray-400 animate-subtle-pulse" />
+          Locked for authorized teams only
+        </div>
       </div>
-      <div style={{ marginTop: '2rem', color: '#888', fontSize: '0.75rem' }}>AUTHORIZED PERSONNEL ONLY</div>
     </div>
   );
 }
@@ -154,49 +176,79 @@ function NewAgentModal({ onClose, onCreated }: NewAgentModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={handleBackdrop}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-100/80 px-5 py-4">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Create New Agent</h2>
-            <p className="text-sm text-gray-500 mt-0.5">Configure a new AI agent for your team</p>
+            <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">Create new agent</h2>
+            <p className="mt-0.5 text-[13px] text-gray-500">Configure a focused assistant for your team.</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"><XIcon /></button>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+          >
+            <XIcon />
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
           <div>
-            <label htmlFor="agent-name" className="block text-sm font-medium text-gray-700 mb-1.5">Agent Name <span className="text-red-500">*</span></label>
+            <label htmlFor="agent-name" className="mb-1 block text-[11px] font-semibold text-gray-600">
+              Agent name <span className="text-red-500">*</span>
+            </label>
             <input id="agent-name" ref={nameRef} type="text" value={name} onChange={(e) => handleNameChange(e.target.value)}
               placeholder="e.g. Customer Support Bot"
-              className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-shadow"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-[13px] text-gray-900 placeholder-gray-400 outline-none ring-0 focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
               disabled={submitting} required />
           </div>
           <div>
-            <label htmlFor="agent-id" className="block text-sm font-medium text-gray-700 mb-1.5">Agent ID <span className="text-red-500">*</span></label>
+            <label htmlFor="agent-id" className="mb-1 block text-[11px] font-semibold text-gray-600">
+              Agent ID <span className="text-red-500">*</span>
+            </label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-mono select-none">/agent/</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 select-none font-mono text-[12px] text-gray-400">
+                /agent/
+              </span>
               <input id="agent-id" type="text" value={id} onChange={(e) => handleIdChange(e.target.value)}
                 placeholder="customer-support"
-                className="w-full pl-[4.5rem] pr-3.5 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 font-mono placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-shadow"
+                className="w-full border border-gray-200 bg-white pl-[4.5rem] pr-3 py-2.5 font-mono text-[12px] text-gray-900 placeholder-gray-400 outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
                 disabled={submitting} required />
             </div>
-            <p className="mt-1.5 text-xs text-gray-400">Lowercase letters, numbers, and hyphens only. This cannot be changed later.</p>
+            <p className="mt-1 text-[11px] text-gray-400">
+              Lowercase letters, numbers, and hyphens only. This cannot be changed later.
+            </p>
           </div>
           <div>
-            <label htmlFor="agent-desc" className="block text-sm font-medium text-gray-700 mb-1.5">Description <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label htmlFor="agent-desc" className="mb-1 block text-[11px] font-semibold text-gray-600">
+              Description <span className="font-normal text-gray-400">(optional)</span>
+            </label>
             <textarea id="agent-desc" value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Briefly describe what this agent does…" rows={3}
-              className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-shadow resize-none"
+              className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-900 placeholder-gray-400 outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
               disabled={submitting} />
           </div>
-          {error && <div className="px-3.5 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{error}</div>}
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] text-red-600">
+              {error}
+            </div>
+          )}
           <div className="flex items-center gap-3 pt-1">
             <button type="button" onClick={onClose} disabled={submitting}
-              className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50">
+              className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50">
               Cancel
             </button>
             <button type="submit" disabled={submitting || !name.trim() || !id.trim()}
-              className="flex-1 px-4 py-2.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              {submitting ? (<><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Creating…</>) : (<><PlusIcon />Create Agent</>)}
+              className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:cursor-not-allowed"
+            >
+              {submitting ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  Creating…
+                </>
+              ) : (
+                <>
+                  <PlusIcon />
+                  Create agent
+                </>
+              )}
             </button>
           </div>
         </form>
@@ -273,6 +325,170 @@ interface Agent {
   description?: string;
 }
 
+function EditAgentModal({
+  agent,
+  onClose,
+  onSaved,
+}: {
+  agent: Agent;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(agent.name);
+  const [description, setDescription] = useState(agent.description ?? '');
+  const [fullConfig, setFullConfig] = useState<{
+    systemPrompt: string;
+    welcomeMessage: string;
+    agentName: string;
+    config?: Record<string, unknown>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await fetch(`/api/prompt?agentId=${encodeURIComponent(agent.id)}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(data.error || 'Failed to load agent config.');
+          setFullConfig(null);
+          return;
+        }
+        setFullConfig(data);
+        setName(data.agentName ?? agent.name);
+        setDescription((data.config?.description as string) ?? agent.description ?? '');
+      } catch {
+        if (!cancelled) setError('Network error loading config.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [agent.id, agent.name, agent.description]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullConfig) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: agent.id,
+          systemPrompt: fullConfig.systemPrompt,
+          welcomeMessage: fullConfig.welcomeMessage,
+          agentName: name.trim(),
+          config: { ...fullConfig.config, description: description.trim() || undefined },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to save.');
+        setSaving(false);
+        return;
+      }
+      onSaved();
+    } catch {
+      setError('Network error saving.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget && !saving) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={handleBackdrop}>
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-100/80 px-5 py-4">
+          <div>
+            <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">Edit agent</h2>
+            <p className="mt-0.5 text-[13px] text-gray-500">/agent/{agent.id}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+          >
+            <XIcon />
+          </button>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-600" />
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
+            <div>
+              <label htmlFor="edit-agent-name" className="mb-1 block text-[11px] font-semibold text-gray-600">
+                Agent name <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="edit-agent-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Customer Support Bot"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-[13px] text-gray-900 placeholder-gray-400 outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
+                disabled={saving}
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="edit-agent-desc" className="mb-1 block text-[11px] font-semibold text-gray-600">
+                Description <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <textarea
+                id="edit-agent-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Briefly describe what this agent does…"
+                rows={3}
+                className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-900 placeholder-gray-400 outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
+                disabled={saving}
+              />
+            </div>
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] text-red-600">{error}</div>
+            )}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={saving}
+                className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="btn-primary flex-1">
+                {saving ? (
+                  <>
+                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    Saving…
+                  </>
+                ) : (
+                  'Save'
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -280,6 +496,7 @@ export default function Home() {
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [showNewAgentModal, setShowNewAgentModal] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
+  const [agentToEdit, setAgentToEdit] = useState<Agent | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -310,21 +527,24 @@ export default function Home() {
   if (!isAuthorized) {
     return (
       <>
-        <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 z-50 flex items-center justify-between px-4 shadow-sm">
+        <header className="frosted-header fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
-            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">TEXT AGENT v1.1</div>
+            <div className="text-[13px] font-semibold tracking-tight text-gray-900">ACES</div>
+            <div className="rounded-full border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+              Text Agent · v1.1
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-100 uppercase tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>Locked
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200/80 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-subtle-pulse" />
+              Locked
             </span>
           </div>
         </header>
         <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
           <LockScreen onUnlock={() => { sessionStorage.setItem('app-auth', 'true'); setIsAuthorized(true); }} />
         </main>
-        <footer className="fixed bottom-0 left-0 right-0 h-8 bg-white border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400">
+        <footer className="fixed bottom-0 left-0 right-0 flex h-8 items-center justify-center border-t border-gray-200/60 bg-white/90 text-[10px] text-gray-400 backdrop-blur">
           © Prograde IP Holdings 2026
         </footer>
       </>
@@ -332,113 +552,187 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
       {/* Header */}
-      <header className="sticky top-0 bg-white border-b border-gray-200 shadow-sm z-20 shrink-0">
-        <div className="h-14 flex items-center justify-between px-4">
+      <header className="frosted-header sticky top-0 z-20 flex shrink-0 items-center">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <img src="/Logo3.png" alt="ACES Logo" className="h-5" />
+              <div className="h-4 w-px bg-gray-200/80" />
+              <span className="text-[13px] font-semibold tracking-tight text-gray-900">
+                Agent Console
+              </span>
+            </div>
+            <span className="hidden rounded-full border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-500 sm:inline-flex">
+              Multi‑agent workspace
+            </span>
+          </div>
           <div className="flex items-center gap-2">
-            <img src="/Logo3.png" alt="ACES Logo" className="h-6" />
-            <div className="w-px h-4 bg-gray-200 mx-1"></div>
-            <div className="text-gray-900 font-bold tracking-tight">ACES</div>
-            <div className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium border border-gray-200">Agent Management</div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-subtle-pulse" />
+              Online
+            </span>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-6 space-y-6">
-
+      <main className="gradient-mesh flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pb-6 pt-5">
           {/* Agents List Section */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <section className="rounded-2xl border border-gray-200/60 bg-white/90 p-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.5)]">
+            <div className="flex items-center justify-between rounded-2xl border border-gray-100/80 bg-white/80 px-4 py-3">
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Agents</h2>
-                <p className="text-sm text-gray-500 mt-1">Manage and configure your AI agents</p>
+                <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">
+                  Agents
+                </h2>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-gray-500">
+                  Configure focused assistants for different workflows.
+                </p>
               </div>
-              <button id="create-new-agent-btn" onClick={() => setShowNewAgentModal(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-sm font-medium transition-colors shadow-sm">
-                <PlusIcon />New Agent
+              <button
+                id="create-new-agent-btn"
+                onClick={() => setShowNewAgentModal(true)}
+                className="btn-primary hidden sm:inline-flex"
+              >
+                <PlusIcon />
+                New agent
               </button>
             </div>
 
-            <div className="p-6">
+            <div className="px-4 pb-4 pt-3">
               {loadingAgents ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500"></div>
+                <div className="flex items-center justify-center py-10">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
                 </div>
               ) : agents.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-orange-50 mb-4"><BotIcon /></div>
-                  <p className="text-sm font-medium text-gray-700 mb-1">No agents yet</p>
-                  <p className="text-xs text-gray-400 mb-4">Create your first agent to get started.</p>
-                  <button onClick={() => setShowNewAgentModal(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium transition-colors">
-                    <PlusIcon />Create Agent
+                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-gray-200/80 bg-gray-50/60 px-6 py-10 text-center">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-50">
+                    <BotIcon />
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-gray-800">
+                      No agents yet
+                    </p>
+                    <p className="mt-1 text-[12px] text-gray-500">
+                      Create your first agent to start routing conversations.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowNewAgentModal(true)}
+                    className="btn-primary mt-1"
+                  >
+                    <PlusIcon />
+                    Create agent
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid gap-3 pt-1 sm:grid-cols-2 lg:grid-cols-3">
                   {agents.map((agent) => (
-                    <div key={agent.id} className="relative group border border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
-                      {/* Clickable card area */}
+                    <div
+                      key={agent.id}
+                      className="group relative rounded-2xl border border-gray-200/70 bg-white/80 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
+                    >
                       <button
                         onClick={() => router.push(`/agent/${agent.id}`)}
-                        className="w-full p-4 text-left"
+                        className="flex w-full flex-col gap-2.5 px-3.5 py-3.5 text-left"
                       >
-                        <div className="flex items-center gap-2 mb-2">
-                          <BotIcon />
-                          <span className="font-semibold text-gray-900 group-hover:text-orange-700 transition-colors pr-6">
-                            {agent.name}
-                          </span>
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50">
+                            <BotIcon />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-[13px] font-semibold text-gray-900">
+                              {agent.name}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-gray-400">
+                              /agent/{agent.id}
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-500">{agent.description ?? `ID: ${agent.id}`}</p>
+                        <p className="line-clamp-2 text-[12px] leading-relaxed text-gray-500">
+                          {agent.description ?? 'No description yet.'}
+                        </p>
                       </button>
 
-                      {/* Delete button — top-right corner, shown on hover */}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setAgentToDelete(agent); }}
-                        className="absolute top-2 right-2 p-1.5 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                        title={`Delete ${agent.name}`}
-                        aria-label={`Delete ${agent.name}`}
-                      >
-                        <TrashIcon size="w-3.5 h-3.5" />
-                      </button>
+                      <div className="absolute right-2.5 top-2.5 flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAgentToEdit(agent);
+                          }}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-gray-300 transition-all duration-150 hover:border-gray-200 hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 md:opacity-0"
+                          title={`Edit ${agent.name}`}
+                          aria-label={`Edit ${agent.name}`}
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAgentToDelete(agent);
+                          }}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-gray-300 transition-all duration-150 hover:border-red-100 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 md:opacity-0"
+                          title={`Delete ${agent.name}`}
+                          aria-label={`Delete ${agent.name}`}
+                        >
+                          <TrashIcon size="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
 
                   {/* "Add new" card */}
-                  <button onClick={() => setShowNewAgentModal(true)}
-                    className="p-4 border border-dashed border-gray-300 rounded-lg hover:border-orange-400 hover:bg-orange-50 transition-colors flex flex-col items-center justify-center gap-2 min-h-[88px] group">
-                    <div className="w-8 h-8 rounded-full bg-gray-100 group-hover:bg-orange-100 flex items-center justify-center transition-colors">
+                  <button
+                    onClick={() => setShowNewAgentModal(true)}
+                    className="group flex min-h-[96px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300/80 bg-gray-50/60 px-4 py-3 text-center transition-all duration-200 ease-out hover:border-gray-400 hover:bg-gray-100"
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white group-hover:bg-gray-900/90">
                       <PlusIcon />
                     </div>
-                    <span className="text-xs font-medium text-gray-400 group-hover:text-orange-600 transition-colors">New Agent</span>
+                    <span className="text-[12px] font-medium text-gray-500 group-hover:text-gray-900">
+                      New agent
+                    </span>
                   </button>
                 </div>
               )}
             </div>
-          </div>
+          </section>
 
           {/* Global System Prompt Section */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-900">Global System Prompt</h2>
-              <p className="text-sm text-gray-500 mt-1">Rules that apply to all agents</p>
+          <section className="rounded-2xl border border-gray-200/60 bg-white/90 p-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.5)]">
+            <div className="flex items-center justify-between rounded-2xl border border-gray-100/80 bg-white/80 px-4 py-3">
+              <div>
+                <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">
+                  Global system prompt
+                </h2>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-gray-500">
+                  Shared rules applied to every agent.
+                </p>
+              </div>
             </div>
-            <div className="p-6"><SystemPromptEditor /></div>
-          </div>
-
+            <div className="px-4 pb-4 pt-3">
+              <SystemPromptEditor />
+            </div>
+          </section>
         </div>
       </main>
 
-      <footer className="h-8 border-t border-gray-200 flex items-center justify-center text-[10px] text-gray-400 bg-white shrink-0">
+      <footer className="flex h-8 shrink-0 items-center justify-center border-t border-gray-200/60 bg-white/95 text-[10px] text-gray-400 backdrop-blur">
         © Prograde IP Holdings 2026
       </footer>
 
       {/* New Agent Modal */}
       {showNewAgentModal && (
-        <NewAgentModal onClose={() => setShowNewAgentModal(false)} onCreated={() => { setShowNewAgentModal(false); fetchAgents(); }} />
+        <NewAgentModal
+          onClose={() => setShowNewAgentModal(false)}
+          onCreated={() => {
+            setShowNewAgentModal(false);
+            fetchAgents();
+          }}
+        />
       )}
 
       {/* Delete Confirm Modal */}
@@ -446,7 +740,21 @@ export default function Home() {
         <DeleteConfirmModal
           agentId={agentToDelete.id}
           onCancel={() => setAgentToDelete(null)}
-          onDeleted={() => { setAgentToDelete(null); fetchAgents(); }}
+          onDeleted={() => {
+            setAgentToDelete(null);
+            fetchAgents();
+          }}
+        />
+      )}
+
+      {agentToEdit && (
+        <EditAgentModal
+          agent={agentToEdit}
+          onClose={() => setAgentToEdit(null)}
+          onSaved={() => {
+            setAgentToEdit(null);
+            fetchAgents();
+          }}
         />
       )}
     </div>

@@ -1,7 +1,14 @@
+import { buildBucketInjectionSummary, type Base1ComparisonBuckets } from '@/lib/config/base1ComparisonBuckets';
+
 /**
  * Shared prompt templates for invoice extraction
  * This ensures consistency between chat/route.ts and agents/process/route.ts
  */
+
+/** Runtime injection — engine is authoritative; prompt defers to server-side savings. */
+export function appendBase1BucketInjection(prompt: string, buckets: Base1ComparisonBuckets): string {
+    return `${prompt}\n\n${buildBucketInjectionSummary(buckets)}`;
+}
 
 /**
  * Build the invoice extraction prompt for Base 1 Review processing
@@ -29,10 +36,21 @@ CRITICAL INSTRUCTIONS:
    - NMI must be 10-11 characters (electricity) - validate length
    - MRIN must be 8-12 characters (gas) - validate length
    - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT) — this is NOT an error
-   - daily_supply_charge in $/day (convert from monthly if needed)
-   - ALWAYS calculate rates if not shown: rate = charges / usage (follow rate calculation methods from the guides)
+   - **site_address** (electricity): include a parsable **Australian state** (NSW, VIC, QLD, SA, WA, ACT, TAS, NT) whenever possible — retail TOU logic depends on it
+   - **daily_supply_charge** in **$/day**: use the retailer line that quotes **daily** service/supply (e.g. “Daily Charge” with **$/day**). **Never** set daily_supply_charge to (unrelated period $ total) ÷ billing_days unless the invoice explicitly defines that as the daily supply component.
+   - **Do not create any low_hanging_fruit daily supply entries** (daily charge checks are disabled in Base 1).
+   - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
+   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic classification and rules use these strings.
+   - **C&I vs SME (automation):** populate \`billing_period_start\`, \`billing_period_end\`, \`usage_charges_ex_gst\`, \`network_charges_ex_gst\`, \`supply_charges_ex_gst\`, \`total_charges_ex_gst\` when printed — long cycles and network splits drive server-side classification alongside \`tariff_type\` and consumption.
+   - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. Always extract **\`gas_rate_per_gj\`** and **\`total_charges_ex_gst\`**. **Bundled** savings use (invoice ex-GST ÷ GJ) ×75% (whole bill, supply included). **Unbundled** uses \`gas_rate_per_gj\` as-is. Automated gas savings rows are only emitted when annualised usage is **≥ 700 GJ/year**. The **[700, 1000) GJ** band uses the 1,000 GJ rate and is labelled Potential (C&I 70%). The benchmark ($/GJ) is otherwise tiered by annualised usage.
+   - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
+   - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
    - For waste: populate waste_services array with ALL line items and pickup dates
+   - If an invoice line/service mentions **grease trap**, classify it under **Waste** (not Oil)
    - For oil: populate oil_services array with ALL line items
+   - When multiple invoices share the same NMI, savings are calculated server-side from the most recent invoice while all invoices remain in output data.
+   - When **any** electricity invoice in the batch classifies as C&I, **all** SME electricity invoices are excluded from savings (still retained in data output).
+   - **Electricity and Gas low_hanging_fruit:** always use **[]** — Base 1 computes findings deterministically from extracted fields (do not author metering/TOU/demand/gas rate rows in JSON).
 
 3. **CLASSIFICATION** (follow the guide documents):
    - For Electricity: Follow the CLASSIFICATION FRAMEWORK in ELECTRICITY_GUIDE
@@ -42,104 +60,35 @@ CRITICAL INSTRUCTIONS:
    - For Gas: Follow classification rules in GAS_GUIDE
    - For other utilities: Follow the corresponding guide
 
-4. **BENCHMARKING & SAVINGS** (MANDATORY - use values from knowledge base):
-   - **CRITICAL: YOU MUST EXTRACT ALL BENCHMARK VALUES FROM THE KNOWLEDGE BASE**
-   - **DO NOT USE ANY HARDCODED VALUES** - Common values like $1,000, $1,200, $4.00, $15.00, $700, etc. are FORBIDDEN
-   - **IF THE KB DOES NOT CONTAIN A BENCHMARK VALUE, DO NOT CREATE AN ENTRY** - Only add low_hanging_fruit entries when you can extract actual benchmark values from the KB
-   - **YOU MUST CHECK EVERY BENCHMARK** from the MARKET BENCHMARKS section in the guide document
-   - Apply the correct benchmark table based on: customer type + billing structure + TOU structure
-   - **FOR EACH INVOICE, CHECK ALL OF THESE:**
-     
-     a) **RATE BENCHMARKS** (extract from KB guide):
-        - Find the benchmark values for peak, shoulder, and off-peak rates in the KB
-        - Compare peak_rate_c_per_kwh to the benchmark value from KB
-        - Compare shoulder_rate_c_per_kwh (if 3-period TOU) to KB benchmark
-        - Compare off_peak_rate_c_per_kwh to KB benchmark
-        - For gas: Compare gas_rate_per_gj to KB benchmark
-        - Calculate savings: (current_rate - KB_benchmark_threshold) / 100 × annual_usage
-     
-     b) **DAILY SUPPLY CHARGE** (extract from KB guide):
-        - **FORBIDDEN VALUES: DO NOT USE $2.00, $3.00, $4.00, $5.00, or any other hardcoded dollar amounts**
-        - Search the KB for "Daily Supply Charge", "Supply Charge", or "Daily Supply" in MARKET BENCHMARKS
-        - The KB will show THREE different values:
-          * Base benchmark (e.g., "Daily Supply: $2.00-$5.00/day" - use the lower end of the range, e.g., $2.00/day, as the TARGET benchmark)
-          * 🟡 Warning threshold (e.g., "🟡 Medium severity if >$4.00/day") - for severity determination
-          * 🔴 Critical threshold (e.g., "🔴 High severity if >$5.00/day") - for severity determination
-        - The KB will specify different values for C&I vs SME customers - use the correct one based on customer type
-        - **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
-        - Compare daily_supply_charge to the KB benchmark thresholds (use the EXACT values from KB)
-        - Determine severity based on KB thresholds:
-          * If daily_supply > KB 🔴 threshold (from KB): severity = "high"
-          * If daily_supply > KB 🟡 threshold (from KB): severity = "medium"
-        - Calculate savings using the BASE BENCHMARK (not the warning threshold):
-          * Savings = (current_daily_supply - KB_base_benchmark) × 365
-          * Example: If KB says "Daily Supply: $2.00-$5.00/day" (use $2.00/day as base) and current = $20.80/day, then savings = ($20.80 - $2.00) × 365 = $6,862/year
-          * **CRITICAL: Use the BASE benchmark value (lower end of range, e.g., $2.00/day) for savings calculation, NOT the warning threshold ($4.00/day)**
-        - In the message field, include:
-          * The actual KB base benchmark value (e.g., "exceed KB benchmark of $2.00/day")
-          * The severity threshold that was exceeded (e.g., "exceeds KB critical threshold of $5.00/day")
-          * Example: "Daily supply charge $20.80/day exceeds KB benchmark of $2.00/day and critical threshold of $5.00/day"
-        - **VALIDATION: Before creating the entry, verify that ALL values (base benchmark, warning threshold, critical threshold) match values you can see in the KB context above**
-     
-     c) **METER CHARGES (DMA - Daily Metering Access)** (CRITICAL - extract from KB):
-        - **FORBIDDEN VALUES: DO NOT USE $1,000, $1,200, $800, $900, $700, or any other hardcoded dollar amounts**
-        - Step 1: Calculate annual meter charges = (meter_charges / billing_days) × 365
-        - Step 2: Find the DMA/Metering benchmark values in the knowledge base
-          * Search the KB context for "Metering", "DMA", "Daily Metering Access", or "meter charges" sections
-          * Look in MARKET BENCHMARKS tables - the KB will show THREE different values:
-            - Base benchmark (e.g., "Metering: $700/year") - this is the TARGET benchmark
-            - 🟡 Warning threshold (e.g., "🟡 Medium severity if >$1,000/year") - for severity determination
-            - 🔴 Critical threshold (e.g., "🔴 High severity if >$1,200/year") - for severity determination
-          * The KB will specify different values for C&I vs SME customers - use the correct one based on customer type
-          * **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
-        - Step 3: Compare annual meter charges to the KB benchmark thresholds (use the EXACT values from KB)
-        - Step 4: Determine severity based on KB thresholds:
-          * If annual > KB 🔴 threshold (from KB): severity = "high"
-          * If annual > KB 🟡 threshold (from KB): severity = "medium"
-        - Step 5: Calculate savings using the BASE BENCHMARK (not the warning threshold):
-          * Savings = annual_meter_charges - KB_base_benchmark
-          * Example: If KB says "Metering: $700/year" and annual = $1,560/year, then savings = $1,560 - $700 = $860/year
-          * **CRITICAL: Use the BASE benchmark value (e.g., $700/year) for savings calculation, NOT the warning threshold ($1,000/year)**
-        - Step 6: Add to low_hanging_fruit with type: "High Meter Charges"
-        - Step 7: In the message field, you MUST include:
-          * The actual KB base benchmark value (e.g., "exceed KB benchmark of $700/year")
-          * The severity threshold that was exceeded (e.g., "exceeds KB critical threshold of $1,200/year")
-          * Example: "Annual meter charges $1,560/year exceed KB benchmark of $700/year and critical threshold of $1,200/year"
-        - **VALIDATION: Before creating the entry, verify that ALL values (base benchmark, warning threshold, critical threshold) match values you can see in the KB context above**
-     
-     d) **DEMAND CHARGES** (extract from KB guide):
-        - **FORBIDDEN VALUES: DO NOT USE $15.00, $18.00, or any other hardcoded dollar amounts**
-        - Annualize: (demand_charges / billing_days) × 365
-        - Search the KB for "Demand Charges", "Demand", or "kVA" in MARKET BENCHMARKS
-        - Find demand charge benchmark in KB (may be per kVA/month or per kVA/year)
-        - Extract the EXACT benchmark threshold values as they appear in the KB
-        - **IF YOU CANNOT FIND THESE VALUES IN THE KB, DO NOT CREATE AN ENTRY**
-        - Compare to KB benchmark value (use the EXACT value from KB)
-        - In the message field, include the actual KB threshold value you extracted
-   
-   - **CALCULATION FORMULAS** (use KB benchmark values):
+4. **BENCHMARKING & low_hanging_fruit** (utility-specific):
+   - **Electricity:** Deterministic Base 1 replaces all model-authored findings (retail TOU NSW 10/10/12 and non-NSW 9/7 shoulder rules, metering tiers, demand repricing). Always set **low_hanging_fruit** to **[]**.
+   - **Gas:** Deterministic Base 1 replaces gas findings.
+     - Benchmark ($/GJ) tiered by annualised usage:
+       - [700, 1000): **17.1 $/GJ** (Potential / near-C&I)
+       - [1000, 10000): **17.1 $/GJ**
+       - [10000, 30000): **15.0 $/GJ**
+       - [30000, +inf): **13.9 $/GJ**
+     - **Bundled:** compare \`(invoice_ex_gst / usage_gj) × 75%\` (supply included) vs the tiered benchmark.
+     - **Unbundled:** compare **\`gas_rate_per_gj\`** as-is (fallback: invoice ex-GST ÷ GJ).
+     - Always set **low_hanging_fruit** to **[]**.
+   - **Water, Waste, Oil, Cleaning:** Use **MARKET BENCHMARKS** from the KB context only. **Never invent** dollar or cent thresholds that do not appear above. Compare extracted values to KB thresholds when creating findings.
+   - **Daily supply:** extract \`daily_supply_charge\` as data only — **no low_hanging_fruit** from daily supply for any utility type.
+
+   - **CALCULATION FORMULAS** (Water/Waste/Oil/Cleaning findings — KB thresholds only):
      * Annual usage = (period_usage / billing_days) × 365
-     * Annual savings for rates = (current_rate - KB_benchmark_threshold) / 100 × annual_usage
+     * Annual savings for rates = (current_rate - KB_benchmark_threshold) / 100 × annual_usage (when KB supplies the threshold)
      * Annual meter charges = (meter_charges / billing_days) × 365
-     * Annual demand charges = (demand_charges / billing_days) × 365
-   
-   - **POPULATE low_hanging_fruit ARRAY** (CRITICAL):
-     * **DO NOT create placeholder or empty entries**
-     * **ONLY add entries when benchmarks are ACTUALLY exceeded**
-     * For EVERY finding that exceeds benchmarks, add an entry with this EXACT structure:
-       {
-         "type": "High Meter Charges" | "High Peak Rate" | "High Shoulder Rate" | "High Off-Peak Rate" | "High Daily Supply" | "High Demand Charges" | "High Gas Rate",
-         "severity": "high" | "medium",
-         "message": "Descriptive message explaining the issue, including the actual KB benchmark threshold values (e.g., 'Annual meter charges $X/year exceed KB benchmark threshold of $Y/year'). Write as a short, client-friendly sentence so the first part can be used in the report summary and email (e.g. 'Peak rate above market benchmark' or 'Daily supply charge exceeds typical levels').",
-         "potential_savings": "$X,XXX.XX/year" (calculated savings amount)
-       }
-     * Use severity: "high" for 🔴 threshold exceeded, "medium" for 🟡 threshold exceeded
-     * Include potential_savings in format "$X,XXX.XX/year" (must be a calculated number, not empty)
-     * Only include if savings exceed the minimum threshold specified in the KB (extract this from KB, do not hardcode)
-     * **If no benchmarks are exceeded, low_hanging_fruit should be an empty array [] or null**
-     * **DO NOT use generic types like "Benchmarking" - use specific types like "High Meter Charges"**
+
+   - **POPULATE low_hanging_fruit ARRAY**:
+     * **Electricity and Gas:** always **[]**
+     * **Water, Waste, Oil, Cleaning:** add entries only when KB benchmarks are exceeded; use specific types (not "Benchmarking"); severity **high** or **medium** per KB; **potential_savings** as "$X,XXX.XX/year"; **message** must cite KB thresholds verbatim
+     * If no benchmarks exceeded: **[]** or null
 
 OUTPUT SCHEMA (return array of these objects):
+
+For **Electricity**, populate \`tariff_type\`, \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (**with state**), and **accurate TOU c/kWh** (unbundled = **energy lines only**). **low_hanging_fruit** must be **[]**. Server-side: TOU retail (NSW 10/10/12 etc.), metering tiers (700 / 900 bands), demand repricing (material gap only); retail TOU skipped for **flat/single-rate**; daily supply savings disabled.
+
+For **Gas**, **low_hanging_fruit** must be **[]**.
 
 \`\`\`json
 [
@@ -166,6 +115,7 @@ OUTPUT SCHEMA (return array of these objects):
     "off_peak_rate_c_per_kwh": number | null,
     "daily_supply_charge": number | null,
     "demand_kw": number | null,
+    "recorded_max_demand_kw": number | null,
     "demand_charges": number | null,
     "meter_charges": number | null,
     "total_usage_mj": number | null,
@@ -211,20 +161,11 @@ OUTPUT SCHEMA (return array of these objects):
 
 CRITICAL FINAL INSTRUCTIONS:
 1. Return ONLY the JSON array in a code block. No explanations, no summaries, no greetings — just the data.
-2. **DO NOT create placeholder entries in low_hanging_fruit** - only add entries when benchmarks are ACTUALLY exceeded
-3. **DO NOT use "Benchmarking" as a type** - use specific types like "High Meter Charges", "High Peak Rate", etc.
-4. **ABSOLUTE PROHIBITION ON HARDCODED VALUES:**
-   - **NEVER use $1,000, $1,200, $800, $900, $700 for meter charges**
-   - **NEVER use $4.00, $5.00 for daily supply charges**
-   - **NEVER use $15.00, $18.00 for demand charges**
-   - **NEVER use any dollar or cent amounts unless you can point to the EXACT value in the KB context above**
-   - **If you cannot find a benchmark value in the KB, DO NOT create an entry - it's better to have no entry than a wrong one**
-5. **Every entry in low_hanging_fruit MUST have:**
-   - A specific type (not "Benchmarking")
-   - A severity of "high" or "medium" (not "low")
-   - A calculated potential_savings value (not empty)
-   - A descriptive message that includes the ACTUAL KB threshold value (not a hardcoded one). Start with a short, client-friendly summary (e.g. "Peak rate above market benchmark") so the report and email stay readable.
-6. **If no benchmarks are exceeded OR if KB values cannot be found, set low_hanging_fruit to [] (empty array) or null**`;
+2. **Do not create placeholder entries** in low_hanging_fruit for Water/Waste/Oil/Cleaning — only when KB benchmarks are exceeded.
+3. **Do not use "Benchmarking" as a type** — use specific types from the guides.
+4. **Electricity and Gas:** **low_hanging_fruit** MUST be **[]** on every invoice row.
+5. **Water, Waste, Oil, Cleaning:** every finding must use thresholds **copied from the KB context** (never fabricated dollar amounts).
+6. **If no benchmarks are exceeded** for Water/Waste/Oil/Cleaning, set low_hanging_fruit to [] or null`;
 }
 
 /**
@@ -245,8 +186,9 @@ NOTE: Knowledge base guides are not available. Use standard extraction rules:
 - MRIN must be 8-12 characters (gas)
 - shoulder_usage_kwh is null for 2-period TOU (QLD/SA/WA/NT)
 - daily_supply_charge in $/day (convert from monthly if needed)
+- site_address: include Australian state when possible (NSW, VIC, etc.)
 - ALWAYS calculate rates if not shown: rate = charges / usage
+- low_hanging_fruit: use [] for Electricity and Gas (no KB benchmarks to cite)
 
 Return ONLY the JSON array in a code block, no other text.`;
 }
-

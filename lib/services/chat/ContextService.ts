@@ -9,9 +9,12 @@
 import { getLogger } from '@/lib/config/logger';
 import { embeddingService } from '@/lib/services/ai/EmbeddingService';
 import { knowledgeBaseStorage } from '@/lib/services/storage/KnowledgeBaseStorage';
-import { zohoDeskKBService } from '@/lib/services/zoho/ZohoDeskKBService';
 import { findSimilarChunks } from '@/lib/utils/DocumentChunker';
-import type { ZohoKBConfig } from '@/lib/services/zoho/types';
+import {
+    chunkSourceMatchesGuide,
+    inferUtilitiesFromFilesContentAndNames,
+    sortGuideChunksForExtraction,
+} from '@/lib/config/knowledgeBaseGuides';
 
 const logger = getLogger('ContextService');
 
@@ -31,15 +34,6 @@ export class ContextService {
     private static readonly TOTAL_FILE_BUDGET = 200_000;
     /** Hard safety limit for the combined prompt context to avoid token overflow. */
     private static readonly MAX_CONTEXT_LENGTH = 2_000_000;
-    /** Knowledge-base guide document prefixes used to identify benchmark files. */
-    private static readonly GUIDE_DOCUMENT_PREFIXES = [
-        'ELECTRICITY_GUIDE',
-        'GAS_GUIDE',
-        'WATER_GUIDE',
-        'WASTE_GUIDE',
-        'OIL_GUIDE',
-    ];
-
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -104,11 +98,13 @@ export class ContextService {
     }
 
     /**
-     * Retrieve ALL chunks from guide documents (ELECTRICITY_GUIDE, GAS_GUIDE …)
-     * rather than using semantic search. Used by InvoiceToolService so the model
-     * has full access to benchmarks and extraction rules.
+     * Retrieve chunks from guide documents (ELECTRICITY, GAS, …) rather than semantic search.
+     * Optional `fileContext` / `fileNames` adjust **sort order** (benchmark + utility hint), not inclusion.
      */
-    async buildGuideDocumentContext(agentId?: string): Promise<GuideDocumentContextResult> {
+    async buildGuideDocumentContext(
+        agentId?: string,
+        opts?: { fileContext?: string; fileNames?: string[] },
+    ): Promise<GuideDocumentContextResult> {
         const kb = await knowledgeBaseStorage.getCached(agentId);
 
         if (!kb) {
@@ -116,11 +112,18 @@ export class ContextService {
             return { kbContext: '', fileListContext: '' };
         }
 
-        const guideChunks = kb.chunks.filter((chunk: any) =>
-            ContextService.GUIDE_DOCUMENT_PREFIXES.some(prefix =>
-                (chunk.source || '').includes(prefix),
-            ),
-        );
+        const allGuides = kb.chunks.filter((chunk: any) => chunkSourceMatchesGuide(chunk.source));
+
+        const utilityHint = opts?.fileContext
+            ? inferUtilitiesFromFilesContentAndNames(opts.fileContext, opts.fileNames)
+            : null;
+        if (utilityHint && utilityHint.size > 0) {
+            logger.info(
+                `Guide utility hint: ${[...utilityHint].sort().join(', ')} (sort tie-break; all guide families still included)`,
+            );
+        }
+
+        const guideChunks = sortGuideChunksForExtraction(allGuides, utilityHint);
 
         if (guideChunks.length === 0) {
             const available = [...new Set(kb.chunks.map((c: any) => c.source))].join(', ');
@@ -154,43 +157,6 @@ export class ContextService {
         }
 
         return combined;
-    }
-
-    /**
-     * Search Zoho Desk KB articles and return formatted context.
-     * Replaces the Google Drive KB path for agents with Zoho enabled.
-     */
-    async buildZohoDeskKBContext(message: string, zohoConfig: ZohoKBConfig): Promise<KnowledgeBaseContextResult> {
-        const searchResults = await zohoDeskKBService.searchArticles(message, zohoConfig);
-
-        if (searchResults.length === 0) {
-            logger.info('No Zoho KB articles found for query');
-            return { kbContext: '', fileListContext: '', similarChunks: [] };
-        }
-
-        // Fetch full content for the top 5 results
-        const topResults = searchResults.slice(0, 5);
-        const articles = await Promise.all(
-            topResults.map((result) => zohoDeskKBService.getArticle(result.id, result.kbName)),
-        );
-        const validArticles = articles.filter(Boolean);
-
-        logger.info(`Fetched full content for ${validArticles.length} Zoho KB article(s)`);
-
-        const kbContext = validArticles
-            .map((article, i) => {
-                const header = `[Source ${i + 1} (${article!.kbName})]`;
-                const title = `Title: ${article!.title}`;
-                const body = article!.bodyText || article!.snippet || '';
-                return `${header}:\n${title}\n${body}`;
-            })
-            .join('\n\n---\n\n');
-
-        const fileListContext = validArticles.length > 0
-            ? `ZOHO KB ARTICLES AVAILABLE:\n${validArticles.map((a) => `- ${a!.title} (${a!.kbName})`).join('\n')}\n\n`
-            : '';
-
-        return { kbContext, fileListContext, similarChunks: [] };
     }
 
     // -------------------------------------------------------------------------

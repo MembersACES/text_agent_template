@@ -1,4 +1,15 @@
+function trimTrailingSlashes(s: string): string {
+    return s.replace(/\/+$/, '');
+}
+
 export const settings = {
+    /**
+     * Public site URL (no trailing slash), e.g. for server-side `fetch` to this app's API routes.
+     * Set `NEXT_PUBLIC_APP_URL` in production so tools can POST back (e.g. RGR persistence).
+     */
+    app: {
+        publicBaseUrl: trimTrailingSlashes(process.env.NEXT_PUBLIC_APP_URL ?? ''),
+    },
     gemini: {
         apiKey: process.env.GEMINI_API_KEY!,
         model: 'gemini-2.5-flash' as const,
@@ -17,6 +28,8 @@ export const settings = {
     },
     auth: {
         sitePassword: process.env.SITE_PASSWORD!,
+        /** Shared secret for interface proxy → buckets / staff cross-check APIs */
+        base1AdminKey: process.env.BASE1_BUCKETS_ADMIN_KEY ?? '',
     },
     zohoDesk: {
         clientId: process.env.ZOHO_CLIENT_ID!,
@@ -24,7 +37,9 @@ export const settings = {
         refreshToken: process.env.ZOHO_REFRESH_TOKEN!,
         orgId: process.env.ZOHO_ORG_ID!,
         datacenter: process.env.ZOHO_DATACENTER || 'com.au',
-        portalId: process.env.ZOHO_PORTAL_ID!,
-        portalId2: process.env.ZOHO_PORTAL_ID_2,
+    },
+    /** GVACA (Responsible Gambling Register) — fallback venue when the request has none. */
+    gvaca: {
+        defaultVenueId: process.env.GVACA_DEFAULT_VENUE_ID ?? '',
     },
 };
