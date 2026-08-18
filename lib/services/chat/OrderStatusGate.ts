@@ -47,9 +47,27 @@ const FALSE_ESCALATION_PROMISE =
 // Heuristic (tunable): a tracking/status verb together with an order-ish noun or
 // an order-number-looking token. Kept deliberately conservative so it doesn't
 // swallow general delivery-policy questions ("do you deliver to WA?").
+// Widened 18 Aug 2026 after live widget testing: "Can you check order X for Y"
+// carried a full order number AND email but matched no verb, so the gate returned
+// null and the customer got the legacy "go to goodness.com.au/order-status"
+// deflection. Added the ask-shaped verbs (check / look up / find / chase / follow
+// up / update / progress / received / eta). Regression-tested against the
+// delivery-POLICY questions this must NOT swallow ("do you deliver to WA?",
+// "how much is shipping?", "can you check if you have turmeric powder?").
 const TRACKING_VERB =
-    /\b(track|tracking|where(?:'?s| is| are)?|status|arriv\w*|deliver(?:ed|y)?|dispatch\w*|shipp\w*|coming|on its way)\b/i;
+    /\b(track|tracking|where(?:'?s| is| are)?|status|arriv\w*|deliver(?:ed|y)?|dispatch\w*|shipp\w*|coming|on its way|check|checking|look ?up|looking up|find|chase|chasing|follow(?:ing)? ?up|update|progress|received|receive|eta|when will)\b/i;
 const ORDER_NOUN = /\b(order|parcel|package|shipment|consignment|#?\d{6,8})\b/i;
+
+// A product-CONDITION complaint is not a tracking question, even when the message
+// carries a valid order number and email. Found by live widget test 18 Aug 2026:
+// "My order 359633 arrived damaged, email ..." returned "Your order has been
+// delivered" and the damage report was never seen — the customer never reached the
+// credit/returns form (Iri's policy, 3 May 2026). Cause: GeminiChatService runs
+// OrderStatusGate (line ~173) BEFORE ComplaintsResponseGate (line ~194), and
+// `arriv\w*` matches "arrived". Deliberately EXCLUDES refund/return/cancel — the
+// wont_wait trigger below owns "I don't want to wait, just refund it".
+const CONDITION_COMPLAINT =
+    /\b(damaged|broken|crushed|leaking|smashed|mouldy|moldy|rotten|spoiled|spoilt|expired|out of date|wrong item|incorrect item|received the wrong|sent the wrong|missing item|item missing|short ?shipped|faulty|not in (?:my|the) order)\b/i;
 
 const EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 // 6-digit BigCommerce (optionally BC- prefixed) or 8-digit Syspro (optionally SO).
@@ -139,6 +157,11 @@ export class OrderStatusGate {
         if (!this.wantsOrderTracking(message) && !isDetailsReply && !isReconfirmReply && !isWontWaitFollowup) {
             return null;
         }
+
+        // Stand down for condition complaints so ComplaintsResponseGate can serve the
+        // credit/returns flow. Guarded on !isWontWaitFollowup so the wont_wait trigger
+        // is never suppressed by a stray complaint word.
+        if (!isWontWaitFollowup && CONDITION_COMPLAINT.test(message)) return null;
 
         // Persistent per-instance alert service (default) so conversationId dedup +
         // the hourly rate cap actually hold ACROSS turns — a fresh `new` per turn
