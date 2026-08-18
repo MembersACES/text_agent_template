@@ -1,0 +1,9 @@
+{
+  "examples": [
+    { "label": "Ex1 — 8-digit Syspro (MachShip toEmail path)", "order": "10258836", "email": "PASTE_EMAIL_EX1" },
+    { "label": "Ex2 — 6-digit BigCommerce (dotWMS path)",       "order": "359269",   "email": "PASTE_EMAIL_EX2" },
+    { "label": "Ex3 — 6-digit BigCommerce (dotWMS path), ETA",  "order": "358577",   "email": "PASTE_EMAIL_EX3" },
+    { "label": "Ex4 — 8-digit Syspro, split/missing item",      "order": "10258612", "email": "PASTE_EMAIL_EX4" },
+    { "label": "Ex5 — 6-digit BigCommerce, split/missing item", "order": "354818",   "email": "PASTE_EMAIL_EX5" }
+  ]
+}
