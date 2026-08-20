@@ -1,4 +1,5 @@
 import { getLogger } from '@/lib/config/logger';
+import { redactPII } from '@/lib/services/privacy/redact';
 
 const logger = getLogger('ZohoDeskClient');
 
@@ -19,7 +20,8 @@ export class ZohoDeskClient {
         url.searchParams.set('searchStr', query);
         url.searchParams.set('limit', String(MAX_RESULTS));
 
-        logger.info(`Searching Zoho KB for: "${query}"`);
+        // query is the customer's raw words (email + order# when tracking is off) — redact.
+        logger.info(`Searching Zoho KB for: "${redactPII(query)}"`);
 
         const response = await fetch(url.toString());
 
@@ -30,16 +32,20 @@ export class ZohoDeskClient {
 
         const data = await response.json();
 
-        logger.info(`Raw Zoho API response: ${JSON.stringify(data)}`);
+        // Was: full JSON dump (could contain PII echoed back). Log count + titles only.
+        // Array.isArray (not `?? []`) so a 200 with a non-array `data` can't throw
+        // in .map — the old JSON.stringify never threw, so keep that soft-fail.
+        const rawResults: Array<Record<string, unknown>> = Array.isArray(data.data) ? data.data : [];
+        logger.info(`Zoho API returned ${rawResults.length} article(s): ${rawResults.map((a) => String(a.title ?? '')).filter(Boolean).join(' | ') || '(none)'}`);
 
-        const articles: ZohoArticle[] = (data.data ?? []).map((item: any) => ({
+        const articles: ZohoArticle[] = rawResults.map((item) => ({
             id: String(item.id ?? ''),
-            title: item.title ?? '',
-            summary: item.summary ?? item.answer ?? '',
-            permalink: item.webUrl ?? item.permalink ?? '',
+            title: String(item.title ?? ''),
+            summary: String(item.summary ?? item.answer ?? ''),
+            permalink: String(item.webUrl ?? item.permalink ?? ''),
         }));
 
-        logger.info(`Found ${articles.length} article(s) for query: "${query}"`);
+        logger.info(`Found ${articles.length} article(s) for query: "${redactPII(query)}"`);
         return articles;
     }
 }

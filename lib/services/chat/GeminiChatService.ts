@@ -17,6 +17,7 @@
  */
 
 import { GoogleGenerativeAI, Content, FunctionCallingMode } from '@google/generative-ai';
+import { createHash } from 'node:crypto';
 import { traceable } from 'langsmith/traceable';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
@@ -27,6 +28,7 @@ import { AgentToolRegistry } from '../tools/AgentToolRegistry';
 import { ConversationHistoryService, ConversationMessage } from './ConversationHistoryService';
 import { ContextService } from './ContextService';
 import { chatMessageTrace } from '@/lib/config/chatMessageTrace';
+import { redactPII, redactTraceInputs } from '@/lib/services/privacy/redact';
 import { KbSearchQueryResolver } from './KbSearchQueryResolver';
 import { ComplaintsResponseGate } from './ComplaintsResponseGate';
 import { OrderStatusGate } from './OrderStatusGate';
@@ -61,6 +63,23 @@ export interface ChatParams {
     useKnowledgeBase?: boolean;
     agentId?: string;
     uploadedFiles?: any[];
+    /** Optional stable conversation id. If the client ever plumbs one, it wins;
+     *  otherwise runChat derives one (see deriveConversationId). Used only to
+     *  scope internal-alert dedup per conversation — never contains PII. */
+    sessionId?: string;
+}
+
+/**
+ * A stable per-conversation id for alert dedup. Cloud Run is stateless per request
+ * and the client sends no session id, so we derive one from the FIRST user message
+ * (which is identical across every turn of the same conversation — on turn 1 it is
+ * the current message; thereafter it is history[0]-ish). Hashed, so no PII leaks
+ * into the id. Caveat: if history is truncated past the first message on a very
+ * long conversation the anchor shifts — acceptable, as escalations happen early.
+ */
+function deriveConversationId(history: ConversationMessage[], message: string): string {
+    const firstUser = history.find((m) => m.role === 'user')?.content ?? message;
+    return 'conv-' + createHash('sha256').update(String(firstUser)).digest('hex').slice(0, 16);
 }
 
 export interface ChatResponse {
@@ -94,7 +113,10 @@ export class GeminiChatService {
         async (params: ChatParams): Promise<ChatResponse> => {
             return this.ensureNonEmptyResponse(await this.runChat(params));
         },
-        { name: 'chat', run_type: 'chain' },
+        // processInputs redacts the customer message (email + order#) from the
+        // trace input BEFORE it reaches LangSmith — the wrapped fn still gets the
+        // real params. See lib/services/privacy/redact.ts.
+        { name: 'chat', run_type: 'chain', processInputs: redactTraceInputs },
     );
 
     private async runChat(params: ChatParams): Promise<ChatResponse> {
@@ -139,6 +161,20 @@ export class GeminiChatService {
             ) {
                 logger.info('Complaints gate: existing claim details reply; redirecting to support.');
                 return { response: ComplaintsResponseGate.buildExistingClaimDetailsReply() };
+            }
+
+            // Live order tracking (flag-gated via settings.freight.trackingEnabled).
+            // Runs BEFORE the stuck-packing deflection so a real status answer wins.
+            // Dark until ORDER_TRACKING_ENABLED=true — handleOrderTracking returns
+            // null when the flag is off, so the deflection below continues to fire.
+            if (useKnowledgeBase && hasKbTool) {
+                const conversationId = params.sessionId ?? deriveConversationId(conversationHistory, message);
+                // Default service + alerts (real InternalAlertService, gated by ALERTS_ENABLED).
+                const tracked = await OrderStatusGate.handleOrderTracking(message, conversationHistory, undefined, undefined, conversationId);
+                if (tracked) {
+                    logger.info('Order status gate: live order tracking handled the turn.');
+                    return { response: tracked };
+                }
             }
 
             if (useKnowledgeBase && hasKbTool && OrderStatusGate.needsStuckPackingHandoff(message)) {
@@ -364,7 +400,9 @@ export class GeminiChatService {
         const functionName: string = functionCallPart.functionCall.name;
         const args = functionCallPart.functionCall.args as Record<string, unknown>;
 
-        logger.info(`Model invoked "${functionName}" with args: ${JSON.stringify(args)}`);
+        // Redact: args.query is routinely the raw customer message (email + order#),
+        // and with tracking off an order question falls through to KB search here.
+        logger.info(`Model invoked "${functionName}" with args: ${redactPII(JSON.stringify(args))}`);
 
         const result = await tool.execute({
             functionCallName: functionName,
@@ -678,7 +716,7 @@ KNOWLEDGE BASE TOOL OVERRIDES:
         async (message: string, agentId?: string) => {
             return this.contextService.buildKnowledgeBaseContext(message, agentId);
         },
-        { name: 'retrieve_documents' },
+        { name: 'retrieve_documents', processInputs: redactTraceInputs },
     );
 
     /** Turn 1 Gemini generation wrapped in a LangSmith traceable span. */
@@ -701,7 +739,9 @@ KNOWLEDGE BASE TOOL OVERRIDES:
                 },
             });
         },
-        { name: 'generate_turn_1', run_type: 'llm' },
+        // Redact the prompt contents (they embed the customer message) from the
+        // LLM span input sent to LangSmith; the model still receives real contents.
+        { name: 'generate_turn_1', run_type: 'llm', processInputs: redactTraceInputs },
     );
 
     /** Skip Zoho search for brief acknowledgments; run search for real support questions. */
@@ -716,7 +756,7 @@ KNOWLEDGE BASE TOOL OVERRIDES:
         async (model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>, contents: Content[]) => {
             return model.generateContent({ contents });
         },
-        { name: 'generate_turn_2_with_tool_result', run_type: 'llm' },
+        { name: 'generate_turn_2_with_tool_result', run_type: 'llm', processInputs: redactTraceInputs },
     );
 
     // -------------------------------------------------------------------------
@@ -724,16 +764,19 @@ KNOWLEDGE BASE TOOL OVERRIDES:
     // -------------------------------------------------------------------------
 
     private logPromptPreview(prompt: string): void {
+        // Redact PII from the diagnostic copy (the prompt embeds the customer
+        // message). Length is reported from the ORIGINAL so the count stays true.
+        const safePrompt = redactPII(prompt);
         const MAX_PREVIEW = 2_000;
-        const preview = prompt.length > MAX_PREVIEW
-            ? prompt.substring(0, MAX_PREVIEW) + `\n\n[... ${prompt.length - MAX_PREVIEW} more characters ...]`
-            : prompt;
+        const preview = safePrompt.length > MAX_PREVIEW
+            ? safePrompt.substring(0, MAX_PREVIEW) + `\n\n[... ${safePrompt.length - MAX_PREVIEW} more characters ...]`
+            : safePrompt;
         logger.info(`Prompt sent to AI (${prompt.length} chars):\n${'='.repeat(80)}\n${preview}\n${'='.repeat(80)}`);
 
         if (chatMessageTrace.isCapturingTerminal()) {
             chatMessageTrace.appendSection(
                 `FULL PROMPT SENT TO AI (${prompt.length} chars)`,
-                prompt,
+                safePrompt,
             );
         }
     }

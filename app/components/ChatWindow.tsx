@@ -70,6 +70,38 @@ interface ChatWindowProps {
     onEmbedMinimize?: () => void;
 }
 
+/**
+ * Short-lived chat token (Tier 2 hardening). Fetched from /api/chat-session and
+ * cached module-scoped so we don't mint one per message. FAILS OPEN: any error,
+ * a null token (secret not configured), or an expired cache returns '' and the
+ * caller sends no header. Enforcement only bites when /api/chat has
+ * requireToken=true AND a secret is set — so this never breaks the widget while
+ * the flag is off.
+ */
+let cachedChatToken: { token: string; exp: number } | null = null;
+async function getChatToken(): Promise<string> {
+    const now = Date.now();
+    if (cachedChatToken && cachedChatToken.exp - now > 30_000) return cachedChatToken.token;
+    try {
+        const res = await fetch('/api/chat-session', { method: 'GET' });
+        if (!res.ok) return '';
+        const data = await res.json();
+        if (data?.token && typeof data.expiresIn === 'number') {
+            cachedChatToken = { token: data.token, exp: now + data.expiresIn };
+            return data.token;
+        }
+    } catch {
+        /* fail open — proceed token-less */
+    }
+    return '';
+}
+
+/** Drop the cached token so the next getChatToken() mints a fresh one. Called
+ *  when /api/chat rejects a token as expired/stale (e.g. client clock skew). */
+function invalidateChatToken(): void {
+    cachedChatToken = null;
+}
+
 export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }: ChatWindowProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
@@ -253,9 +285,12 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
         setIsLoading(true);
 
         try {
-            const response = await fetch('/api/chat', {
+            const buildInit = (token: string): RequestInit => ({
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'x-chat-token': token } : {}),
+                },
                 body: JSON.stringify({
                     message: userMessage,
                     conversationHistory: messages, // Include full conversation history
@@ -264,6 +299,16 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                     uploadedFiles,
                 }),
             });
+
+            let chatToken = await getChatToken();
+            let response = await fetch('/api/chat', buildInit(chatToken));
+            // Token rejected (expired/stale — e.g. clock skew)? Mint a fresh one
+            // and retry ONCE, so an old cached token can't dead-end the widget.
+            if (response.status === 401 && chatToken) {
+                invalidateChatToken();
+                chatToken = await getChatToken();
+                response = await fetch('/api/chat', buildInit(chatToken));
+            }
 
             const data = await response.json();
             console.log('Chat API response length:', data.response?.length);

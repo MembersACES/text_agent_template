@@ -7,6 +7,7 @@ import { ComplaintsResponseGate } from '../chat/ComplaintsResponseGate';
 import { PaymentSegmentGate } from '../chat/PaymentSegmentGate';
 import { KbSearchQueryResolver } from '../chat/KbSearchQueryResolver';
 import { ZohoDeskClient, ZohoArticle } from '../zoho/ZohoDeskClient';
+import { redactPII } from '@/lib/services/privacy/redact';
 import { traceable } from 'langsmith/traceable';
 
 const logger = getLogger('ZohoKbToolService');
@@ -78,11 +79,12 @@ export class ZohoKbToolService implements AgentTool {
 
         const segmentFollowUp = KbSearchQueryResolver.getSegmentFollowUp(rawMessage, history);
         if (segmentFollowUp) {
+            // Both fields are the customer's raw words — redact before logging.
             logger.info(
-                `Segment follow-up: customer said "${segmentFollowUp.segmentAnswer}"; searching for "${query}"`,
+                `Segment follow-up: customer said "${redactPII(segmentFollowUp.segmentAnswer)}"; searching for "${redactPII(query)}"`,
             );
         } else {
-            logger.info(`Executing search_knowledge_base with query: "${query}"`);
+            logger.info(`Executing search_knowledge_base with query: "${redactPII(query)}"`);
         }
 
         const agentConfig = await gcsClient.getPromptConfig(params.agentId);
@@ -173,7 +175,7 @@ export class ZohoKbToolService implements AgentTool {
             }
 
             logger.info(
-                `Selected ${bestCandidate.label} with relevance=${bestCandidate.relevant} score=${bestCandidate.score} for query "${query}"`,
+                `Selected ${bestCandidate.label} with relevance=${bestCandidate.relevant} score=${bestCandidate.score} for query "${redactPII(query)}"`,
             );
             let articles = this.rankArticlesForQuery(query, bestCandidate.articles);
             if (paymentIntent) {
@@ -208,7 +210,7 @@ export class ZohoKbToolService implements AgentTool {
                 actualArgs,
             };
         } catch (error) {
-            logger.error(`Zoho KB search failed for query "${query}": ${error}`);
+            logger.error(`Zoho KB search failed for query "${redactPII(query)}": ${redactPII(String(error))}`);
             return {
                 toolResponse: {
                     status: 'error',
@@ -252,7 +254,7 @@ export class ZohoKbToolService implements AgentTool {
         if (!shouldTryFallbacks) return primary;
 
         logger.info(
-            `Primary search appears weak for "${query}" (score=${primaryScore}); trying ${fallbackQueries.length} fallback query(ies).`,
+            `Primary search appears weak for "${redactPII(query)}" (score=${primaryScore}); trying ${fallbackQueries.length} fallback query(ies).`,
         );
 
         const merged = new Map<string, ZohoArticle>();
