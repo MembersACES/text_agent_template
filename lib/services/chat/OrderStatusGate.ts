@@ -274,9 +274,10 @@ export class OrderStatusGate {
         if (isCollectionRefusalFollowup) {
             const prior = this.extractAttemptBeforeMarker(history, COLLECTION_MARKER);
             if (prior.order && prior.email) {
+                const name = await this.recipientNameFor(prior.order, prior.email, service);
                 await this.fireAlertSafely(
                     alertSvc,
-                    this.buildAlert('collection_refused', prior.order, prior.email, conversationId),
+                    this.buildAlert('collection_refused', prior.order, prior.email, conversationId, name),
                 );
             }
             return DRAFT_COPY.collectionRefused;
@@ -285,7 +286,11 @@ export class OrderStatusGate {
         if (isWontWaitFollowup) {
             const prior = this.extractAttemptBeforeMarker(history, WONT_WAIT_MARKER);
             if (prior.order && prior.email) {
-                await this.fireAlertSafely(alertSvc, this.buildAlert('wont_wait', prior.order, prior.email, conversationId));
+                const name = await this.recipientNameFor(prior.order, prior.email, service);
+                await this.fireAlertSafely(
+                    alertSvc,
+                    this.buildAlert('wont_wait', prior.order, prior.email, conversationId, name),
+                );
                 return this.buildEscalatedReply('wont_wait');
             }
             // Couldn't recover the order → do NOT claim an escalation was raised.
@@ -312,7 +317,7 @@ export class OrderStatusGate {
         if (result.state === 'multiple_consignments') {
             await this.fireAlertSafely(
                 alertSvc,
-                this.buildAlert('duplicate_consignments', order, email, conversationId),
+                this.buildAlert('duplicate_consignments', order, email, conversationId, result.recipientName),
             );
             return result.message;
         }
@@ -320,7 +325,10 @@ export class OrderStatusGate {
         // ── Trigger 1: queued_chasing → WH. Order verified & in the packing queue,
         //    and the message reads as a stuck-packing / extended-delay chase.
         if (result.state === 'preparing' && this.needsStuckPackingHandoff(message)) {
-            await this.fireAlertSafely(alertSvc, this.buildAlert('queued_chasing', order, email, conversationId));
+            await this.fireAlertSafely(
+                alertSvc,
+                this.buildAlert('queued_chasing', order, email, conversationId, result.recipientName),
+            );
             return this.renderTracking(result);
         }
 
@@ -362,10 +370,17 @@ export class OrderStatusGate {
         order: string,
         email: string,
         conversationId?: string,
+        customerName: string | null = null,
     ): InternalAlert {
         return {
             trigger,
-            customerName: null, // TODO: no recipient name available from TrackingResult
+            // MachShip's consignment recipient name, carried through on
+            // TrackingResult.recipientName. Fills the name slot in the alert subject
+            // (`H2G AI ALERT_<TEAM>_<Name>`), which is what the Helpdesk routing rule
+            // reads. Null is correct where there is no consignment to name — a
+            // not_found alert is BY DEFINITION an order we could not find, so its
+            // subject stays `(Unknown)`.
+            customerName,
             customerEmail: email,
             orderNumber: order,
             reason: '', // empty → InternalAlertService fills DEFAULT_REASON[trigger]
@@ -377,6 +392,29 @@ export class OrderStatusGate {
      *  customer answer is returned regardless. (InternalAlertService already turns
      *  transport errors into a result rather than throwing; this is belt-and-braces
      *  against an unexpected throw.) No PII is logged — trigger name only. */
+    /**
+     * Recipient name for an escalation that fires off a HISTORY marker rather than a
+     * fresh lookup (wont_wait, collection_refused). Those branches deliberately do not
+     * re-render a status, so they hold no TrackingResult. One extra lookup on a rare
+     * escalation turn is worth a named alert in the Helpdesk. Never throws and never
+     * blocks: any failure returns null and the alert goes out as `(Unknown)`.
+     */
+    private static async recipientNameFor(
+        order: string,
+        email: string,
+        service?: OrderTrackingService,
+    ): Promise<string | null> {
+        try {
+            const svc = service ?? new OrderTrackingService();
+            const r = await svc.track(order, email);
+            return r.recipientName ?? null;
+        } catch (err) {
+            logger.info('recipient name lookup for alert failed; alert will say (Unknown)');
+            logger.error('recipient name lookup error', err);
+            return null;
+        }
+    }
+
     private static async fireAlertSafely(alerts: InternalAlertService, alert: InternalAlert): Promise<void> {
         try {
             const res = await alerts.send(alert);

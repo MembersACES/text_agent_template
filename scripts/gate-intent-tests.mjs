@@ -826,7 +826,8 @@ var OrderTrackingService = class {
         DRAFT_COPY.multipleConsignments,
         provider,
         `${cons.length} live consignments against one order (${cons.map((c) => c.consignmentNumber ?? c.carrierConsignmentId).join(", ")})${droppedDead ? `; ${droppedDead} cancelled ignored` : ""} \u2014 escalated rather than rendered`,
-        verifiedVia
+        verifiedVia,
+        this.recipientNameOf(cons)
       );
     }
     const boxes = cons.map((c) => ({
@@ -895,6 +896,7 @@ var OrderTrackingService = class {
       eta,
       showEtaDisclaimer,
       provider,
+      recipientName: this.recipientNameOf(cons),
       diagnostic: diagnostics.length ? diagnostics.join(" | ") : void 0
     };
   }
@@ -942,7 +944,15 @@ var OrderTrackingService = class {
       timeZone: "UTC"
     }).format(dt);
   }
-  simple(state, message, provider, diagnostic, verifiedVia = null) {
+  /** First non-empty recipient name across consignments, or null. */
+  recipientNameOf(cons) {
+    for (const c of cons) {
+      const n = String(c.toName ?? "").trim();
+      if (n) return n;
+    }
+    return null;
+  }
+  simple(state, message, provider, diagnostic, verifiedVia = null, recipientName = null) {
     return {
       state,
       message,
@@ -954,6 +964,7 @@ var OrderTrackingService = class {
       eta: null,
       showEtaDisclaimer: false,
       provider,
+      recipientName,
       diagnostic
     };
   }
@@ -1251,9 +1262,10 @@ var OrderStatusGate = class _OrderStatusGate {
     if (isCollectionRefusalFollowup) {
       const prior = this.extractAttemptBeforeMarker(history, COLLECTION_MARKER);
       if (prior.order && prior.email) {
+        const name = await this.recipientNameFor(prior.order, prior.email, service);
         await this.fireAlertSafely(
           alertSvc,
-          this.buildAlert("collection_refused", prior.order, prior.email, conversationId)
+          this.buildAlert("collection_refused", prior.order, prior.email, conversationId, name)
         );
       }
       return DRAFT_COPY.collectionRefused;
@@ -1261,7 +1273,11 @@ var OrderStatusGate = class _OrderStatusGate {
     if (isWontWaitFollowup) {
       const prior = this.extractAttemptBeforeMarker(history, WONT_WAIT_MARKER);
       if (prior.order && prior.email) {
-        await this.fireAlertSafely(alertSvc, this.buildAlert("wont_wait", prior.order, prior.email, conversationId));
+        const name = await this.recipientNameFor(prior.order, prior.email, service);
+        await this.fireAlertSafely(
+          alertSvc,
+          this.buildAlert("wont_wait", prior.order, prior.email, conversationId, name)
+        );
         return this.buildEscalatedReply("wont_wait");
       }
       return `I understand you'd prefer not to wait for the rest. Please contact ${SUPPORT_CHANNELS} and the team will sort it out.`;
@@ -1282,12 +1298,15 @@ var OrderStatusGate = class _OrderStatusGate {
     if (result.state === "multiple_consignments") {
       await this.fireAlertSafely(
         alertSvc,
-        this.buildAlert("duplicate_consignments", order, email, conversationId)
+        this.buildAlert("duplicate_consignments", order, email, conversationId, result.recipientName)
       );
       return result.message;
     }
     if (result.state === "preparing" && this.needsStuckPackingHandoff(message)) {
-      await this.fireAlertSafely(alertSvc, this.buildAlert("queued_chasing", order, email, conversationId));
+      await this.fireAlertSafely(
+        alertSvc,
+        this.buildAlert("queued_chasing", order, email, conversationId, result.recipientName)
+      );
       return this.renderTracking(result);
     }
     if (result.state === "not_found") {
@@ -1315,11 +1334,16 @@ ${WONT_WAIT_MARKER_SENTENCE}`;
   // NOTE: the alert payload uses the REAL order + email on purpose — it must be
   // actionable in the CS/WH inbox. redactPII is a trace/log boundary concern and
   // is deliberately NOT applied on this path (the payload bypasses redaction).
-  static buildAlert(trigger, order, email, conversationId) {
+  static buildAlert(trigger, order, email, conversationId, customerName = null) {
     return {
       trigger,
-      customerName: null,
-      // TODO: no recipient name available from TrackingResult
+      // MachShip's consignment recipient name, carried through on
+      // TrackingResult.recipientName. Fills the name slot in the alert subject
+      // (`H2G AI ALERT_<TEAM>_<Name>`), which is what the Helpdesk routing rule
+      // reads. Null is correct where there is no consignment to name — a
+      // not_found alert is BY DEFINITION an order we could not find, so its
+      // subject stays `(Unknown)`.
+      customerName,
       customerEmail: email,
       orderNumber: order,
       reason: "",
@@ -1331,6 +1355,24 @@ ${WONT_WAIT_MARKER_SENTENCE}`;
    *  customer answer is returned regardless. (InternalAlertService already turns
    *  transport errors into a result rather than throwing; this is belt-and-braces
    *  against an unexpected throw.) No PII is logged — trigger name only. */
+  /**
+   * Recipient name for an escalation that fires off a HISTORY marker rather than a
+   * fresh lookup (wont_wait, collection_refused). Those branches deliberately do not
+   * re-render a status, so they hold no TrackingResult. One extra lookup on a rare
+   * escalation turn is worth a named alert in the Helpdesk. Never throws and never
+   * blocks: any failure returns null and the alert goes out as `(Unknown)`.
+   */
+  static async recipientNameFor(order, email, service) {
+    try {
+      const svc = service ?? new OrderTrackingService();
+      const r = await svc.track(order, email);
+      return r.recipientName ?? null;
+    } catch (err) {
+      logger7.info("recipient name lookup for alert failed; alert will say (Unknown)");
+      logger7.error("recipient name lookup error", err);
+      return null;
+    }
+  }
   static async fireAlertSafely(alerts, alert) {
     try {
       const res = await alerts.send(alert);
@@ -1464,6 +1506,7 @@ Track your ${links.length > 1 ? "boxes" : "parcel"}: ${links.join("   ")}`;
 // scripts/gate-intent-tests.src.ts
 var ORDER = "10000001";
 var EMAIL = "customer@example.com";
+var NAME = "Sue Mitchell";
 var RECENT = new Date(Date.now() - 3 * 864e5).toISOString();
 function resolver() {
   return {
@@ -1503,6 +1546,7 @@ function consignment(statusName, items, id = "W9DZ00000001") {
     eta: "2026-09-04T23:59:59",
     despatchDateUtc: RECENT,
     toEmail: EMAIL,
+    toName: NAME,
     trackingPageAccessToken: "TESTTOKEN",
     consignmentItems: Array.from({ length: items }, (_, i) => ({
       name: "Generic Item",
@@ -1656,6 +1700,12 @@ var SCENARIOS = [
     ],
     because: "the guard must narrow the bare-details path only, never the verb path"
   },
+  {
+    name: "Recipient name never appears in a customer-facing reply",
+    cons: DELIVERED,
+    turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: (m) => !m.includes(NAME), alertsAfter: 0 }],
+    because: "the name is for the alert subject only; echoing it would confirm whose order a guessed number is"
+  },
   // ── Alert sequences: not_found (live tests D1-D3) ───────────────────────
   {
     name: "not_found: first attempt asks, second fires, third dedups (D1-D3)",
@@ -1663,7 +1713,7 @@ var SCENARIOS = [
     conversationId: "conv-notfound",
     turns: [
       { say: "Where is my order 999999? My email is nobody@example.com", expect: handled(/double-check the order number and the email/i), alertsAfter: 0 },
-      { say: "Where is my order 999999? My email is nobody@example.com", expect: handled(/flagged this with our customer service/i), alertsAfter: 1, reasonIncludes: "not" },
+      { say: "Where is my order 999999? My email is nobody@example.com", expect: handled(/flagged this with our customer service/i), alertsAfter: 1, reasonIncludes: "not", subjectIncludes: "ALERT_CS_(Unknown)" },
       { say: "Where is my order 999999? My email is nobody@example.com", expect: () => true, alertsAfter: 1 }
     ],
     because: "one alert per genuine miss, never on the first try and never twice"
@@ -1685,7 +1735,7 @@ var SCENARIOS = [
     conversationId: "conv-wontwait",
     turns: [
       { say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/prefer not to wait for the rest/i), alertsAfter: 0 },
-      { say: "I don't want to wait for the rest, just refund it", expect: handled(/passed|flagged|team/i), alertsAfter: 1, reasonIncludes: "wait" }
+      { say: "I don't want to wait for the rest, just refund it", expect: handled(/passed|flagged|team/i), alertsAfter: 1, reasonIncludes: "wait", subjectIncludes: `ALERT_CS_${NAME}` }
     ],
     because: "the only trigger with no live order to test it against"
   },
@@ -1720,7 +1770,7 @@ var SCENARIOS = [
     conversationId: "conv-collection-refused",
     turns: [
       { say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/post office or collection point/i), alertsAfter: 0 },
-      { say: "I can't collect it, I have no transport", expect: handled(/passed this to our team/i), alertsAfter: 1, reasonIncludes: "collect" }
+      { say: "I can't collect it, I have no transport", expect: handled(/passed this to our team/i), alertsAfter: 1, reasonIncludes: "collect", subjectIncludes: `ALERT_CS_${NAME}` }
     ],
     because: "the second half of the rule Iri set"
   },
@@ -1729,7 +1779,7 @@ var SCENARIOS = [
     name: "duplicate consignments escalate and alert (C2)",
     cons: [consignment("Booked", 1, "W9DZ00048114"), consignment("Picked Up", 1, "W9DZ00048117")],
     conversationId: "conv-dupe",
-    turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/more than one delivery record/i), alertsAfter: 1, reasonIncludes: "consignment" }],
+    turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/more than one delivery record/i), alertsAfter: 1, reasonIncludes: "consignment", subjectIncludes: `ALERT_CS_${NAME}` }],
     because: "never guess which of two live consignments is the real one"
   },
   {
@@ -1779,6 +1829,13 @@ var SCENARIOS = [
       if (sent.length !== t.alertsAfter) {
         ok = false;
         notes.push(`turn ${i + 1}: expected ${t.alertsAfter} alert(s) so far, got ${sent.length}`);
+      }
+      if (t.subjectIncludes && sent.length > before) {
+        const subject = sent[sent.length - 1].subject ?? "";
+        if (!subject.includes(t.subjectIncludes)) {
+          ok = false;
+          notes.push(`turn ${i + 1}: alert subject missing "${t.subjectIncludes}": ${subject}`);
+        }
       }
       if (t.reasonIncludes && sent.length > before) {
         const body = sent[sent.length - 1].body ?? "";

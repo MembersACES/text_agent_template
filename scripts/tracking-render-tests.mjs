@@ -826,7 +826,8 @@ var OrderTrackingService = class {
         DRAFT_COPY.multipleConsignments,
         provider,
         `${cons.length} live consignments against one order (${cons.map((c) => c.consignmentNumber ?? c.carrierConsignmentId).join(", ")})${droppedDead ? `; ${droppedDead} cancelled ignored` : ""} \u2014 escalated rather than rendered`,
-        verifiedVia
+        verifiedVia,
+        this.recipientNameOf(cons)
       );
     }
     const boxes = cons.map((c) => ({
@@ -895,6 +896,7 @@ var OrderTrackingService = class {
       eta,
       showEtaDisclaimer,
       provider,
+      recipientName: this.recipientNameOf(cons),
       diagnostic: diagnostics.length ? diagnostics.join(" | ") : void 0
     };
   }
@@ -942,7 +944,15 @@ var OrderTrackingService = class {
       timeZone: "UTC"
     }).format(dt);
   }
-  simple(state, message, provider, diagnostic, verifiedVia = null) {
+  /** First non-empty recipient name across consignments, or null. */
+  recipientNameOf(cons) {
+    for (const c of cons) {
+      const n = String(c.toName ?? "").trim();
+      if (n) return n;
+    }
+    return null;
+  }
+  simple(state, message, provider, diagnostic, verifiedVia = null, recipientName = null) {
     return {
       state,
       message,
@@ -954,6 +964,7 @@ var OrderTrackingService = class {
       eta: null,
       showEtaDisclaimer: false,
       provider,
+      recipientName,
       diagnostic
     };
   }

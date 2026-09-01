@@ -38,6 +38,12 @@ export interface MachShipConsignment {
      * customer's email against this. May be empty on some consignments.
      */
     toEmail?: string | null;
+    /**
+     * Delivery recipient's name, e.g. "Sue Mitchell". Verified present on live
+     * consignments (machship-raw-10265223.local.json). Used ONLY to fill the
+     * customer-name slot in an internal alert subject; never shown to a customer.
+     */
+    toName?: string | null;
     /** Cartons/items within THIS consignment (secondary split dimension). */
     consignmentItems?: MachShipConsignmentItem[];
     statusHistory?: MachShipTrackingStatus[];

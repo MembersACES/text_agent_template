@@ -37,6 +37,7 @@ import type { AlertMessage } from '@/lib/services/alerts/types';
 
 const ORDER = '10000001';
 const EMAIL = 'customer@example.com';
+const NAME = 'Sue Mitchell';
 const RECENT = new Date(Date.now() - 3 * 864e5).toISOString();
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ function consignment(statusName: string, items: number, id = 'W9DZ00000001'): Ma
         eta: '2026-09-04T23:59:59',
         despatchDateUtc: RECENT,
         toEmail: EMAIL,
+        toName: NAME,
         trackingPageAccessToken: 'TESTTOKEN',
         consignmentItems: Array.from({ length: items }, (_, i) => ({
             name: 'Generic Item',
@@ -127,6 +129,9 @@ interface Turn {
     alertsAfter: number;
     /** If an alert fired on this turn, the trigger its reason line must carry. */
     reasonIncludes?: string;
+    /** If an alert fired on this turn, text its SUBJECT must contain. The subject is
+     *  what the Helpdesk routing rule reads, so the customer name has to reach it. */
+    subjectIncludes?: string;
     /** Reply to push into history when THIS gate stands down, standing in for the
      *  gate that would really have answered (e.g. ComplaintsResponseGate). */
     injectAssistant?: string;
@@ -261,6 +266,13 @@ const SCENARIOS: Scenario[] = [
         because: 'the guard must narrow the bare-details path only, never the verb path',
     },
 
+    {
+        name: 'Recipient name never appears in a customer-facing reply',
+        cons: DELIVERED,
+        turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: (m) => !m.includes(NAME), alertsAfter: 0 }],
+        because: 'the name is for the alert subject only; echoing it would confirm whose order a guessed number is',
+    },
+
     // ── Alert sequences: not_found (live tests D1-D3) ───────────────────────
     {
         name: 'not_found: first attempt asks, second fires, third dedups (D1-D3)',
@@ -268,7 +280,7 @@ const SCENARIOS: Scenario[] = [
         conversationId: 'conv-notfound',
         turns: [
             { say: 'Where is my order 999999? My email is nobody@example.com', expect: handled(/double-check the order number and the email/i), alertsAfter: 0 },
-            { say: 'Where is my order 999999? My email is nobody@example.com', expect: handled(/flagged this with our customer service/i), alertsAfter: 1, reasonIncludes: 'not' },
+            { say: 'Where is my order 999999? My email is nobody@example.com', expect: handled(/flagged this with our customer service/i), alertsAfter: 1, reasonIncludes: 'not', subjectIncludes: 'ALERT_CS_(Unknown)' },
             { say: 'Where is my order 999999? My email is nobody@example.com', expect: () => true, alertsAfter: 1 },
         ],
         because: 'one alert per genuine miss, never on the first try and never twice',
@@ -291,7 +303,7 @@ const SCENARIOS: Scenario[] = [
         conversationId: 'conv-wontwait',
         turns: [
             { say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/prefer not to wait for the rest/i), alertsAfter: 0 },
-            { say: "I don't want to wait for the rest, just refund it", expect: handled(/passed|flagged|team/i), alertsAfter: 1, reasonIncludes: 'wait' },
+            { say: "I don't want to wait for the rest, just refund it", expect: handled(/passed|flagged|team/i), alertsAfter: 1, reasonIncludes: 'wait', subjectIncludes: `ALERT_CS_${NAME}` },
         ],
         because: 'the only trigger with no live order to test it against',
     },
@@ -327,7 +339,7 @@ const SCENARIOS: Scenario[] = [
         conversationId: 'conv-collection-refused',
         turns: [
             { say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/post office or collection point/i), alertsAfter: 0 },
-            { say: "I can't collect it, I have no transport", expect: handled(/passed this to our team/i), alertsAfter: 1, reasonIncludes: 'collect' },
+            { say: "I can't collect it, I have no transport", expect: handled(/passed this to our team/i), alertsAfter: 1, reasonIncludes: 'collect', subjectIncludes: `ALERT_CS_${NAME}` },
         ],
         because: 'the second half of the rule Iri set',
     },
@@ -337,7 +349,7 @@ const SCENARIOS: Scenario[] = [
         name: 'duplicate consignments escalate and alert (C2)',
         cons: [consignment('Booked', 1, 'W9DZ00048114'), consignment('Picked Up', 1, 'W9DZ00048117')],
         conversationId: 'conv-dupe',
-        turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/more than one delivery record/i), alertsAfter: 1, reasonIncludes: 'consignment' }],
+        turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: handled(/more than one delivery record/i), alertsAfter: 1, reasonIncludes: 'consignment', subjectIncludes: `ALERT_CS_${NAME}` }],
         because: 'never guess which of two live consignments is the real one',
     },
     {
@@ -391,6 +403,13 @@ const SCENARIOS: Scenario[] = [
             if (sent.length !== t.alertsAfter) {
                 ok = false;
                 notes.push(`turn ${i + 1}: expected ${t.alertsAfter} alert(s) so far, got ${sent.length}`);
+            }
+            if (t.subjectIncludes && sent.length > before) {
+                const subject = sent[sent.length - 1].subject ?? '';
+                if (!subject.includes(t.subjectIncludes)) {
+                    ok = false;
+                    notes.push(`turn ${i + 1}: alert subject missing "${t.subjectIncludes}": ${subject}`);
+                }
             }
             if (t.reasonIncludes && sent.length > before) {
                 const body = sent[sent.length - 1].body ?? '';

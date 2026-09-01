@@ -52,6 +52,15 @@ export interface TrackingResult {
     showEtaDisclaimer: boolean;
     /** Resolver provider that produced this (audit). */
     provider: string;
+    /**
+     * Delivery recipient's name from the consignment, or null when there is no
+     * consignment to read it from (not_found, preparing, too_old). INTERNAL ONLY:
+     * this exists so an escalation alert can name the customer in its subject
+     * (`H2G AI ALERT_CS_<Name>`), which is what the Helpdesk routing rule reads.
+     * Never render it back to the customer — they already know their own name, and
+     * echoing it would leak whose order a guessed order number belongs to.
+     */
+    recipientName: string | null;
     /** Internal diagnostic — never shown to the customer. */
     diagnostic?: string;
 }

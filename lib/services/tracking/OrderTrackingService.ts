@@ -209,6 +209,7 @@ export class OrderTrackingService {
                     .map((c) => c.consignmentNumber ?? c.carrierConsignmentId)
                     .join(', ')})${droppedDead ? `; ${droppedDead} cancelled ignored` : ''} — escalated rather than rendered`,
                 verifiedVia,
+                this.recipientNameOf(cons),
             );
         }
 
@@ -319,6 +320,7 @@ export class OrderTrackingService {
             eta,
             showEtaDisclaimer,
             provider,
+            recipientName: this.recipientNameOf(cons),
             diagnostic: diagnostics.length ? diagnostics.join(' | ') : undefined,
         };
     }
@@ -370,12 +372,22 @@ export class OrderTrackingService {
         }).format(dt);
     }
 
+    /** First non-empty recipient name across consignments, or null. */
+    private recipientNameOf(cons: MachShipConsignment[]): string | null {
+        for (const c of cons) {
+            const n = String(c.toName ?? '').trim();
+            if (n) return n;
+        }
+        return null;
+    }
+
     private simple(
         state: TrackingState,
         message: string,
         provider: string,
         diagnostic?: string,
         verifiedVia: 'dotwms' | 'machship-toEmail' | null = null,
+        recipientName: string | null = null,
     ): TrackingResult {
         return {
             state,
@@ -388,6 +400,7 @@ export class OrderTrackingService {
             eta: null,
             showEtaDisclaimer: false,
             provider,
+            recipientName,
             diagnostic,
         };
     }
