@@ -70,9 +70,36 @@ const ORDER_NOUN = /\b(order|parcel|package|shipment|consignment|#?\d{6,8})\b/i;
 const CONDITION_COMPLAINT =
     /\b(damaged|broken|crushed|leaking|smashed|mouldy|moldy|rotten|spoiled|spoilt|expired|out of date|wrong item|incorrect item|received the wrong|sent the wrong|missing item|item missing|short ?shipped|faulty|not in (?:my|the) order)\b/i;
 
+// An explicit request to CHANGE something about the order is not a tracking question,
+// even though it usually carries the order number and often the word "delivery".
+// Found 1 Sep 2026 while regression-testing the bare-details fix: "Can you change the
+// delivery address on order 359633, email ..." matched TRACKING_VERB via `deliver(?:ed|y)?`
+// ("delivery address") and returned a delivery status instead of routing the customer to
+// someone who can actually change it. Pre-dates the bare-details change.
+// Guarded on !isWontWaitFollowup at the call site, same as CONDITION_COMPLAINT, because
+// WONT_WAIT_INTENT legitimately owns "cancel the rest" / "cancel the remaining".
+const ORDER_CHANGE_REQUEST =
+    /\b(cancel (?:my|the|this|that) order|cancel order|change (?:the |my )?(?:delivery |shipping |postal |street |home )?address|change (?:the |my )?(?:delivery |dispatch )?(?:date|day)|update (?:the |my )?(?:delivery |shipping |postal )?address|add (?:an? |another )?item|remove (?:an? )?item|amend (?:my |the )?order|tax invoice|invoice|receipt|reschedule|redirect (?:my |the )?(?:order|parcel|delivery))\b/i;
+
 const EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 // 6-digit BigCommerce (optionally BC- prefixed) or 8-digit Syspro (optionally SO).
 const ORDER_NUM_RE = /\b(?:BC-?)?(?:SO)?\d{6,8}\b/i;
+
+// Global twins used only for stripping in isBareOrderDetails (String.replace with a
+// non-global regex replaces the first match only).
+const EMAIL_RE_G = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
+const ORDER_NUM_RE_G = /\b(?:BC-?)?(?:SO)?\d{6,8}\b/gi;
+
+// Words that carry no intent of their own once the order number and email have been
+// stripped out. Used to decide whether a message is NOTHING BUT a set of order
+// details. Found by live widget test 1 Sep 2026: "Order 359633, email TIFFANY@..."
+// sent cold (not as a reply to our own ask) matched ORDER_NOUN but no TRACKING_VERB,
+// so wantsOrderTracking() was false and the customer got the legacy
+// "visit goodness.com.au/order-status" deflection while holding a valid order+email.
+// It passed on 18 Aug only because it was sent as a reply to our details prompt,
+// which made isOrderDetailsReply() true.
+const BARE_DETAILS_FILLER =
+    /\b(order|orders|number|numbers|no|num|ref|reference|email|e-?mail|address|my|is|are|was|it|its|it's|for|the|a|an|and|with|on|of|to|placed|under|please|thanks|thank|you|hi|hello|hey|details|here|below|see|this|that)\b/gi;
 
 // Marker text used to recognise our own prior "give me your details" ask.
 const ASK_DETAILS_MARKER = 'your order number and the email';
@@ -92,6 +119,13 @@ const NOT_FOUND_RECONFIRM = 'double-check the order number and the email';
 // collection lines both contain, so a refusal is only recognised as a follow-up to
 // one of those answers, never out of the blue.
 const COLLECTION_MARKER = 'post office or collection point';
+
+/** The Zoho returns/credit form URL appears in every ComplaintsResponseGate answer.
+ *  Its presence in the LAST assistant message means the customer is mid credit-claim,
+ *  so a bare "order X, email Y" is them supplying details for THAT, not asking where
+ *  their parcel is. Only gates the bare-details path: an explicit "where is my order
+ *  X, email Y" after the form is still a tracking question and is still answered. */
+const CREDIT_FORM_MARKER = 'forms.zohopublic.com';
 const COLLECTION_REFUSED_INTENT =
     /\b(can'?t collect|cannot collect|can'?t pick|cannot pick|won'?t collect|not able to collect|unable to collect|can'?t get (?:there|to)|too far|no ?one (?:can|to) collect|don'?t drive|no transport|can'?t make it)\b/i;
 
@@ -130,6 +164,36 @@ export class OrderStatusGate {
     }
 
     /**
+     * True when the message is NOTHING BUT order details — an order number, an email
+     * and filler ("Order 359633, email x@y.com"). Such a message is a tracking
+     * question by construction: nobody volunteers both an order number and the email
+     * on the order for any other reason. Deliberately residue-based rather than
+     * "has order + email", so a message that carries the details AND a different ask
+     * ("cancel order 359633, email x@y.com", "change the address on order 359633...")
+     * leaves a residue, fails this test, and still falls through to the KB path
+     * instead of being answered with a delivery status.
+     */
+    /** True when our own most recent reply was a credit/returns form answer. */
+    static lastAssistantOfferedCreditForm(history: ConversationMessage[]): boolean {
+        for (let i = history.length - 1; i >= 0; i--) {
+            const m = history[i];
+            if (m.role !== 'assistant') continue;
+            return String(m.content ?? '').includes(CREDIT_FORM_MARKER);
+        }
+        return false;
+    }
+
+    static isBareOrderDetails(message: string): boolean {
+        const residue = String(message ?? '')
+            .replace(EMAIL_RE_G, ' ')
+            .replace(ORDER_NUM_RE_G, ' ')
+            .replace(BARE_DETAILS_FILLER, ' ')
+            .replace(/[^a-z0-9]+/gi, ' ')
+            .trim();
+        return residue.length === 0;
+    }
+
+    /**
      * The tracking entry point. Returns a customer-facing response string, or null
      * when this gate should not handle the turn (so the caller falls through to
      * the KB / deflection path).
@@ -159,19 +223,44 @@ export class OrderStatusGate {
         // and firing an alert with the WRONG (old) order.
         const hasFreshDetails = Boolean(current.order && current.email);
 
+        // A message that is nothing but an order number + email counts as tracking intent
+        // on its own, with or without a verb. See isBareOrderDetails().
+        const isBareDetails =
+            hasFreshDetails && this.isBareOrderDetails(message) && !this.lastAssistantOfferedCreditForm(history);
+
         const isDetailsReply = this.assistantAskedForOrderDetails(history);
         const isReconfirmReply = this.assistantAskedReconfirm(history);
         const isWontWaitFollowup =
             !hasFreshDetails && this.assistantRenderedPartlyDelivered(history) && WONT_WAIT_INTENT.test(message);
+        // Same shape as isWontWaitFollowup, and for the same reason: "I can't collect
+        // it, I have no transport" carries no tracking verb and no order noun, so
+        // wantsOrderTracking() is false. Without this term the bail below returns null
+        // and the collection_refused branch further down is unreachable. Caught 1 Sep
+        // 2026 by scripts/gate-intent-tests; the live test for it (D6) needed an order
+        // sitting at a collection point and had never been runnable.
+        const isCollectionRefusalFollowup =
+            !hasFreshDetails && this.assistantRenderedCollection(history) && COLLECTION_REFUSED_INTENT.test(message);
 
-        if (!this.wantsOrderTracking(message) && !isDetailsReply && !isReconfirmReply && !isWontWaitFollowup) {
+        if (
+            !this.wantsOrderTracking(message) &&
+            !isBareDetails &&
+            !isDetailsReply &&
+            !isReconfirmReply &&
+            !isWontWaitFollowup &&
+            !isCollectionRefusalFollowup
+        ) {
             return null;
         }
 
         // Stand down for condition complaints so ComplaintsResponseGate can serve the
         // credit/returns flow. Guarded on !isWontWaitFollowup so the wont_wait trigger
         // is never suppressed by a stray complaint word.
-        if (!isWontWaitFollowup && CONDITION_COMPLAINT.test(message)) return null;
+        const isEscalationFollowup = isWontWaitFollowup || isCollectionRefusalFollowup;
+        if (!isEscalationFollowup && CONDITION_COMPLAINT.test(message)) return null;
+
+        // Same stand-down for an explicit change/cancel/invoice request: the customer
+        // wants something done to the order, not a status read on it.
+        if (!isEscalationFollowup && ORDER_CHANGE_REQUEST.test(message)) return null;
 
         // Persistent per-instance alert service (default) so conversationId dedup +
         // the hourly rate cap actually hold ACROSS turns — a fresh `new` per turn
@@ -182,11 +271,7 @@ export class OrderStatusGate {
         //    render, says they won't wait. No fresh lookup — reuse the order+email
         //    from the turn that produced the partly_delivered render.
         // Customer says they cannot collect from the post office → hand to CS.
-        if (
-            !hasFreshDetails &&
-            this.assistantRenderedCollection(history) &&
-            COLLECTION_REFUSED_INTENT.test(message)
-        ) {
+        if (isCollectionRefusalFollowup) {
             const prior = this.extractAttemptBeforeMarker(history, COLLECTION_MARKER);
             if (prior.order && prior.email) {
                 await this.fireAlertSafely(

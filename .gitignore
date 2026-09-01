@@ -57,3 +57,16 @@ next-env.d.ts
 _to_delete/
 test-entry.ts
 test.mjs
+
+# Client correspondence and commercials. NEVER commit: these carry real customer
+# email addresses and fee/margin notes. Listed so `git add -A` cannot leak them.
+HTG_email_chain.md
+HTG_order_tracking_scope_and_cost.md
+HTG_project_instructions.md
+HTG_Order_Tracking_Wording_for_Signoff.docx
+HTG_reply_to_Iri*.md
+HTG_email_Iri*.md
+MachShip-Handoff.md
+MachShip-Meeting-Script-16Jul.md
+Order-Tracking-Scope-Expansion-4Aug.md
+Order-Tracking-Scope-Iri-3Aug.md
