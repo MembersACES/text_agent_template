@@ -19,6 +19,7 @@
 export type StatusBucket =
     | 'delivered'
     | 'partial'
+    | 'awaiting_collection'
     | 'out_for_delivery'
     | 'in_transit'
     | 'preparing'
@@ -31,6 +32,15 @@ export const CONSIGNMENT_STATUS_MAP: Record<string, StatusBucket> = {
     complete: 'delivered',
     delivered: 'delivered',
     'partial delivery': 'partial',
+    // Observed live 24 Aug 2026 on order 10264002 (MachShip status id 29). H2G do
+    // not have carriers re-attempt; the parcel is left at a collection point, so
+    // this is a DISTINCT customer situation, not a transit state. Before this was
+    // mapped it fell through to the `await` keyword in the preparing fallback and
+    // rendered "being prepared for dispatch" while the parcel sat at a post office.
+    'awaiting collection': 'awaiting_collection',
+    'ready for collection': 'awaiting_collection',
+    'available for collection': 'awaiting_collection',
+    'card left': 'awaiting_collection',
     'on for delivery': 'out_for_delivery',
     'out for delivery': 'out_for_delivery',
     'in transit': 'in_transit',
@@ -58,6 +68,7 @@ export function classifyConsignmentStatus(name: string | null | undefined): Stat
     if (/partial/.test(key)) return 'partial';
     if (/attempt|failed|unsuccessful|refused|returned to sender|rtn/.test(key)) return 'attempted';
     if (/delay|exception|on hold|held/.test(key)) return 'delayed';
+    if (/awaiting collection|for collection|collection point|card left/.test(key)) return 'awaiting_collection';
     if (/complete|delivered/.test(key)) return 'delivered';
     if (/out for delivery|for delivery/.test(key)) return 'out_for_delivery';
     if (/transit|depot|picked|scanned|collected|linehaul|line ?haul|despatch|dispatch|schedul/.test(key)) return 'in_transit';

@@ -22,6 +22,7 @@ import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { OrderTrackingService } from '@/lib/services/tracking/OrderTrackingService';
 import type { TrackingResult } from '@/lib/services/tracking/types';
+import { DRAFT_COPY } from '@/lib/services/tracking/trackingCopy';
 import { InternalAlertService } from '@/lib/services/alerts/InternalAlertService';
 import type { InternalAlert } from '@/lib/services/alerts/types';
 import { ConversationMessage } from './ConversationHistoryService';
@@ -85,6 +86,15 @@ const ASK_DETAILS_MARKER = 'your order number and the email';
 const NOT_FOUND_RECONFIRM = 'double-check the order number and the email';
 /** Appended to a partly_delivered render; its presence anywhere in history lets
  *  a later "won't wait" message fire the wont_wait alert. */
+// Collection-point escalation (Iri, 31 Aug 2026). The FIRST response about a parcel
+// at a collection point deliberately does NOT offer escalation; Iri only wants a
+// handoff if the customer says they cannot collect. This marker is the phrase the
+// collection lines both contain, so a refusal is only recognised as a follow-up to
+// one of those answers, never out of the blue.
+const COLLECTION_MARKER = 'post office or collection point';
+const COLLECTION_REFUSED_INTENT =
+    /\b(can'?t collect|cannot collect|can'?t pick|cannot pick|won'?t collect|not able to collect|unable to collect|can'?t get (?:there|to)|too far|no ?one (?:can|to) collect|don'?t drive|no transport|can'?t make it)\b/i;
+
 const WONT_WAIT_MARKER = 'prefer not to wait for the rest';
 const WONT_WAIT_MARKER_SENTENCE =
     "If you'd prefer not to wait for the rest, just let us know and we'll help sort it out.";
@@ -171,6 +181,22 @@ export class OrderStatusGate {
         // ── Trigger 3: wont_wait → CS. The customer, after a partly_delivered
         //    render, says they won't wait. No fresh lookup — reuse the order+email
         //    from the turn that produced the partly_delivered render.
+        // Customer says they cannot collect from the post office → hand to CS.
+        if (
+            !hasFreshDetails &&
+            this.assistantRenderedCollection(history) &&
+            COLLECTION_REFUSED_INTENT.test(message)
+        ) {
+            const prior = this.extractAttemptBeforeMarker(history, COLLECTION_MARKER);
+            if (prior.order && prior.email) {
+                await this.fireAlertSafely(
+                    alertSvc,
+                    this.buildAlert('collection_refused', prior.order, prior.email, conversationId),
+                );
+            }
+            return DRAFT_COPY.collectionRefused;
+        }
+
         if (isWontWaitFollowup) {
             const prior = this.extractAttemptBeforeMarker(history, WONT_WAIT_MARKER);
             if (prior.order && prior.email) {
@@ -195,6 +221,16 @@ export class OrderStatusGate {
             return `I couldn't check that just now. Please try again shortly, or contact ${SUPPORT_CHANNELS}.`;
         }
         logger.info(`order tracking handled: state=${result.state}, verifiedVia=${result.verifiedVia ?? 'n/a'}`);
+
+        // ── Duplicate consignments → CS. The customer gets a neutral "we're checking"
+        //    line; the team gets told, because nobody else will notice.
+        if (result.state === 'multiple_consignments') {
+            await this.fireAlertSafely(
+                alertSvc,
+                this.buildAlert('duplicate_consignments', order, email, conversationId),
+            );
+            return result.message;
+        }
 
         // ── Trigger 1: queued_chasing → WH. Order verified & in the packing queue,
         //    and the message reads as a stuck-packing / extended-delay chase.
@@ -303,6 +339,10 @@ export class OrderStatusGate {
     }
 
     /** ANY prior assistant message rendered a partly_delivered result. */
+    private static assistantRenderedCollection(history: ConversationMessage[]): boolean {
+        return history.some((m) => m.role === 'assistant' && String(m.content ?? '').includes(COLLECTION_MARKER));
+    }
+
     private static assistantRenderedPartlyDelivered(history: ConversationMessage[]): boolean {
         return history.some((m) => m.role === 'assistant' && String(m.content ?? '').includes(WONT_WAIT_MARKER));
     }

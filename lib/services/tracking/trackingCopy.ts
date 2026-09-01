@@ -32,9 +32,25 @@ export const DRAFT_COPY = {
     // Running late — surfaced instead of a plain "on its way".
     delayed:
         "Your order is on its way but is currently running behind schedule. If you're concerned, contact us and we'll chase it up with the courier.",
-    // A delivery was attempted but not completed.
+    // CONFIRMED (Iri, 31 Aug 2026). H2G do not have carriers re-attempt; the parcel
+    // goes to the nearest collection point. Iri collapsed the failed-attempt and
+    // awaiting-collection cases into ONE line, and asked that the first response does
+    // NOT offer escalation. Escalation is only offered if the customer says they
+    // cannot or will not collect (see COLLECTION_REFUSED in OrderStatusGate).
     attempted:
-        "The courier attempted to deliver your order but couldn't complete it. They'll usually try again — your tracking link has the details.",
+        'Your order is waiting for you at your nearest post office or collection point. The courier has tried to deliver your order without success. Your tracking link has the address and any collection reference you need.',
+    // Same customer situation, reached via MachShip's "Awaiting Collection" status
+    // rather than a failed attempt. Same line, per Iri.
+    awaitingCollection:
+        'Your order is waiting for you at your nearest post office or collection point. The courier has tried to deliver your order without success. Your tracking link has the address and any collection reference you need.',
+    // More than one LIVE consignment against one order. Per Iri (31 Aug 2026) this
+    // happens when a bad consignment was raised and not deleted straight away. Never
+    // guess which one is real; hand it to a person.
+    multipleConsignments:
+        "I can see more than one delivery record against that order, so I don't want to give you the wrong information. I've passed this to our team and someone will come back to you with the right details.",
+    // Offered ONLY after the customer indicates they cannot collect.
+    collectionRefused:
+        "No problem, I've passed this to our team and someone will be in touch to sort out another option for you.",
     // Status we don't recognise — never over-claim; stay neutral and point to us.
     unknownStatus:
         "Your order is in progress. For the latest status, please contact us with your order number and email.",

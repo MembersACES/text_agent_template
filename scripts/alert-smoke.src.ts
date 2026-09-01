@@ -17,12 +17,14 @@
  *   L6  dedup by conversationId (diff orders)     expect [sent, deduped]
  *   L7  rate-limit (maxPerHour forced to 1)       expect [sent, rateLimited]
  *   L8  disabled (enabled forced off)             expect disabled=true, no send
+ *   L9  collection_refused → CS, live send      expect sent=true,  team=CS
+ *   L10 duplicate_consignments → CS, live send  expect sent=true,  team=CS
  *
  * Each case uses DISTINCT order/email/conversationId so dedup never cross-fires;
  * L5/L6 intentionally reuse within the case. Every case builds its own service,
  * so the in-memory dedup/rate-limit state is isolated per case.
  *
- * LIVE side-effects: L1–L4 send one email each; L5/L6/L7 send ONE email (the
+ * LIVE side-effects: L1–L4, L9 and L10 send one email each; L5/L6/L7 send ONE email (the
  * first send) before asserting the control branch. Use `--case Lx` to fire one
  * at a time. `--dry` swaps in the no-send LogAlertTransport (zero emails).
  *
@@ -152,6 +154,20 @@ const CASES: SmokeCase[] = [
         run: async () => {
             const r = await svc({ enabled: false }).send(alert('not_found', { customerName: 'Smoke L8', orderNumber: '90000008', customerEmail: 'smoke.l8@example.com', conversationId: 'smoke-L8' }));
             return { results: [r], expect: 'disabled=true, sent=false', pass: r.disabled === true && r.sent === false };
+        },
+    },
+    {
+        id: 'L9', title: 'collection_refused → CS (live send)',
+        run: async () => {
+            const r = await svc().send(alert('collection_refused', { customerName: 'Smoke L9', orderNumber: '90000009', customerEmail: 'smoke.l9@example.com', conversationId: 'smoke-L9' }));
+            return { results: [r], expect: 'sent=true, team=CS', pass: r.sent === true && r.team === 'CS' };
+        },
+    },
+    {
+        id: 'L10', title: 'duplicate_consignments → CS (live send)',
+        run: async () => {
+            const r = await svc().send(alert('duplicate_consignments', { customerName: 'Smoke L10', orderNumber: '90000010', customerEmail: 'smoke.l10@example.com', conversationId: 'smoke-L10' }));
+            return { results: [r], expect: 'sent=true, team=CS', pass: r.sent === true && r.team === 'CS' };
         },
     },
 ];

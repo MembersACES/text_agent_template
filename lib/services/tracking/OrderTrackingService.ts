@@ -34,6 +34,26 @@ const PREPARING_STATUS = /pack|queue|prepar|pick/i;
  * NOT yet wired into /api/chat — that work replaces OrderStatusGate and depends
  * on the pre-go-live API hardening. This service is the unit that rewrite calls.
  */
+/**
+ * Is this WMS hold reason one the CUSTOMER should be told about?
+ * Confirmed with Iri 31 Aug 2026 — only the Syspro suspension is genuine.
+ */
+/**
+ * Cancelled / deleted consignments must never be counted as boxes.
+ * CONFIRMED live 31 Aug 2026 on order 10257041: the superseded consignment comes
+ * back as {"id":10,"name":"Cancelled"} with consignmentStatusType 6, alongside the
+ * real one. Matched on the NAME (readable, and survives a statusType renumber).
+ */
+function isDeadConsignment(c: { status?: { name?: string | null } | null }): boolean {
+    return /cancel|delet|void/i.test(String(c.status?.name ?? ''));
+}
+
+function isCustomerFacingHold(reason: string | null | undefined): boolean {
+    const r = String(reason ?? '').trim().toLowerCase();
+    if (!r) return false;
+    return r.includes('suspended in syspro');
+}
+
 export class OrderTrackingService {
     private readonly resolver: FreightReferenceResolver;
     private readonly machship: MachShipService;
@@ -74,8 +94,16 @@ export class OrderTrackingService {
         }
 
         // On hold (warehouse system) — only present on the dotWMS path; surface early.
+        // CONFIRMED (Iri, 31 Aug 2026): only "Suspended in SYSPRO" is a genuine hold a
+        // customer should hear about (waiting on information or prepayment). The other
+        // WMS hold reasons are internal workflow markers and must NOT be surfaced:
+        //   - "Hold For Release >250kg"
+        //   - "SPECIAL PACKING REQUIRED. SEE SUPERVISOR"
+        // Anything else falls through to normal tracking rather than telling a customer
+        // their order is stuck. Matched case-insensitively; the WMS screen shows
+        // "Suspended in SYSPRO" while Iri wrote "Suspended in Syspro".
         if (ownershipVerified) {
-            const held = resolved.orders.find((o) => o.heldReason);
+            const held = resolved.orders.find((o) => isCustomerFacingHold(o.heldReason));
             if (held) {
                 // heldReason only ever comes from the dotWMS path (verified up front).
                 const via = resolved.verifyVia === 'dotwms' ? 'dotwms' : null;
@@ -156,11 +184,34 @@ export class OrderTrackingService {
     }
 
     private buildFromConsignments(
-        cons: MachShipConsignment[],
+        consRaw: MachShipConsignment[],
         provider: string,
         dateUnknown: boolean,
         verifiedVia: 'dotwms' | 'machship-toEmail',
     ): TrackingResult {
+        // Drop cancelled/deleted consignments before anything counts them (Iri, 31 Aug).
+        const cons = consRaw.filter((c) => !isDeadConsignment(c));
+        const droppedDead = consRaw.length - cons.length;
+
+        // If MORE THAN ONE live consignment survives, this is the operator-error case
+        // Iri described: a bad consignment was raised and not deleted, so two are open
+        // against one order. Evidence says genuine separate-consignment splits do not
+        // occur on this account (freight-split-finder, 20 Aug: 200 consignments over
+        // 9 days, every multi-reference group collapsed to one on lookup), so treating
+        // any survivor pair as an error and escalating is the safe reading. Never guess
+        // which consignment is the real one.
+        if (cons.length > 1) {
+            return this.simple(
+                'multiple_consignments',
+                DRAFT_COPY.multipleConsignments,
+                provider,
+                `${cons.length} live consignments against one order (${cons
+                    .map((c) => c.consignmentNumber ?? c.carrierConsignmentId)
+                    .join(', ')})${droppedDead ? `; ${droppedDead} cancelled ignored` : ''} — escalated rather than rendered`,
+                verifiedVia,
+            );
+        }
+
         const boxes: TrackedBox[] = cons.map((c) => ({
             reference: c.carrierConsignmentId ?? null,
             carrier: c.carrierName ?? null,
@@ -227,6 +278,9 @@ export class OrderTrackingService {
         } else if (has('attempted')) {
             state = 'attempted';
             message = DRAFT_COPY.attempted;
+        } else if (has('awaiting_collection')) {
+            state = 'awaiting_collection';
+            message = DRAFT_COPY.awaitingCollection;
         } else if (has('out_for_delivery')) {
             state = 'out_for_delivery';
             message = boxCount > 1
@@ -289,8 +343,31 @@ export class OrderTrackingService {
         return anyInWindow;
     }
 
+    /**
+     * Customer-facing date. Was `iso.split('T')[0]`, which rendered "expected
+     * 2026-08-28" in an otherwise plain-English sentence (spotted live 31 Aug 2026 on
+     * order 10265537). MachShip's own page says "Friday, 28 Aug", so match that.
+     *
+     * CRITICAL: the value is `etaLocal`, which is ALREADY local and carries no zone
+     * suffix. Passing it through `new Date()` and a timeZone formatter re-interprets
+     * it as UTC and slides the day — "2026-08-28T23:59:59" came out as
+     * "Saturday 29 August". So take the DATE PARTS verbatim and format those; never
+     * convert. Falls back to the raw date portion if the shape is unexpected.
+     */
     private dateOnly(iso: string): string {
-        return String(iso).split('T')[0];
+        const datePart = String(iso).split('T')[0];
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+        if (!m) return datePart;
+        const [, y, mo, d] = m;
+        // Noon UTC + UTC formatting keeps the calendar date exactly as supplied.
+        const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), 12));
+        if (Number.isNaN(dt.getTime())) return datePart;
+        return new Intl.DateTimeFormat('en-AU', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: 'UTC',
+        }).format(dt);
     }
 
     private simple(

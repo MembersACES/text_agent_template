@@ -1,16 +1,184 @@
+// lib/config/chatMessageTrace.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+import fs from "node:fs";
+import path from "node:path";
+var TRACE_DIR = path.join(process.cwd(), ".local", "chat-traces");
+var TERMINAL_TAIL_MS = 300;
+var storage = new AsyncLocalStorage();
+var interceptorsInstalled = false;
+function isEnabled() {
+  if (process.env.ENABLE_CHAT_TRACE_LOGS === "true") return true;
+  if (process.env.ENABLE_CHAT_TRACE_LOGS === "false") return false;
+  return process.env.NODE_ENV === "development";
+}
+function slugify(text, maxLen = 48) {
+  const slug = text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, maxLen);
+  return slug || "message";
+}
+function appendRaw(filePath, text) {
+  if (!text) return;
+  fs.appendFileSync(filePath, text, "utf8");
+}
+function appendLine(filePath, line) {
+  fs.appendFileSync(filePath, `${line}
+`, "utf8");
+}
+function decodeWriteChunk(chunk, encoding) {
+  if (typeof chunk === "string") return chunk;
+  return Buffer.from(chunk).toString(encoding ?? "utf8");
+}
+function installTerminalInterceptors() {
+  if (interceptorsInstalled) return;
+  interceptorsInstalled = true;
+  const mirrorWrite = (original) => {
+    return function writeMirror(chunk, encodingOrCallback, callback) {
+      const ctx = storage.getStore();
+      if (ctx) {
+        const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : void 0;
+        appendRaw(ctx.filePath, decodeWriteChunk(chunk, encoding));
+      }
+      if (typeof encodingOrCallback === "function") {
+        return original(chunk, encodingOrCallback);
+      }
+      return original(chunk, encodingOrCallback, callback);
+    };
+  };
+  process.stdout.write = mirrorWrite(process.stdout.write.bind(process.stdout));
+  process.stderr.write = mirrorWrite(process.stderr.write.bind(process.stderr));
+}
+function createTraceFile(message) {
+  fs.mkdirSync(TRACE_DIR, { recursive: true });
+  const startedAt = /* @__PURE__ */ new Date();
+  const stamp = startedAt.toISOString().replace(/[:.]/g, "-");
+  const slug = slugify(message);
+  const filePath = path.join(TRACE_DIR, `${stamp}_${slug}.log`);
+  fs.writeFileSync(filePath, "", "utf8");
+  return { filePath, startedAt: startedAt.toISOString(), sections: [] };
+}
+function flushSections(ctx) {
+  for (const section of ctx.sections) {
+    appendLine(ctx.filePath, "");
+    appendLine(ctx.filePath, `--- ${section.title} ---`);
+    appendRaw(ctx.filePath, `${section.body}
+`);
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+var chatMessageTrace = {
+  isEnabled,
+  /** True while a trace is active — logger should only use console (stdout mirror captures it). */
+  isCapturingTerminal() {
+    return storage.getStore() !== void 0;
+  },
+  /** Queue a labelled block written after terminal output (e.g. full prompt). */
+  appendSection(title, body) {
+    const ctx = storage.getStore();
+    if (!ctx) return;
+    ctx.sections.push({ title, body });
+  },
+  async run(request, fn) {
+    if (!isEnabled()) {
+      return fn();
+    }
+    installTerminalInterceptors();
+    const ctx = createTraceFile(request.message);
+    const header = [
+      "================================================================================",
+      "CHAT MESSAGE TRACE (local only)",
+      "================================================================================",
+      `startedAt: ${ctx.startedAt}`,
+      `file: ${ctx.filePath}`,
+      "",
+      "--- REQUEST ---",
+      `message: ${request.message}`,
+      `agentId: ${request.agentId ?? "(none)"}`,
+      `useKnowledgeBase: ${request.useKnowledgeBase ?? false}`,
+      `uploadedFiles: ${request.uploadedFiles?.length ?? 0}`,
+      "",
+      "conversationHistory:",
+      JSON.stringify(request.conversationHistory ?? [], null, 2),
+      "",
+      "--- TERMINAL OUTPUT (stdout/stderr mirror) ---",
+      "Includes Next.js request lines and all [Service] logs exactly as in the dev terminal.",
+      ""
+    ].join("\n");
+    fs.writeFileSync(ctx.filePath, `${header}
+`, "utf8");
+    const started = Date.now();
+    try {
+      const result = await storage.run(ctx, async () => fn());
+      await sleep(TERMINAL_TAIL_MS);
+      flushSections(ctx);
+      this.writeResponse(ctx, result);
+      return result;
+    } catch (error) {
+      await sleep(TERMINAL_TAIL_MS);
+      flushSections(ctx);
+      this.writeFailure(ctx, error);
+      throw error;
+    } finally {
+      const elapsed = Date.now() - started;
+      appendLine(ctx.filePath, "");
+      appendLine(ctx.filePath, `--- trace closed (${elapsed}ms) ---`);
+      appendLine(ctx.filePath, `traceFile: ${ctx.filePath}`);
+    }
+  },
+  writeResponse(ctx, result) {
+    const lines = [
+      "",
+      "--- RESPONSE TO USER ---",
+      `completedAt: ${(/* @__PURE__ */ new Date()).toISOString()}`
+    ];
+    if (result.error) {
+      lines.push(`error: ${result.error}`);
+    } else {
+      lines.push("", "assistantReply:", result.response ?? "(empty)");
+      if (result.sources) {
+        lines.push("", "sources:", JSON.stringify(result.sources, null, 2));
+      }
+      if (result.extractedData) {
+        lines.push("", "extractedData:", JSON.stringify(result.extractedData, null, 2));
+      }
+      if (result.generateReport) {
+        lines.push("", "generateReport: true");
+      }
+    }
+    fs.appendFileSync(ctx.filePath, `${lines.join("\n")}
+`, "utf8");
+  },
+  writeFailure(ctx, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : void 0;
+    appendLine(ctx.filePath, "");
+    appendLine(ctx.filePath, "--- REQUEST FAILED ---");
+    appendLine(ctx.filePath, `error: ${message}`);
+    if (stack) appendLine(ctx.filePath, stack);
+  },
+  getTraceDir() {
+    return TRACE_DIR;
+  }
+};
+
 // lib/config/logger.ts
 function getLogger(name) {
-  const silent = process.env.TEST_SILENT === "true";
-  return {
-    info: (msg, ...a) => {
-      if (!silent) console.log(`[${name}] INFO  ${msg}`, ...a);
-    },
-    warn: (msg, ...a) => {
-      if (!silent) console.warn(`[${name}] WARN  ${msg}`, ...a);
-    },
-    error: (msg, ...a) => {
-      if (!silent) console.error(`[${name}] ERROR ${msg}`, ...a);
+  const write = (level, consoleFn, msg, ...args) => {
+    if (chatMessageTrace.isCapturingTerminal()) {
+      if (args.length > 0) {
+        consoleFn(`[${name}] ${level}  ${msg}`, ...args);
+      } else {
+        consoleFn(`[${name}] ${level}  ${msg}`);
+      }
+      return;
     }
+    consoleFn(`[${name}] ${level}  ${msg}`, ...args);
+  };
+  return {
+    info: (msg, ...args) => write("INFO", console.log, msg, ...args),
+    warn: (msg, ...args) => write("WARN", console.warn, msg, ...args),
+    error: (msg, ...args) => write("ERROR", console.error, msg, ...args),
+    debug: (msg, ...args) => write("DEBUG", console.debug, msg, ...args)
   };
 }
 
@@ -268,7 +436,9 @@ function createAlertTransport(cfg) {
 var TRIGGER_TEAM = {
   not_found: "CS",
   queued_chasing: "WH",
-  wont_wait: "CS"
+  wont_wait: "CS",
+  collection_refused: "CS",
+  duplicate_consignments: "CS"
 };
 function teamForTrigger(trigger) {
   return TRIGGER_TEAM[trigger];
@@ -276,7 +446,9 @@ function teamForTrigger(trigger) {
 var DEFAULT_REASON = {
   not_found: "Order not found in lookup; customer confirms the details are correct.",
   queued_chasing: "Order is in the packing queue and the customer is chasing to receive it sooner.",
-  wont_wait: "Split order: customer does not want to wait for the remaining box."
+  wont_wait: "Split order: customer does not want to wait for the remaining box.",
+  collection_refused: "Parcel is at a collection point and the customer is not able to collect it.",
+  duplicate_consignments: "More than one live consignment against this order in MachShip; needs a person to confirm which is correct."
 };
 
 // lib/services/alerts/InternalAlertService.ts
@@ -480,6 +652,22 @@ var CASES = [
     run: async () => {
       const r = await svc({ enabled: false }).send(alert("not_found", { customerName: "Smoke L8", orderNumber: "90000008", customerEmail: "smoke.l8@example.com", conversationId: "smoke-L8" }));
       return { results: [r], expect: "disabled=true, sent=false", pass: r.disabled === true && r.sent === false };
+    }
+  },
+  {
+    id: "L9",
+    title: "collection_refused \u2192 CS (live send)",
+    run: async () => {
+      const r = await svc().send(alert("collection_refused", { customerName: "Smoke L9", orderNumber: "90000009", customerEmail: "smoke.l9@example.com", conversationId: "smoke-L9" }));
+      return { results: [r], expect: "sent=true, team=CS", pass: r.sent === true && r.team === "CS" };
+    }
+  },
+  {
+    id: "L10",
+    title: "duplicate_consignments \u2192 CS (live send)",
+    run: async () => {
+      const r = await svc().send(alert("duplicate_consignments", { customerName: "Smoke L10", orderNumber: "90000010", customerEmail: "smoke.l10@example.com", conversationId: "smoke-L10" }));
+      return { results: [r], expect: "sent=true, team=CS", pass: r.sent === true && r.team === "CS" };
     }
   }
 ];

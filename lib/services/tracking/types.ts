@@ -4,6 +4,8 @@ export type TrackingState =
     | 'unverified_refused'
     | 'preparing'
     | 'own_driver_out'
+    | 'multiple_consignments'
+    | 'awaiting_collection'
     | 'out_for_delivery'
     | 'in_transit'
     | 'partly_delivered'

@@ -15,7 +15,7 @@
 export type AlertTeam = 'CS' | 'WH';
 
 /** The conversational situations that escalate. Mapped to a team in triggerMap. */
-export type AlertTrigger = 'not_found' | 'queued_chasing' | 'wont_wait';
+export type AlertTrigger = 'not_found' | 'queued_chasing' | 'wont_wait' | 'collection_refused' | 'duplicate_consignments';
 
 export interface InternalAlert {
     trigger: AlertTrigger;
