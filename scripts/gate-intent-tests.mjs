@@ -844,7 +844,8 @@ var OrderTrackingService = class {
     const carrier = boxes.find((b) => b.carrier)?.carrier ?? "the courier";
     const boxCount = Math.max(total, totalItems);
     const eta = boxes.filter((_, i) => buckets[i] !== "delivered").map((b) => b.etaLocal).filter((e) => Boolean(e)).sort()[0] ?? null;
-    const etaSuffix = eta ? `, expected ${this.dateOnly(eta)}` : "";
+    const etaStale = this.isStaleEta(eta);
+    const etaSuffix = eta && !etaStale ? `, expected ${this.dateOnly(eta)}` : "";
     const currentPartial = buckets.includes("partial");
     const mixedMultiConsignment = delivered > 0 && delivered < total;
     const has = (b) => buckets.includes(b);
@@ -879,11 +880,12 @@ var OrderTrackingService = class {
       state = "unknown";
       message = DRAFT_COPY.unknownStatus;
     }
-    const showEtaDisclaimer = Boolean(eta) && (state === "partly_delivered" || state === "in_transit" || state === "delayed");
+    const showEtaDisclaimer = Boolean(eta) && !etaStale && (state === "partly_delivered" || state === "in_transit" || state === "delayed");
     const fullMessage = showEtaDisclaimer ? `${message} ${ETA_DISCLAIMER}` : message;
     const diagnostics = [];
     if (dateUnknown) diagnostics.push("consignment date unreadable \u2014 60-day gate NOT enforced (date field name unconfirmed)");
     if (totalItems > total) diagnostics.push(`items (${totalItems}) exceed consignments (${total}) \u2014 showing carton count ${boxCount} to the customer (confirmed 18 Aug 2026); delivery status remains per-consignment`);
+    if (etaStale) diagnostics.push(`ETA ${String(eta).split("T")[0]} is in the past \u2014 clause and disclaimer suppressed; MachShip has not refreshed it`);
     if (unknownStatuses.length) diagnostics.push(`unrecognised MachShip status(es): ${[...new Set(unknownStatuses)].join(", ")} \u2014 mapped to 'unknown' safe default; add to statusMap.ts`);
     return {
       state,
@@ -930,6 +932,25 @@ var OrderTrackingService = class {
    * "Saturday 29 August". So take the DATE PARTS verbatim and format those; never
    * convert. Falls back to the raw date portion if the shape is unexpected.
    */
+  /** Today's date as YYYY-MM-DD in Australia/Sydney. Judged against the operating
+   *  day of the freight rather than Cloud Run's UTC clock, which would call an ETA
+   *  stale up to ten hours early. */
+  todayInAu() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Australia/Sydney",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(/* @__PURE__ */ new Date());
+  }
+  /** True when the ETA's calendar date is before today. Same-day is NOT stale: the
+   *  parcel may still arrive. Unparseable dates are never treated as stale. */
+  isStaleEta(iso) {
+    if (!iso) return false;
+    const datePart = String(iso).split("T")[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return false;
+    return datePart < this.todayInAu();
+  }
   dateOnly(iso) {
     const datePart = String(iso).split("T")[0];
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);

@@ -23,6 +23,16 @@ import { MachShipService } from '@/lib/services/machship/MachShipService';
 const EMAIL = 'customer@example.com';
 const RECENT = new Date(Date.now() - 3 * 864e5).toISOString();
 
+/** YYYY-MM-DDT23:59:59, `days` from now. Relative so the fixtures cannot rot: a
+ *  hard-coded ETA slides into the past and silently starts testing the stale
+ *  branch instead of the one the case name claims. */
+function etaIn(days: number): string {
+    const d = new Date(Date.now() + days * 864e5);
+    return `${d.toISOString().split('T')[0]}T23:59:59`;
+}
+const ETA_FUTURE = etaIn(6);
+const ETA_PAST = etaIn(-4);
+
 function resolver(heldReason: string | null = null, verified = true): FreightReferenceResolver {
     return {
         provider: 'test',
@@ -46,7 +56,7 @@ function resolver(heldReason: string | null = null, verified = true): FreightRef
 }
 
 /** A consignment shaped like the live ones. `items` cartons, each with a label. */
-function consignment(statusName: string, items: number, id = 'W9DZ00000001'): MachShipConsignment {
+function consignment(statusName: string, items: number, id = 'W9DZ00000001', eta: string = ETA_FUTURE): MachShipConsignment {
     return {
         customerReference: '10000001',
         customerReference2: 'SO10000001',
@@ -54,8 +64,8 @@ function consignment(statusName: string, items: number, id = 'W9DZ00000001'): Ma
         consignmentNumber: `MS${id}`,
         carrierName: 'StarTrack',
         status: { name: statusName },
-        etaLocal: '2026-09-04T23:59:59',
-        eta: '2026-09-04T23:59:59',
+        etaLocal: eta,
+        eta,
         despatchDateUtc: RECENT,
         toEmail: EMAIL,
         trackingPageAccessToken: 'TESTTOKEN',
@@ -137,6 +147,35 @@ const CASES: Case[] = [
         expectState: 'partly_delivered',
         expectMessage: (m) => m.includes('coming in 3 boxes') && m.includes('Some have already been delivered'),
         because: 'never observed live; this is the only way to verify it',
+    },
+    {
+        name: 'Future ETA IS stated, with the 24-hour disclaimer',
+        cons: [consignment('Partial Delivery', 3)],
+        expectState: 'partly_delivered',
+        expectMessage: (m) => /expected \w+day \d+ \w+/.test(m) && m.includes('within 24 hours'),
+        because: 'the normal path must keep working after the stale-ETA change',
+    },
+    {
+        name: 'Past ETA is NOT stated on a part-delivered order (live bug, 10267041)',
+        cons: [consignment('Partial Delivery', 10, 'W9DZ00000001', ETA_PAST)],
+        expectState: 'partly_delivered',
+        expectMessage: (m) =>
+            m.includes('coming in 10 boxes') && !m.includes('expected') && !m.includes('within 24 hours'),
+        because: 'it told a customer "expected Friday 4 September" on 8 September',
+    },
+    {
+        name: 'Past ETA is NOT stated on an in-transit order either',
+        cons: [consignment('In Transit', 8, 'W9DZ00000001', ETA_PAST)],
+        expectState: 'in_transit',
+        expectMessage: (m) => m.includes('on its way in 8 boxes') && !m.includes('expected'),
+        because: 'same suppression, different branch',
+    },
+    {
+        name: 'A stale ETA never claims the order is running behind',
+        cons: [consignment('Partial Delivery', 2, 'W9DZ00000001', ETA_PAST)],
+        expectState: 'partly_delivered',
+        expectMessage: (m) => !/behind schedule|delayed|late/i.test(m),
+        because: 'Iri, 31 Aug: only MachShip\'s own Delayed status may say that',
     },
     {
         name: 'Hold "Suspended in SYSPRO" IS surfaced',

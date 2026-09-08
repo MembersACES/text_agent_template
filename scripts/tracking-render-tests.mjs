@@ -844,7 +844,8 @@ var OrderTrackingService = class {
     const carrier = boxes.find((b) => b.carrier)?.carrier ?? "the courier";
     const boxCount = Math.max(total, totalItems);
     const eta = boxes.filter((_, i) => buckets[i] !== "delivered").map((b) => b.etaLocal).filter((e) => Boolean(e)).sort()[0] ?? null;
-    const etaSuffix = eta ? `, expected ${this.dateOnly(eta)}` : "";
+    const etaStale = this.isStaleEta(eta);
+    const etaSuffix = eta && !etaStale ? `, expected ${this.dateOnly(eta)}` : "";
     const currentPartial = buckets.includes("partial");
     const mixedMultiConsignment = delivered > 0 && delivered < total;
     const has = (b) => buckets.includes(b);
@@ -879,11 +880,12 @@ var OrderTrackingService = class {
       state = "unknown";
       message = DRAFT_COPY.unknownStatus;
     }
-    const showEtaDisclaimer = Boolean(eta) && (state === "partly_delivered" || state === "in_transit" || state === "delayed");
+    const showEtaDisclaimer = Boolean(eta) && !etaStale && (state === "partly_delivered" || state === "in_transit" || state === "delayed");
     const fullMessage = showEtaDisclaimer ? `${message} ${ETA_DISCLAIMER}` : message;
     const diagnostics = [];
     if (dateUnknown) diagnostics.push("consignment date unreadable \u2014 60-day gate NOT enforced (date field name unconfirmed)");
     if (totalItems > total) diagnostics.push(`items (${totalItems}) exceed consignments (${total}) \u2014 showing carton count ${boxCount} to the customer (confirmed 18 Aug 2026); delivery status remains per-consignment`);
+    if (etaStale) diagnostics.push(`ETA ${String(eta).split("T")[0]} is in the past \u2014 clause and disclaimer suppressed; MachShip has not refreshed it`);
     if (unknownStatuses.length) diagnostics.push(`unrecognised MachShip status(es): ${[...new Set(unknownStatuses)].join(", ")} \u2014 mapped to 'unknown' safe default; add to statusMap.ts`);
     return {
       state,
@@ -930,6 +932,25 @@ var OrderTrackingService = class {
    * "Saturday 29 August". So take the DATE PARTS verbatim and format those; never
    * convert. Falls back to the raw date portion if the shape is unexpected.
    */
+  /** Today's date as YYYY-MM-DD in Australia/Sydney. Judged against the operating
+   *  day of the freight rather than Cloud Run's UTC clock, which would call an ETA
+   *  stale up to ten hours early. */
+  todayInAu() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Australia/Sydney",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(/* @__PURE__ */ new Date());
+  }
+  /** True when the ETA's calendar date is before today. Same-day is NOT stale: the
+   *  parcel may still arrive. Unparseable dates are never treated as stale. */
+  isStaleEta(iso) {
+    if (!iso) return false;
+    const datePart = String(iso).split("T")[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return false;
+    return datePart < this.todayInAu();
+  }
   dateOnly(iso) {
     const datePart = String(iso).split("T")[0];
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
@@ -973,6 +994,12 @@ var OrderTrackingService = class {
 // scripts/tracking-render-tests.src.ts
 var EMAIL = "customer@example.com";
 var RECENT = new Date(Date.now() - 3 * 864e5).toISOString();
+function etaIn(days) {
+  const d = new Date(Date.now() + days * 864e5);
+  return `${d.toISOString().split("T")[0]}T23:59:59`;
+}
+var ETA_FUTURE = etaIn(6);
+var ETA_PAST = etaIn(-4);
 function resolver(heldReason = null, verified = true) {
   return {
     provider: "test",
@@ -994,7 +1021,7 @@ function resolver(heldReason = null, verified = true) {
     }
   };
 }
-function consignment(statusName, items, id = "W9DZ00000001") {
+function consignment(statusName, items, id = "W9DZ00000001", eta = ETA_FUTURE) {
   return {
     customerReference: "10000001",
     customerReference2: "SO10000001",
@@ -1002,8 +1029,8 @@ function consignment(statusName, items, id = "W9DZ00000001") {
     consignmentNumber: `MS${id}`,
     carrierName: "StarTrack",
     status: { name: statusName },
-    etaLocal: "2026-09-04T23:59:59",
-    eta: "2026-09-04T23:59:59",
+    etaLocal: eta,
+    eta,
     despatchDateUtc: RECENT,
     toEmail: EMAIL,
     trackingPageAccessToken: "TESTTOKEN",
@@ -1073,6 +1100,34 @@ var CASES = [
     expectState: "partly_delivered",
     expectMessage: (m) => m.includes("coming in 3 boxes") && m.includes("Some have already been delivered"),
     because: "never observed live; this is the only way to verify it"
+  },
+  {
+    name: "Future ETA IS stated, with the 24-hour disclaimer",
+    cons: [consignment("Partial Delivery", 3)],
+    expectState: "partly_delivered",
+    expectMessage: (m) => /expected \w+day \d+ \w+/.test(m) && m.includes("within 24 hours"),
+    because: "the normal path must keep working after the stale-ETA change"
+  },
+  {
+    name: "Past ETA is NOT stated on a part-delivered order (live bug, 10267041)",
+    cons: [consignment("Partial Delivery", 10, "W9DZ00000001", ETA_PAST)],
+    expectState: "partly_delivered",
+    expectMessage: (m) => m.includes("coming in 10 boxes") && !m.includes("expected") && !m.includes("within 24 hours"),
+    because: 'it told a customer "expected Friday 4 September" on 8 September'
+  },
+  {
+    name: "Past ETA is NOT stated on an in-transit order either",
+    cons: [consignment("In Transit", 8, "W9DZ00000001", ETA_PAST)],
+    expectState: "in_transit",
+    expectMessage: (m) => m.includes("on its way in 8 boxes") && !m.includes("expected"),
+    because: "same suppression, different branch"
+  },
+  {
+    name: "A stale ETA never claims the order is running behind",
+    cons: [consignment("Partial Delivery", 2, "W9DZ00000001", ETA_PAST)],
+    expectState: "partly_delivered",
+    expectMessage: (m) => !/behind schedule|delayed|late/i.test(m),
+    because: "Iri, 31 Aug: only MachShip's own Delayed status may say that"
   },
   {
     name: 'Hold "Suspended in SYSPRO" IS surfaced',

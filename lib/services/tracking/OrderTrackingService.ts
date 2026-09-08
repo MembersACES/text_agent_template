@@ -247,7 +247,20 @@ export class OrderTrackingService {
             .map((b) => b.etaLocal)
             .filter((e): e is string => Boolean(e))
             .sort()[0] ?? null;
-        const etaSuffix = eta ? `, expected ${this.dateOnly(eta)}` : '';
+        // MachShip keeps returning the LAST ETA it had, so a part-delivered order can
+        // sit for days still quoting a date that has already gone. Found live 8 Sep 2026
+        // on 10267041, which told the customer "expected Friday 4 September" four days
+        // after the fact, followed by the 24-hour chase disclaimer whose window had
+        // already closed. Never surfaced before because every testable order had
+        // completed, leaving no outstanding ETA to go stale.
+        //
+        // When the date has passed we drop the clause rather than restate it. We do NOT
+        // say the order is running behind: Iri was explicit (31 Aug 2026) that only
+        // MachShip's own 'Delayed' status may tell a customer that, and a stale ETA is
+        // not that status. The customer still gets state, carrier, box count and the
+        // tracking link.
+        const etaStale = this.isStaleEta(eta);
+        const etaSuffix = eta && !etaStale ? `, expected ${this.dateOnly(eta)}` : '';
 
         // partly_delivered fires ONLY on a CURRENT signal, never a historical one:
         //   (a) MULTIPLE consignments with mixed delivery (>=1 delivered AND >=1 not), OR
@@ -301,12 +314,16 @@ export class OrderTrackingService {
         }
 
         // ETA disclaimer only where we actually surfaced an ETA in the message.
-        const showEtaDisclaimer = Boolean(eta) && (state === 'partly_delivered' || state === 'in_transit' || state === 'delayed');
+        // Only where we actually surfaced an ETA — the disclaimer says "the estimated
+        // date", which is meaningless once the clause naming it has been suppressed.
+        const showEtaDisclaimer =
+            Boolean(eta) && !etaStale && (state === 'partly_delivered' || state === 'in_transit' || state === 'delayed');
         const fullMessage = showEtaDisclaimer ? `${message} ${ETA_DISCLAIMER}` : message;
 
         const diagnostics: string[] = [];
         if (dateUnknown) diagnostics.push('consignment date unreadable — 60-day gate NOT enforced (date field name unconfirmed)');
         if (totalItems > total) diagnostics.push(`items (${totalItems}) exceed consignments (${total}) — showing carton count ${boxCount} to the customer (confirmed 18 Aug 2026); delivery status remains per-consignment`);
+        if (etaStale) diagnostics.push(`ETA ${String(eta).split('T')[0]} is in the past — clause and disclaimer suppressed; MachShip has not refreshed it`);
         if (unknownStatuses.length) diagnostics.push(`unrecognised MachShip status(es): ${[...new Set(unknownStatuses)].join(', ')} — mapped to 'unknown' safe default; add to statusMap.ts`);
 
         return {
@@ -356,6 +373,27 @@ export class OrderTrackingService {
      * "Saturday 29 August". So take the DATE PARTS verbatim and format those; never
      * convert. Falls back to the raw date portion if the shape is unexpected.
      */
+    /** Today's date as YYYY-MM-DD in Australia/Sydney. Judged against the operating
+     *  day of the freight rather than Cloud Run's UTC clock, which would call an ETA
+     *  stale up to ten hours early. */
+    private todayInAu(): string {
+        return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Australia/Sydney',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).format(new Date());
+    }
+
+    /** True when the ETA's calendar date is before today. Same-day is NOT stale: the
+     *  parcel may still arrive. Unparseable dates are never treated as stale. */
+    private isStaleEta(iso: string | null): boolean {
+        if (!iso) return false;
+        const datePart = String(iso).split('T')[0];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return false;
+        return datePart < this.todayInAu();
+    }
+
     private dateOnly(iso: string): string {
         const datePart = String(iso).split('T')[0];
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
