@@ -40,8 +40,9 @@ CRITICAL INSTRUCTIONS:
    - **daily_supply_charge** in **$/day**: use the retailer line that quotes **daily** service/supply (e.g. “Daily Charge” with **$/day**). **Never** set daily_supply_charge to (unrelated period $ total) ÷ billing_days unless the invoice explicitly defines that as the daily supply component.
    - **Do not create any low_hanging_fruit daily supply entries** (daily charge checks are disabled in Base 1).
    - **Electricity unbundled TOU:** peak_rate_c_per_kwh / shoulder / off_peak MUST be the **retailer energy charge c/kWh** from the energy line items (or $/kWh × 100). Do **not** compute TOU c/kWh from (energy+network+other)/usage.
-   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — deterministic classification and rules use these strings.
-   - **C&I vs SME (automation):** populate \`billing_period_start\`, \`billing_period_end\`, \`usage_charges_ex_gst\`, \`network_charges_ex_gst\`, \`supply_charges_ex_gst\`, \`total_charges_ex_gst\` when printed — long cycles and network splits drive server-side classification alongside \`tariff_type\` and consumption.
+   - **tariff_type:** include labels such as \`C&I Unbundled 3-Period TOU\`, \`SME Bundled Flat Rate\`, etc. — **Electricity** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (same substring rule as gas). Unbundled → C&I energy-only TOU vs NSW 10/10/12 (etc.). Bundled → 70 MWh gate + 45% of whole bill as implied retail.
+   - **Electricity bundled vs unbundled (automation):** **not** chosen by annual kWh. Populate **printed** peak / shoulder / off-peak **all-in** c/kWh and kWh splits on bundled bills, plus \`total_charges_ex_gst\`, \`total_usage_kwh\`, \`billing_days\`. Server: if bundled and annualised kWh ≥ **70,000**, implied retail = invoice ex-GST ×**45%**; when peak/off-peak/shoulder kWh splits exist, that retail pool is allocated by printed period $ then compared per period; otherwise one blended c/kWh vs the peak target. Labelled Potential (SME→C&I).
+   - **C&I vs SME (narrative):** populate \`billing_period_start\`, \`billing_period_end\`, \`usage_charges_ex_gst\`, \`network_charges_ex_gst\`, \`supply_charges_ex_gst\`, \`total_charges_ex_gst\` when printed. These do **not** select the Base 1 electricity savings formula.
    - **Gas \`tariff_type\`:** Base 1 treats the bill as **unbundled** only when this field contains **"unbundled"** (case-insensitive substring). Populate **printed** tariff / product labels accordingly. Always extract **\`gas_rate_per_gj\`** and **\`total_charges_ex_gst\`**. **Bundled** savings use (invoice ex-GST ÷ GJ) ×75% (whole bill, supply included). **Unbundled** uses \`gas_rate_per_gj\` as-is. Automated gas savings rows are only emitted when annualised usage is **≥ 700 GJ/year**. The **[700, 1000) GJ** band uses the 1,000 GJ rate and is labelled Potential (C&I 70%). The benchmark ($/GJ) is otherwise tiered by annualised usage.
    - **Demand:** populate demand_kw and recorded_max_demand_kw using the **same unit as the invoice** (kW or kVA). Prefer columns labelled kVA into demand_kw / recorded_max_demand_kw when kVA is what is billed.
    - Calculate rates only when not printed on the invoice (follow guides for bundled / gas)
@@ -49,7 +50,7 @@ CRITICAL INSTRUCTIONS:
    - If an invoice line/service mentions **grease trap**, classify it under **Waste** (not Oil)
    - For oil: populate oil_services array with ALL line items
    - When multiple invoices share the same NMI, savings are calculated server-side from the most recent invoice while all invoices remain in output data.
-   - When **any** electricity invoice in the batch classifies as C&I, **all** SME electricity invoices are excluded from savings (still retained in data output).
+   - Bundled and unbundled electricity may both contribute savings in the same batch (no “drop all SME if any C&I” rule).
    - **Electricity and Gas low_hanging_fruit:** always use **[]** — Base 1 computes findings deterministically from extracted fields (do not author metering/TOU/demand/gas rate rows in JSON).
 
 3. **CLASSIFICATION** (follow the guide documents):
@@ -61,7 +62,7 @@ CRITICAL INSTRUCTIONS:
    - For other utilities: Follow the corresponding guide
 
 4. **BENCHMARKING & low_hanging_fruit** (utility-specific):
-   - **Electricity:** Deterministic Base 1 replaces all model-authored findings (retail TOU NSW 10/10/12 and non-NSW 9/7 shoulder rules, metering tiers, demand repricing). Always set **low_hanging_fruit** to **[]**.
+   - **Electricity:** Deterministic Base 1 replaces all model-authored findings. **Unbundled** (\`tariff_type\` contains \"unbundled\"): energy-only TOU vs NSW 10/10/12 (etc.). **Bundled:** if annualised kWh ≥ **70,000**, implied retail = (invoice ex-GST ÷ kWh) ×**45%** of the whole bill (supply included). If peak/off-peak/shoulder kWh splits exist, allocate that 45% $ pool by printed period $ and compare each implied c/kWh; otherwise one blended rate vs the peak target. Labelled Potential (SME→C&I). Always set **low_hanging_fruit** to **[]**.
    - **Gas:** Deterministic Base 1 replaces gas findings.
      - Benchmark ($/GJ) tiered by annualised usage:
        - [700, 1000): **17.1 $/GJ** (Potential / near-C&I)
@@ -86,7 +87,7 @@ CRITICAL INSTRUCTIONS:
 
 OUTPUT SCHEMA (return array of these objects):
 
-For **Electricity**, populate \`tariff_type\`, \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (**with state**), and **accurate TOU c/kWh** (unbundled = **energy lines only**). **low_hanging_fruit** must be **[]**. Server-side: TOU retail (NSW 10/10/12 etc.), metering tiers (700 / 900 bands), demand repricing (material gap only); retail TOU skipped for **flat/single-rate**; daily supply savings disabled.
+For **Electricity**, populate \`tariff_type\` (**must include \"Unbundled\"** when energy and network are separate), \`demand_kw\`, \`recorded_max_demand_kw\`, \`meter_charges\`, \`site_address\` (**with state**), **TOU c/kWh** (unbundled = **energy lines only**; bundled = printed all-in peak/off/shoulder), \`total_charges_ex_gst\`, \`total_usage_kwh\`. **low_hanging_fruit** must be **[]**. Server-side: unbundled C&I TOU (NSW 10/10/12 etc.); bundled ≥70 MWh → 45% whole-bill implied retail (TOU splits kept when present); metering tiers (700 / 900 bands); demand repricing (material gap only); daily supply savings disabled.
 
 For **Gas**, **low_hanging_fruit** must be **[]**.
 

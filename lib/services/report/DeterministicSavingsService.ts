@@ -1,6 +1,7 @@
 import {
     Base1ComparisonBuckets,
     DEFAULT_BASE1_COMPARISON_BUCKETS,
+    ELEC_SME_TO_CI_TYPE_SUFFIX,
     GAS_NEAR_CI_FINDING_TYPE,
     gasBenchmarkPerGj,
     isGasNearCiUsage,
@@ -13,6 +14,20 @@ import { ExtractedInvoice } from '@/lib/types/ReportTypes';
 import { buildSavingsEligibleInvoiceIndexSet } from '@/lib/types/ReportTypes';
 
 const logger = getLogger('DeterministicSavingsService');
+
+type RetailTouOpts = {
+    rateOverrides?: { peak?: number | null; shoulder?: number | null; offPeak?: number | null };
+    typeSuffix?: string;
+    extraInputs?: Record<string, number | string | boolean | null>;
+    formula?: string;
+    messageNote?: string;
+};
+
+type RetailFindingOpts = {
+    extraInputs?: Record<string, number | string | boolean | null>;
+    formula?: string;
+    messageNote?: string;
+};
 
 type Severity = 'high' | 'medium';
 
@@ -85,26 +100,49 @@ export class DeterministicSavingsService {
         const state = this.inferRetailState(invoice.site_address);
         const ref = recorder.invoiceRef(invoice, invoiceIndex, state, eligibleForRollUp);
         const findings: NonNullable<ExtractedInvoice['low_hanging_fruit']> = [];
+        const bundled = this.isElectricityBundledInvoice(invoice);
 
-        const skipRetailTou = this.isFlatOrSingleRateElectricity(invoice);
-        if (skipRetailTou) {
-            recorder.recordSkipped({
-                type: 'Retail TOU',
-                utility: 'Electricity',
-                invoiceRef: ref,
-                reason: 'Flat/single-rate tariff — TOU retail comparisons skipped',
-                inputs: { tariff_type: invoice.tariff_type ?? null },
-            });
-        } else if (state === null) {
-            recorder.recordSkipped({
-                type: 'Retail TOU',
-                utility: 'Electricity',
-                invoiceRef: ref,
-                reason: 'State unknown from site_address — TOU retail skipped',
-                inputs: { site_address: invoice.site_address ?? null },
-            });
+        if (bundled) {
+            this.addBundledSmeRetailFindings(
+                findings,
+                invoice,
+                state,
+                isThreePeriod,
+                billingDays,
+                buckets,
+                recorder,
+                ref,
+            );
         } else {
-            this.addRetailTouFindings(findings, invoice, state, isThreePeriod, billingDays, buckets, recorder, ref);
+            const skipRetailTou = this.isFlatOrSingleRateElectricity(invoice);
+            if (skipRetailTou) {
+                recorder.recordSkipped({
+                    type: 'Retail TOU',
+                    utility: 'Electricity',
+                    invoiceRef: ref,
+                    reason: 'Flat/single-rate tariff — TOU retail comparisons skipped',
+                    inputs: { tariff_type: invoice.tariff_type ?? null, bundled: false },
+                });
+            } else if (state === null) {
+                recorder.recordSkipped({
+                    type: 'Retail TOU',
+                    utility: 'Electricity',
+                    invoiceRef: ref,
+                    reason: 'State unknown from site_address — TOU retail skipped',
+                    inputs: { site_address: invoice.site_address ?? null, bundled: false },
+                });
+            } else {
+                this.addRetailTouFindings(
+                    findings,
+                    invoice,
+                    state,
+                    isThreePeriod,
+                    billingDays,
+                    buckets,
+                    recorder,
+                    ref,
+                );
+            }
         }
 
         const annualMeter = this.annualize(invoice.meter_charges, billingDays);
@@ -116,7 +154,7 @@ export class DeterministicSavingsService {
 
         logger.info(
             `Deterministic findings for invoice ${invoice.invoice_number ?? 'unknown'}: ${findings.length}` +
-                (skipRetailTou ? ' (retail TOU skipped: flat/single-rate)' : ''),
+                (bundled ? ' (bundled SME→C&I retail path)' : ''),
         );
 
         return { ...invoice, low_hanging_fruit: findings };
@@ -367,6 +405,206 @@ export class DeterministicSavingsService {
         };
     }
 
+    /**
+     * Bundled electricity: whole-bill × 45% as implied retail.
+     * If peak / off-peak / shoulder kWh splits exist with printed all-in rates,
+     * allocate the retail $ pool by each period's all-in $ so TOU shape is kept.
+     */
+    private addBundledSmeRetailFindings(
+        findings: NonNullable<ExtractedInvoice['low_hanging_fruit']>,
+        invoice: ExtractedInvoice,
+        state: 'NSW' | 'OTHER' | null,
+        isThreePeriod: boolean,
+        billingDays: number | null,
+        buckets: Base1ComparisonBuckets,
+        recorder: SavingsCrossCheckRecorder,
+        ref: ReturnType<SavingsCrossCheckRecorder['invoiceRef']>,
+    ): void {
+        const sme = buckets.electricity.smeToCi;
+        const share = sme.bundledRetailShare;
+        const minKwh = sme.minAnnualUsageKwh;
+        const usagePeriod = this.positive(invoice.total_usage_kwh);
+        const annualUsage = this.annualize(usagePeriod, billingDays);
+        const invoiceExGst = this.resolveInvoiceExGst(invoice);
+        const inputs: Record<string, number | string | boolean | null> = {
+            bundled: true,
+            tariff_type: invoice.tariff_type ?? null,
+            invoice_ex_gst: invoiceExGst,
+            total_usage_kwh: usagePeriod,
+            billing_days: billingDays,
+            annual_usage_kwh: annualUsage,
+            bundled_retail_share: share,
+        };
+
+        if (annualUsage === null || annualUsage < minKwh) {
+            recorder.recordSkipped({
+                type: 'Retail (SME bundled 45%)',
+                utility: 'Electricity',
+                invoiceRef: ref,
+                reason: `Annualised usage below ${minKwh} kWh/year (70 MWh) SME→C&I gate`,
+                inputs,
+                formula: 'annual_kWh = (period_kWh / billing_days) × 365',
+            });
+            return;
+        }
+
+        if (invoiceExGst === null || usagePeriod === null || usagePeriod <= 0) {
+            recorder.recordSkipped({
+                type: 'Retail (SME bundled 45%)',
+                utility: 'Electricity',
+                invoiceRef: ref,
+                reason: 'Missing invoice ex-GST or period kWh',
+                inputs,
+            });
+            return;
+        }
+
+        if (state === null) {
+            recorder.recordSkipped({
+                type: 'Retail (SME bundled 45%)',
+                utility: 'Electricity',
+                invoiceRef: ref,
+                reason: 'State unknown from site_address — bundled SME→C&I retail skipped',
+                inputs: { ...inputs, site_address: invoice.site_address ?? null },
+            });
+            return;
+        }
+
+        const retailPool = invoiceExGst * share;
+        const allInC = (invoiceExGst / usagePeriod) * 100;
+        const impliedBlendedC = allInC * share;
+        const extraInputs: Record<string, number | string | boolean | null> = {
+            ...inputs,
+            retail_pool_ex_gst: retailPool,
+            all_in_c_per_kwh: allInC,
+            implied_blended_c_per_kwh: impliedBlendedC,
+        };
+        const messageNote =
+            `Implied retail is ${share * 100}% of bundled all-in (whole bill, supply included).`;
+
+        const touRates = this.resolveBundledImpliedTouRates(invoice, isThreePeriod, retailPool);
+        if (touRates) {
+            extraInputs.tou_period_charges_ex_gst = touRates.touCharges;
+            extraInputs.allocation = 'printed_rate_times_kwh';
+            extraInputs.printed_peak_rate_c_per_kwh = invoice.peak_rate_c_per_kwh ?? null;
+            extraInputs.printed_shoulder_rate_c_per_kwh = invoice.shoulder_rate_c_per_kwh ?? null;
+            extraInputs.printed_off_peak_rate_c_per_kwh = invoice.off_peak_rate_c_per_kwh ?? null;
+            extraInputs.implied_peak_rate_c_per_kwh = touRates.rates.peak ?? null;
+            extraInputs.implied_shoulder_rate_c_per_kwh = touRates.rates.shoulder ?? null;
+            extraInputs.implied_off_peak_rate_c_per_kwh = touRates.rates.offPeak ?? null;
+            this.addRetailTouFindings(
+                findings,
+                invoice,
+                state,
+                isThreePeriod,
+                billingDays,
+                buckets,
+                recorder,
+                ref,
+                {
+                    rateOverrides: touRates.rates,
+                    typeSuffix: ELEC_SME_TO_CI_TYPE_SUFFIX,
+                    extraInputs,
+                    formula:
+                        `retail_pool = invoice_ex_gst × ${share}; implied_c = printed_c × (retail_pool / tou_period_charges); ` +
+                        'annual_saving = ((implied_c - comparison_c) / 100) × annual_kWh; annual_kWh = (period_kWh / billing_days) × 365',
+                    messageNote,
+                },
+            );
+            return;
+        }
+
+        extraInputs.allocation = 'blended_whole_bill';
+        const comparison =
+            state === 'NSW'
+                ? buckets.electricity.retailTou.nsw.peakCPerKwh
+                : buckets.electricity.retailTou.other.peakCPerKwh;
+        const bucketKey =
+            state === 'NSW'
+                ? 'electricity.retailTou.nsw.peakCPerKwh'
+                : 'electricity.retailTou.other.peakCPerKwh';
+        this.maybeAddRetailRateFinding(
+            findings,
+            `Retail blended rate${ELEC_SME_TO_CI_TYPE_SUFFIX}`,
+            impliedBlendedC,
+            comparison,
+            annualUsage,
+            usagePeriod,
+            buckets,
+            recorder,
+            ref,
+            bucketKey,
+            {
+                extraInputs,
+                formula:
+                    `implied_c = (invoice_ex_gst / period_kWh) × 100 × ${share}; ` +
+                    'annual_saving = ((implied_c - comparison_c) / 100) × annual_kWh',
+                messageNote,
+            },
+        );
+    }
+
+    /**
+     * Allocate whole-bill retail $ across TOU periods in proportion to printed all-in $.
+     * Returns null when there are not enough splits/rates — caller uses blended c/kWh.
+     */
+    private resolveBundledImpliedTouRates(
+        invoice: ExtractedInvoice,
+        isThreePeriod: boolean,
+        retailPool: number,
+    ): { rates: { peak: number | null; shoulder: number | null; offPeak: number | null }; touCharges: number } | null {
+        if (this.isFlatOrSingleRateElectricity(invoice)) return null;
+
+        type Period = { key: 'peak' | 'shoulder' | 'offPeak'; usage: number; rate: number };
+        const periods: Period[] = [];
+        const peakUsage = this.positive(invoice.peak_usage_kwh);
+        const peakRate = this.positive(invoice.peak_rate_c_per_kwh);
+        const offUsage = this.positive(invoice.off_peak_usage_kwh);
+        const offRate = this.positive(invoice.off_peak_rate_c_per_kwh);
+        const shUsage = this.positive(invoice.shoulder_usage_kwh);
+        const shRate = this.positive(invoice.shoulder_rate_c_per_kwh);
+
+        if (peakUsage != null && peakUsage > 0) {
+            if (peakRate == null) return null;
+            periods.push({ key: 'peak', usage: peakUsage, rate: peakRate });
+        }
+        if (isThreePeriod && shUsage != null && shUsage > 0) {
+            if (shRate == null) return null;
+            periods.push({ key: 'shoulder', usage: shUsage, rate: shRate });
+        }
+        if (offUsage != null && offUsage > 0) {
+            if (offRate == null) return null;
+            periods.push({ key: 'offPeak', usage: offUsage, rate: offRate });
+        }
+
+        if (periods.length < 2) return null;
+
+        let touCharges = 0;
+        for (const p of periods) {
+            touCharges += (p.rate / 100) * p.usage;
+        }
+        if (touCharges <= 0) return null;
+
+        const rates: { peak: number | null; shoulder: number | null; offPeak: number | null } = {
+            peak: null,
+            shoulder: null,
+            offPeak: null,
+        };
+        for (const p of periods) {
+            rates[p.key] = p.rate * (retailPool / touCharges);
+        }
+        return { rates, touCharges };
+    }
+
+    private resolveInvoiceExGst(invoice: ExtractedInvoice): number | null {
+        const invoiceIncGst = this.positive(invoice.total_inc_gst);
+        const gst = this.positive(invoice.gst_amount);
+        return (
+            this.positive(invoice.total_charges_ex_gst) ??
+            (invoiceIncGst !== null && gst !== null ? invoiceIncGst - gst : null)
+        );
+    }
+
     private isFlatOrSingleRateElectricity(invoice: ExtractedInvoice): boolean {
         const raw = invoice.tariff_type || '';
         const t = raw.toLowerCase();
@@ -412,14 +650,26 @@ export class DeterministicSavingsService {
         buckets: Base1ComparisonBuckets,
         recorder: SavingsCrossCheckRecorder,
         ref: ReturnType<SavingsCrossCheckRecorder['invoiceRef']>,
+        opts?: RetailTouOpts,
     ): void {
         const tou = buckets.electricity.retailTou;
+        const suffix = opts?.typeSuffix ?? '';
+        const peakRate = opts?.rateOverrides?.peak ?? invoice.peak_rate_c_per_kwh;
+        const shoulderRate = opts?.rateOverrides?.shoulder ?? invoice.shoulder_rate_c_per_kwh;
+        const offPeakRate = opts?.rateOverrides?.offPeak ?? invoice.off_peak_rate_c_per_kwh;
+        const findingOpts: RetailFindingOpts | undefined = opts
+            ? {
+                  extraInputs: opts.extraInputs,
+                  formula: opts.formula,
+                  messageNote: opts.messageNote,
+              }
+            : undefined;
 
         if (state === 'NSW') {
             this.maybeAddRetailRateFinding(
                 findings,
-                'Retail peak rate (NSW)',
-                invoice.peak_rate_c_per_kwh,
+                `Retail peak rate (NSW)${suffix}`,
+                peakRate,
                 tou.nsw.peakCPerKwh,
                 this.annualize(invoice.peak_usage_kwh, billingDays),
                 invoice.peak_usage_kwh,
@@ -427,12 +677,13 @@ export class DeterministicSavingsService {
                 recorder,
                 ref,
                 'electricity.retailTou.nsw.peakCPerKwh',
+                findingOpts,
             );
             if (isThreePeriod) {
                 this.maybeAddRetailRateFinding(
                     findings,
-                    'Retail shoulder rate (NSW)',
-                    invoice.shoulder_rate_c_per_kwh,
+                    `Retail shoulder rate (NSW)${suffix}`,
+                    shoulderRate,
                     tou.nsw.shoulderCPerKwh,
                     this.annualize(invoice.shoulder_usage_kwh, billingDays),
                     invoice.shoulder_usage_kwh,
@@ -440,12 +691,13 @@ export class DeterministicSavingsService {
                     recorder,
                     ref,
                     'electricity.retailTou.nsw.shoulderCPerKwh',
+                    findingOpts,
                 );
             }
             this.maybeAddRetailRateFinding(
                 findings,
-                'Retail off-peak rate (NSW)',
-                invoice.off_peak_rate_c_per_kwh,
+                `Retail off-peak rate (NSW)${suffix}`,
+                offPeakRate,
                 tou.nsw.offPeakCPerKwh,
                 this.annualize(invoice.off_peak_usage_kwh, billingDays),
                 invoice.off_peak_usage_kwh,
@@ -453,6 +705,7 @@ export class DeterministicSavingsService {
                 recorder,
                 ref,
                 'electricity.retailTou.nsw.offPeakCPerKwh',
+                findingOpts,
             );
             return;
         }
@@ -461,8 +714,8 @@ export class DeterministicSavingsService {
 
         this.maybeAddRetailRateFinding(
             findings,
-            'Retail peak rate',
-            invoice.peak_rate_c_per_kwh,
+            `Retail peak rate${suffix}`,
+            peakRate,
             tou.other.peakCPerKwh,
             this.annualize(invoice.peak_usage_kwh, billingDays),
             invoice.peak_usage_kwh,
@@ -470,6 +723,7 @@ export class DeterministicSavingsService {
             recorder,
             ref,
             'electricity.retailTou.other.peakCPerKwh',
+            findingOpts,
         );
         if (isThreePeriod && shoulderComparison !== null) {
             const shoulderKey =
@@ -478,8 +732,8 @@ export class DeterministicSavingsService {
                     : 'electricity.retailTou.other.shoulderDefaultCPerKwh';
             this.maybeAddRetailRateFinding(
                 findings,
-                'Retail shoulder rate',
-                invoice.shoulder_rate_c_per_kwh,
+                `Retail shoulder rate${suffix}`,
+                shoulderRate,
                 shoulderComparison,
                 this.annualize(invoice.shoulder_usage_kwh, billingDays),
                 invoice.shoulder_usage_kwh,
@@ -487,12 +741,13 @@ export class DeterministicSavingsService {
                 recorder,
                 ref,
                 shoulderKey,
+                findingOpts,
             );
         }
         this.maybeAddRetailRateFinding(
             findings,
-            'Retail off-peak rate',
-            invoice.off_peak_rate_c_per_kwh,
+            `Retail off-peak rate${suffix}`,
+            offPeakRate,
             tou.other.offPeakCPerKwh,
             this.annualize(invoice.off_peak_usage_kwh, billingDays),
             invoice.off_peak_usage_kwh,
@@ -500,6 +755,7 @@ export class DeterministicSavingsService {
             recorder,
             ref,
             'electricity.retailTou.other.offPeakCPerKwh',
+            findingOpts,
         );
     }
 
@@ -529,6 +785,7 @@ export class DeterministicSavingsService {
         recorder: SavingsCrossCheckRecorder,
         ref: ReturnType<SavingsCrossCheckRecorder['invoiceRef']>,
         bucketKey: string,
+        opts?: RetailFindingOpts,
     ): void {
         const rate = this.positive(currentRateCPerKwh);
         const annualUsage = this.positive(annualUsageKwh);
@@ -536,13 +793,15 @@ export class DeterministicSavingsService {
         const gapTh = buckets.thresholds.highSeverityRateGapCPerKwh;
         const highSav = buckets.thresholds.highSeverityMinSavingsAud;
         const formula =
+            opts?.formula ??
             'annual_saving = ((current_c/kWh - comparison_c/kWh) / 100) × annual_kWh; annual_kWh = (period_kWh / billing_days) × 365';
 
-        const inputs: Record<string, number | string | null> = {
+        const inputs: Record<string, number | string | boolean | null> = {
             current_rate_c_per_kwh: rate,
             period_usage_kwh: this.positive(periodUsageKwh),
             billing_days: ref.billing_days,
             annual_usage_kwh: annualUsage,
+            ...(opts?.extraInputs ?? {}),
         };
 
         if (rate === null || annualUsage === null) {
@@ -612,11 +871,16 @@ export class DeterministicSavingsService {
             clientSheetRelatedCharges: base1RelatedChargesLabel(type, 'Electricity'),
         });
 
+        const label = type
+            .replace('Retail ', '')
+            .replace(' (NSW)', '')
+            .replace(ELEC_SME_TO_CI_TYPE_SUFFIX, '');
+        const note = opts?.messageNote ? ` ${opts.messageNote}` : '';
         findings.push({
             type,
             severity,
             message:
-                `${type.replace('Retail ', '').replace(' (NSW)', '')} at ${rate.toFixed(2)} c/kWh exceeds Base 1 retail comparison of ${comparisonCPerKwh.toFixed(2)} c/kWh.`,
+                `${label} at ${rate.toFixed(2)} c/kWh exceeds Base 1 retail comparison of ${comparisonCPerKwh.toFixed(2)} c/kWh.${note}`,
             potential_savings: this.moneyPerYear(savings),
         });
     }
@@ -869,6 +1133,11 @@ export class DeterministicSavingsService {
     }
 
     private isGasBundledInvoice(invoice: ExtractedInvoice): boolean {
+        const t = (invoice.tariff_type || '').trim();
+        return !/unbundl/i.test(t);
+    }
+
+    private isElectricityBundledInvoice(invoice: ExtractedInvoice): boolean {
         const t = (invoice.tariff_type || '').trim();
         return !/unbundl/i.test(t);
     }

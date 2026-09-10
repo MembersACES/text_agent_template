@@ -148,14 +148,16 @@ else:
 
 ## BASE 1 RETAIL TOU COMPARISON (ACES app — source of truth)
 
-Applies to **TOU** (2- or 3-period), **bundled or unbundled**. Use peak / shoulder / off-peak **energy** c/kWh from **retailer energy lines only** — never blend energy + network into those TOU fields.
+Applies to **unbundled** TOU (2- or 3-period). Use peak / shoulder / off-peak **energy** c/kWh from **retailer energy lines only** — never blend energy + network into those TOU fields. \`tariff_type\` must include **Unbundled**.
+
+**Bundled SME:** do **not** compare printed all-in c/kWh to these targets. If annualised usage ≥ **70,000 kWh**, implied retail = **45% of invoice ex-GST** (whole bill, supply included). If peak / off-peak / shoulder kWh splits exist, allocate that retail $ by printed period $ then compare each implied c/kWh to the table below; otherwise one blended implied c/kWh vs the **peak** target. Labelled **Potential (SME→C&I)**.
 
 | Region | Peak | Shoulder | Off-peak | Notes |
 |--------|------|----------|----------|--------|
 | **NSW** | **10** c/kWh | **10** c/kWh | **12** c/kWh | Peak and shoulder share **10**; off-peak **12** |
 | **All other states** (VIC, ACT, QLD, SA, WA, TAS, NT) | **9** | **9** or **7** | **7** | Shoulder uses **9** unless shoulder rate equals off-peak on the bill (within ~0.01 c/kWh), then **7** |
 
-**Flat / single-rate / anytime:** do **not** apply this TOU retail block — Base 1 skips retail TOU comparisons.
+**Flat / single-rate / anytime:** unbundled — skip this TOU retail block. Bundled — still use the 70 MWh + 45% blended path (no peak/off-peak rows).
 
 **Severity (matches product):** once annual savings > **$200**, **high** if rate exceeds comparison by **≥5 c/kWh** **or** annual savings ≥ **$2,000**; otherwise **medium**.
 

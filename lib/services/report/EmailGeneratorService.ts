@@ -1,4 +1,4 @@
-import { GAS_NEAR_CI_OPTION_KIND } from '@/lib/config/base1ComparisonBuckets';
+import { ELEC_SME_TO_CI_OPTION_KIND, GAS_NEAR_CI_OPTION_KIND } from '@/lib/config/base1ComparisonBuckets';
 import { ReportData } from '@/lib/types/ReportTypes';
 import { getBase1BenchmarkGroups } from '@/lib/utils/base1AnalysisLabels';
 
@@ -24,6 +24,7 @@ export class EmailGeneratorService {
             : 'your utilities';
 
         const hasNearCiPotential = benchmarkGroups.some((g) => g.optionKind === GAS_NEAR_CI_OPTION_KIND);
+        const hasSmeToCiPotential = benchmarkGroups.some((g) => g.optionKind === ELEC_SME_TO_CI_OPTION_KIND);
 
         const formatCurrency = (amount: number) =>
             new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -111,6 +112,12 @@ export class EmailGeneratorService {
                                 <p style="margin: 12px 0 0 0; font-size: 14px; line-height: 1.5; color: #4a5568;">
                                     Gas items labelled <strong>Potential (C&I 70%)</strong> are sites with annualised usage of 700–999 GJ
                                     (70% of the 1,000 GJ C&amp;I threshold), compared at the 1,000 GJ Base 1 rate.
+                                </p>` : ''}
+                                ${hasSmeToCiPotential ? `
+                                <p style="margin: 12px 0 0 0; font-size: 14px; line-height: 1.5; color: #4a5568;">
+                                    Electricity items labelled <strong>Potential (SME→C&amp;I)</strong> are <em>bundled</em> bills with
+                                    annualised usage of at least 70 MWh. Implied retail is 45% of the whole bill (supply included);
+                                    peak / off-peak / shoulder splits are kept when those kWh appear on the invoice.
                                 </p>` : ''}
                             </div>
                         </td>

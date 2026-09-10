@@ -4,6 +4,7 @@
  */
 import {
     DEFAULT_BASE1_COMPARISON_BUCKETS,
+    ELEC_SME_TO_CI_OPTION_KIND,
     GAS_NEAR_CI_FINDING_TYPE,
     GAS_NEAR_CI_OPTION_KIND,
 } from '../lib/config/base1ComparisonBuckets';
@@ -57,7 +58,7 @@ const nswInvoice: ExtractedInvoice = {
     total_charges_ex_gst: null,
     gst_amount: null,
     total_inc_gst: null,
-    tariff_type: '3-Period TOU',
+    tariff_type: 'C&I Unbundled 3-Period TOU',
     meter_number: null,
     low_hanging_fruit: [],
 };
@@ -246,6 +247,100 @@ assert(approx(tjGroups[0]!.totalSavings, expectedTj, 1), 'TJAJH included in Expe
 const pressGroups = getBase1BenchmarkGroups([pressOut]);
 assert(pressGroups.length === 0, 'Press Metal has no savings row after bundled ×0.75');
 
+// Bundled SME electricity TOU — 70 MWh, allocate 45% pool by printed period $
+const bundledTou: ExtractedInvoice = {
+    ...nswInvoice,
+    business_name: 'SME Bundled TOU',
+    invoice_number: 'SME-TOU-70',
+    nmi: 'NMI0000070',
+    tariff_type: 'SME Bundled 3-Period TOU',
+    billing_days: 365,
+    peak_usage_kwh: 20_000,
+    shoulder_usage_kwh: 15_000,
+    off_peak_usage_kwh: 35_000,
+    total_usage_kwh: 70_000,
+    peak_rate_c_per_kwh: 32,
+    shoulder_rate_c_per_kwh: 28,
+    off_peak_rate_c_per_kwh: 22,
+    total_charges_ex_gst: 20_300,
+    gst_amount: null,
+    total_inc_gst: null,
+    network_charges_ex_gst: null,
+};
+const bundledTouPipeline = service.runPipeline([bundledTou]);
+const [bundledTouOut] = bundledTouPipeline.invoices;
+const touCharges = (32 / 100) * 20_000 + (28 / 100) * 15_000 + (22 / 100) * 35_000;
+const retailPool = 20_300 * 0.45;
+const impliedPeak = 32 * (retailPool / touCharges);
+const impliedShoulder = 28 * (retailPool / touCharges);
+const impliedOff = 22 * (retailPool / touCharges);
+const bundledPeak = bundledTouOut.low_hanging_fruit?.find((f) => /peak rate/i.test(f.type) && !/off-peak/i.test(f.type));
+const bundledSh = bundledTouOut.low_hanging_fruit?.find((f) => /shoulder/i.test(f.type));
+assert(!!bundledPeak, 'Bundled SME peak finding');
+assert(!!bundledSh, 'Bundled SME shoulder finding');
+assert(/SME bundled 45%/.test(bundledPeak!.type), 'Peak type tagged SME bundled 45%');
+assert(approx(parseFloat(bundledPeak!.potential_savings!.replace(/[^0-9.]/g, '')), ((impliedPeak - 10) / 100) * 20_000), 'Bundled peak 45% allocation');
+assert(approx(parseFloat(bundledSh!.potential_savings!.replace(/[^0-9.]/g, '')), ((impliedShoulder - 10) / 100) * 15_000), 'Bundled shoulder 45% allocation');
+assert(impliedOff <= 12, 'Implied off-peak at or below NSW 12 — no off-peak finding expected');
+assert(
+    !bundledTouOut.low_hanging_fruit?.some((f) => /off-peak/i.test(f.type)),
+    'Bundled off-peak below comparison is skipped',
+);
+assert(
+    bundledTouPipeline.recorder.findings.some((f) => String(f.formula).includes('0.45')),
+    'Cross-check Findings include 0.45 formula',
+);
+const smeGroups = getBase1BenchmarkGroups([bundledTouOut]);
+assert(smeGroups[0]?.optionKind === ELEC_SME_TO_CI_OPTION_KIND, 'Bundled SME option is Potential (SME→C&I)');
+
+// Below 70 MWh bundled — skip retail
+const below70: ExtractedInvoice = {
+    ...bundledTou,
+    invoice_number: 'SME-69999',
+    nmi: 'NMI0000069',
+    total_usage_kwh: 69_999,
+    peak_usage_kwh: 20_000,
+    shoulder_usage_kwh: 15_000,
+    off_peak_usage_kwh: 34_999,
+};
+const below70Result = service.runPipeline([below70]);
+assert(
+    (below70Result.invoices[0].low_hanging_fruit?.length ?? 0) === 0,
+    '69,999 kWh bundled must skip retail',
+);
+assert(
+    below70Result.recorder.skipped.some((s) => String(s.reason).includes('70000')),
+    'Below 70 MWh skip cites 70000 gate',
+);
+
+// Bundled flat — one blended 45% rate vs NSW 10
+const bundledFlat: ExtractedInvoice = {
+    ...nswInvoice,
+    invoice_number: 'SME-FLAT',
+    nmi: 'NMI0000080',
+    tariff_type: 'SME Bundled Flat Rate',
+    billing_days: 365,
+    peak_usage_kwh: 80_000,
+    shoulder_usage_kwh: null,
+    off_peak_usage_kwh: null,
+    total_usage_kwh: 80_000,
+    peak_rate_c_per_kwh: 35,
+    shoulder_rate_c_per_kwh: null,
+    off_peak_rate_c_per_kwh: null,
+    total_charges_ex_gst: 28_000,
+};
+const [flatOut] = service.applyDeterministicFindings([bundledFlat]);
+const flatF = flatOut.low_hanging_fruit?.find((f) => /blended/i.test(f.type));
+assert(!!flatF, 'Bundled flat blended finding');
+const expectedFlat = ((28_000 / 80_000) * 100 * 0.45 - 10) / 100 * 80_000;
+assert(approx(parseFloat(flatF!.potential_savings!.replace(/[^0-9.]/g, '')), expectedFlat), 'Bundled flat whole-bill ×0.45');
+
+// Mixed unbundled C&I + bundled SME — both roll up (no portfolio SME drop)
+const mixed = service.applyDeterministicFindings([nswInvoice, bundledTou]);
+const mixedGroups = getBase1BenchmarkGroups(mixed);
+assert(mixedGroups.some((g) => g.optionKind === 'Profile Reset'), 'Unbundled C&I still in Expected');
+assert(mixedGroups.some((g) => g.optionKind === ELEC_SME_TO_CI_OPTION_KIND), 'Bundled SME still in Expected alongside C&I');
+
 console.log('Step 0 verification: all paths passed.');
 console.log('- NSW TOU (10/10/12)');
 console.log('- Shoulder logic (7 when ≈ off-peak)');
@@ -254,3 +349,7 @@ console.log('- Gas tier 17.1 / 15.0');
 console.log('- Press Metal bundled ×0.75 below 17.1 → skip');
 console.log('- Gas <700 GJ skipped');
 console.log('- Near-C&I 700–999 GJ at 17.1 labelled Potential (C&I 70%)');
+console.log('- Bundled SME electricity ≥70 MWh ×0.45 with TOU allocation');
+console.log('- Bundled SME <70 MWh skipped');
+console.log('- Bundled flat 45% blended vs peak target');
+console.log('- Mixed unbundled C&I + bundled SME both eligible');

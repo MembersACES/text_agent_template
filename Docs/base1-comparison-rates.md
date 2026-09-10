@@ -52,9 +52,11 @@ Savings maths:
 
 ## Electricity (Utility Type: `Electricity`)
 
-### TOU retail comparisons (from `site_address` state, and TOU shape)
+Path is **bundled vs unbundled** from `tariff_type` (substring `"unbundled"`), **not** SME/C&I by usage.
 
-Only applied when electricity is **not** flat/single-rate (`tariff_type` matches “flat/single rate/anytime/…”).
+### Unbundled — C&I retail TOU
+
+Applied when `tariff_type` contains `"unbundled"`, and the bill is **not** flat/single-rate.
 
 State detection:
 - If `site_address` contains `NSW` ⇒ use NSW targets.
@@ -75,7 +77,23 @@ All values are **comparison rates** (c/kWh):
   - if shoulder is billed identically to off-peak (within `0.01 c/kWh`), comparison is **7 c/kWh**
   - otherwise comparison is **9 c/kWh**
 
-#### TOU retail emission + severity rules
+Compare **energy-only** printed c/kWh (no 45% haircut).
+
+### Bundled — SME → C&I (45% of whole bill)
+
+No `"unbundled"` in `tariff_type`.
+
+1. Annualise `total_usage_kwh`. If `< 70,000 kWh/year`, **no retail finding**.
+2. `retail_pool = invoice_ex_gst × 0.45` (supply included).
+3. **TOU splits** (peak and off-peak and/or shoulder kWh, with printed all-in rates):  
+   `implied_c = printed_c × (retail_pool / tou_period_charges)` where `tou_period_charges = Σ (printed_c/100 × period_kWh)`.  
+   Compare each implied c/kWh to the same NSW/other targets as unbundled.
+4. **Otherwise** (flat / anytime / missing splits):  
+   `implied_c = (invoice_ex_gst / period_kWh) × 100 × 0.45` vs the **peak** target (NSW 10 / other 9).
+
+Findings are labelled **Potential (SME→C&I)**. Formula, implied rates, 0.45, and annual $ go to the staff **Findings / Skipped** cross-check sheet.
+
+#### TOU / bundled emission + severity rules
 
 For each TOU bucket (peak/shoulder/off-peak):
 - Only emit when `rate > comparison`.

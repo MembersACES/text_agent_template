@@ -46,6 +46,14 @@ export interface Base1ComparisonBuckets {
         demand: {
             minRelativeOverstatement: number;
         };
+        /**
+         * Bundled SME → C&I overlay. Usage does not choose C&I vs SME;
+         * bundled vs unbundled does. Annual kWh only gates this bundled path.
+         */
+        smeToCi: {
+            minAnnualUsageKwh: number;
+            bundledRetailShare: number;
+        };
     };
 }
 
@@ -90,12 +98,19 @@ export const DEFAULT_BASE1_COMPARISON_BUCKETS: Base1ComparisonBuckets = {
         demand: {
             minRelativeOverstatement: 0.02,
         },
+        smeToCi: {
+            minAnnualUsageKwh: 70_000,
+            bundledRetailShare: 0.45,
+        },
     },
 };
 
 export const GAS_NEAR_CI_OPTION_KIND = 'Potential (C&I 70%)' as const;
 export const GAS_NEAR_CI_FINDING_TYPE =
     'Gas energy rate above Base 1 comparison (potential near-C&I)' as const;
+
+export const ELEC_SME_TO_CI_OPTION_KIND = 'Potential (SME→C&I)' as const;
+export const ELEC_SME_TO_CI_TYPE_SUFFIX = ' (SME bundled 45%)' as const;
 
 export function isGasNearCiUsage(annualUsageGj: number, buckets: Base1ComparisonBuckets): boolean {
     const near = buckets.gas.nearCi;
@@ -105,6 +120,10 @@ export function isGasNearCiUsage(annualUsageGj: number, buckets: Base1Comparison
 
 export function isGasNearCiFindingType(findingType: string): boolean {
     return /near-c&i|potential \(c&i 70%\)/i.test(findingType);
+}
+
+export function isElecSmeToCiFindingType(findingType: string): boolean {
+    return /sme bundled 45%|potential \(sme/i.test(findingType);
 }
 
 /** Fill near-C&I defaults so older GCS bucket JSON still emits the 700–999 GJ band. */
@@ -118,12 +137,17 @@ export function normalizeBase1ComparisonBuckets(raw: Base1ComparisonBuckets): Ba
     const minAnnualUsageGj = hadNearCi
         ? raw.gas.minAnnualUsageGj
         : Math.min(raw.gas?.minAnnualUsageGj ?? firstTierMin, nearCi.minGj);
+    const smeToCi = raw.electricity?.smeToCi ?? DEFAULT_BASE1_COMPARISON_BUCKETS.electricity.smeToCi;
     return {
         ...raw,
         gas: {
             ...raw.gas,
             nearCi,
             minAnnualUsageGj,
+        },
+        electricity: {
+            ...raw.electricity,
+            smeToCi,
         },
     };
 }
@@ -262,6 +286,11 @@ export function validateBase1ComparisonBuckets(
         if (demand) {
             num('electricity.demand.minRelativeOverstatement', demand.minRelativeOverstatement, 0);
         }
+        const smeToCi = elec.smeToCi as Record<string, unknown> | undefined;
+        if (smeToCi) {
+            num('electricity.smeToCi.minAnnualUsageKwh', smeToCi.minAnnualUsageKwh, 0);
+            num('electricity.smeToCi.bundledRetailShare', smeToCi.bundledRetailShare, 0, 1);
+        }
     }
 
     if (errors.length > 0) return { success: false, errors };
@@ -278,5 +307,6 @@ export function buildBucketInjectionSummary(buckets: Base1ComparisonBuckets): st
 - Retail TOU savings are computed server-side from extracted energy-only c/kWh. NSW: peak ${nsw.peakCPerKwh}, shoulder ${nsw.shoulderCPerKwh}, off-peak ${nsw.offPeakCPerKwh} c/kWh. Other states: peak ${other.peakCPerKwh}, off-peak ${other.offPeakCPerKwh} c/kWh; shoulder uses off-peak comparison when billed same as off-peak (±${other.shoulderSameAsOffPeakTolerance}), else ${other.shoulderDefaultCPerKwh}.
 - Metering tiers: annual ≤${buckets.electricity.metering.noFindingMaxAnnual} no flag; (${buckets.electricity.metering.noFindingMaxAnnual}, ${buckets.electricity.metering.midTierMaxAnnual}] vs $${buckets.electricity.metering.midTierComparisonAnnual}/yr; >${buckets.electricity.metering.midTierMaxAnnual} vs $${buckets.electricity.metering.highTierComparisonAnnual}/yr.
 - Gas: min annual ${buckets.gas.minAnnualUsageGj} GJ; near-C&I [${buckets.gas.nearCi.minGj}, ${buckets.gas.nearCi.maxGj}) uses first-tier $/GJ labelled Potential (C&I 70%); tiers ${gasTiers}; bundled = (invoice ex-GST / GJ) ×${buckets.gas.bundledEnergyMultiplier} (supply included); unbundled = gas_rate_per_gj as-is.
+- Electricity path is bundled vs unbundled (not usage SME/C&I). Unbundled: energy-only TOU vs NSW/other retail targets. Bundled: if annual kWh ≥ ${buckets.electricity.smeToCi.minAnnualUsageKwh}, implied retail = whole bill ×${buckets.electricity.smeToCi.bundledRetailShare}; if peak/off-peak/shoulder kWh splits exist, allocate that retail pool by printed period $ then compare each implied c/kWh; otherwise one blended c/kWh vs peak target. Labelled Potential (SME→C&I).
 - Emission gate: savings ≥ $${buckets.thresholds.minAnnualSavingsAud}/yr. Do not restate these figures as your own calculations — defer to the engine output.`;
 }

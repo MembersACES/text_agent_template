@@ -1,5 +1,7 @@
 import {
+    ELEC_SME_TO_CI_OPTION_KIND,
     GAS_NEAR_CI_OPTION_KIND,
+    isElecSmeToCiFindingType,
     isGasNearCiFindingType,
 } from '@/lib/config/base1ComparisonBuckets';
 import {
@@ -8,15 +10,22 @@ import {
     type SavingsFilterOptions,
 } from '@/lib/types/ReportTypes';
 
-export type Base1OptionKind = 'Profile Reset' | 'Discrepancy' | typeof GAS_NEAR_CI_OPTION_KIND;
+export type Base1OptionKind =
+    | 'Profile Reset'
+    | 'Discrepancy'
+    | typeof GAS_NEAR_CI_OPTION_KIND
+    | typeof ELEC_SME_TO_CI_OPTION_KIND;
 
-/** Label shown in Base 1 Analysis — Waste uses Discrepancy; near-C&I gas uses Potential (C&I 70%). */
+/** Label shown in Base 1 Analysis — Waste uses Discrepancy; near-C&I gas / bundled SME electricity use Potential. */
 export function base1OptionKind(
     utilityType: ExtractedInvoice['utility_type'],
     findingType?: string,
 ): Base1OptionKind {
     if (utilityType === 'Gas' && findingType && isGasNearCiFindingType(findingType)) {
         return GAS_NEAR_CI_OPTION_KIND;
+    }
+    if (utilityType === 'Electricity' && findingType && isElecSmeToCiFindingType(findingType)) {
+        return ELEC_SME_TO_CI_OPTION_KIND;
     }
     return utilityType === 'Waste' ? 'Discrepancy' : 'Profile Reset';
 }

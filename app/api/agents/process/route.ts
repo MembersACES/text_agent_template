@@ -411,16 +411,15 @@ async function processInvoicesWithChat(
             inv: ExtractedInvoice;
             dbg: ReturnType<typeof getElectricityClassificationDebug>;
         }>;
-    const portfolioHasCAndI = electricityWithClass.some((x) => x.dbg.classification === 'c_and_i');
     if (electricityWithClass.length > 0) {
         console.log(`\n[Agent Process API] Electricity classification diagnostics:`);
-        console.log(`  - Portfolio has C&I electricity: ${portfolioHasCAndI}`);
         electricityWithClass.forEach(({ index, inv, dbg }) => {
-            const excludedByPortfolioRule = portfolioHasCAndI && dbg.classification === 'sme';
+            const bundled = !/unbundl/i.test(inv.tariff_type || '');
             console.log(
                 `  - Invoice ${index + 1} (${inv.invoice_number || 'N/A'} | NMI ${inv.nmi || 'N/A'}): ` +
-                `class=${dbg.classification.toUpperCase()} (C&I=${dbg.cAndSignals}, SME=${dbg.smeSignals}) ` +
-                `excludedByPortfolioRule=${excludedByPortfolioRule}`,
+                `savingsPath=${bundled ? 'bundled_sme_45' : 'unbundled_ci_tou'} ` +
+                `tariff=${inv.tariff_type || 'N/A'} ` +
+                `class=${dbg.classification.toUpperCase()} (C&I=${dbg.cAndSignals}, SME=${dbg.smeSignals})`,
             );
             if (dbg.reasons.length > 0) {
                 dbg.reasons.forEach((r) => console.log(`      * ${r}`));

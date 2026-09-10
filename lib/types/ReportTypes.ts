@@ -169,7 +169,7 @@ function periodSpansMultipleCalendarMonths(start: string | null | undefined, end
 }
 
 /**
- * C&I vs SME for routing savings exclusions (paired with portfolio rule).
+ * C&I vs SME heuristic for diagnostics only. Savings path is bundled vs unbundled.
  *
  * Signals (no single metric is authoritative):
  * - Tariff wording (explicit SME / C&I).
@@ -370,10 +370,6 @@ function evaluateElectricityCustomerType(inv: ExtractedInvoice): ElectricityClas
     return { classification: decide(), cAndSignals, smeSignals, reasons };
 }
 
-function classifyElectricityCustomerType(inv: ExtractedInvoice): 'c_and_i' | 'sme' {
-    return evaluateElectricityCustomerType(inv).classification;
-}
-
 export function getElectricityClassificationDebug(inv: ExtractedInvoice): ElectricityClassificationDebug {
     return evaluateElectricityCustomerType(inv);
 }
@@ -398,11 +394,6 @@ export function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]
     const eligible = new Set<number>();
     const electricityGroups = new Map<string, number[]>();
 
-    /** If any electricity invoice in this run is C&I, drop all SME electricity from savings (report-wide, not per NMI only). */
-    const portfolioHasCAndIElectricity = invoices.some(
-        (inv) => inv.utility_type === 'Electricity' && classifyElectricityCustomerType(inv) === 'c_and_i',
-    );
-
     invoices.forEach((inv, index) => {
         if (inv.utility_type !== 'Electricity') {
             eligible.add(index);
@@ -420,7 +411,6 @@ export function buildSavingsEligibleInvoiceIndexSet(invoices: ExtractedInvoice[]
 
         indices.forEach((idx) => {
             const inv = invoices[idx];
-            if (portfolioHasCAndIElectricity && classifyElectricityCustomerType(inv) === 'sme') return;
             const nmi = normalizeText(inv.nmi);
             if (!nmi) {
                 withoutNmi.push(idx);

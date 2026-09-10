@@ -61,7 +61,7 @@ Step 3: EXTRACT ALL FIELDS
 
 Server-side savings behavior you must align with:
 - If multiple electricity invoices share one NMI, savings use the most recent invoice only (all invoices still appear in data tabs)
-- If **any** electricity invoice in the batch is classified as **C&I**, **every** SME electricity invoice is excluded from savings (still shown in data tabs). Server-side SME vs C&I uses tariff labels, **billing period length** / dates, **network vs usage cost split** (`network_charges_ex_gst` vs `usage_charges_ex_gst`), scale (kWh, max demand kW) — **demand dollars alone do not force C&I**.
+- Electricity **bundled vs unbundled** (from \`tariff_type\` containing \"unbundled\") selects the formula — **not** SME/C&I by usage. Unbundled: C&I energy-only TOU vs §B. Bundled: if annualised kWh ≥ **70,000**, implied retail is **45% of the whole bill** (supply included), labelled Potential (SME→C&I). When peak / off-peak / shoulder kWh splits exist, that retail $ pool is allocated by printed period $ then compared per period; otherwise one blended c/kWh vs the peak target. Bundled and unbundled invoices may both contribute savings in one batch.
 - Gas (server-side, from extracted fields):
   - **Unbundled** (\`tariff_type\` contains \"unbundled\"): compare commodity **$/GJ** (\`gas_rate_per_gj\`, or invoice ex-GST ÷ period GJ if needed) to a **tiered** Base 1 benchmark based on annualised usage:
     - [700, 1000): **17.1 $/GJ** (near-C&I — labelled Potential (C&I 70%), included in Expected)
@@ -92,12 +92,13 @@ Step 6: POPULATE OUTPUT
 § WHEN POLICIES DO NOT APPLY (ELECTRICITY)
 ═══════════════════════════════════════════════════════════════
 
-**Unbundled C&I / SME (energy + network split):**
+**Unbundled C&I (energy + network split):**
 - Extract **peak / shoulder / off-peak energy rates in c/kWh** from the **retailer energy charge lines only** (printed $/kWh or c/kWh on the invoice). **Do not** derive TOU c/kWh by dividing **(energy + network + other) / kWh** — that blends non-retail components and invalidates comparisons.
-- Once energy-only TOU c/kWh are correct, **§B retail comparison (NSW 10/10/12, etc.) applies** the same as for bundled TOU (enforced server-side in Base 1).
+- Once energy-only TOU c/kWh are correct, **§B retail comparison (NSW 10/10/12, etc.) applies** (enforced server-side). \`tariff_type\` **must include \"Unbundled\"**.
 
-**Bundled flat / single-rate / anytime (no TOU split):**
-- If the tariff is **flat**, **single rate**, **anytime**, or **all usage is one bucket** (no meaningful shoulder/off split), **do not** apply TOU peak/shoulder/off retail comparisons — server-side Base 1 skips them.
+**Bundled (SME all-in peak / off-peak / daily supply):**
+- Extract printed **all-in** peak / shoulder / off-peak c/kWh and kWh splits, plus **\`total_charges_ex_gst\`**. Server applies **45% of the whole bill** as implied retail when annualised usage ≥ **70 MWh**. Do **not** apply §B to raw all-in c/kWh.
+- If the tariff is **flat**, **single rate**, or **anytime** (no meaningful TOU split), server uses one blended implied retail c/kWh vs the peak target (still the 70 MWh + 45% path).
 
 **Daily supply checks:**
 - **Do not** include daily retailer “service” / supply charge as a **savings** finding in Base 1 reviews for electricity or gas.
@@ -110,7 +111,7 @@ Step 6: POPULATE OUTPUT
 § RETAIL & METERING POLICY (ELECTRICITY — PRECEDENCE OVER LEGACY EXAMPLES)
 ═══════════════════════════════════════════════════════════════
 
-**Applies to TOU retail usage (c/kWh)** for **bundled or unbundled** bills, using **per-period energy-only** rates — **not** flat/single-rate tariffs (see § above).
+**Applies to TOU retail usage (c/kWh)** for **unbundled** bills (energy-only rates) and for **bundled** bills after the 45% implied-retail step — **not** raw all-in bundled c/kWh (see § above).
 
 **A. Identify state for retail TOU**
 - From `site_address` (or invoice header): NSW, VIC, ACT, QLD, SA, WA, TAS, NT.
@@ -336,7 +337,7 @@ RULES FOR JSON EXTRACTION
 SAVINGS CALCULATION METHODOLOGY
 ═══════════════════════════════════════════════════════════════
 
-**Retail TOU (electricity):** §B comparison rates apply to **TOU** (bundled or **unbundled energy-only** c/kWh) — skip for flat/single-rate (see § WHEN POLICIES DO NOT APPLY). Implemented deterministically in Base 1.
+**Retail TOU (electricity):** §B comparison rates apply to **unbundled energy-only** TOU c/kWh. **Bundled** bills use the 70 MWh + 45% whole-bill implied retail path (TOU splits kept when present). Implemented deterministically in Base 1.
 
 **Daily supply:** Extract **`daily_supply_charge`** ($/day) only. Base 1 **never** adds savings findings from daily supply for **electricity or gas**. Legacy KB daily-supply bands are contextual only.
 
