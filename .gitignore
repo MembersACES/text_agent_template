@@ -42,7 +42,7 @@ yarn-error.log*
 # Allow .env.example to be committed
 !.env.example
 
-# local test inputs holding REAL customer data (order numbers + emails) — never commit.
+# local test inputs holding REAL customer data (order numbers + emails) â€" never commit.
 # Templates named *.example.json ARE committed.
 *.local.json
 
@@ -53,7 +53,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local scratch � not part of the build
+# local scratch - not part of the build
 _to_delete/
 test-entry.ts
 test.mjs
