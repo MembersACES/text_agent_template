@@ -148,6 +148,7 @@ interface Scenario {
 const DELIVERED = [consignment('Complete', 1)];
 const PARTLY = [consignment('Partial Delivery', 4)];
 const COLLECTION = [consignment('Awaiting Collection', 1)];
+const PREPARING = [consignment('Unmanifested', 3)];
 const NONE: MachShipConsignment[] = [];
 
 const handled = (re: RegExp) => (m: string) => re.test(m);
@@ -271,6 +272,34 @@ const SCENARIOS: Scenario[] = [
         cons: DELIVERED,
         turns: [{ say: `Where is my order ${ORDER}? My email is ${EMAIL}`, expect: (m) => !m.includes(NAME), alertsAfter: 0 }],
         because: 'the name is for the alert subject only; echoing it would confirm whose order a guessed number is',
+    },
+
+    // ── queued_chasing → WH. The ONLY trigger with no coverage of any kind until
+    //    8 Sep 2026, live or synthetic, and the only one routed to WH rather than CS,
+    //    so team routing had never been exercised either.
+    {
+        name: 'queued_chasing: stuck in packing fires one WH alert',
+        cons: PREPARING,
+        conversationId: 'conv-queued',
+        turns: [{
+            say: `Where is my order ${ORDER}? My email is ${EMAIL}, it has been in queue for packing for 5 days`,
+            expect: handled(/being prepared for dispatch/i),
+            alertsAfter: 1,
+            reasonIncludes: 'packing queue',
+            subjectIncludes: `ALERT_WH_${NAME}`,
+        }],
+        because: 'routes to the warehouse, not CS, and nothing had ever proven that',
+    },
+    {
+        name: 'queued_chasing does NOT fire on an ordinary preparing question',
+        cons: PREPARING,
+        conversationId: 'conv-queued-quiet',
+        turns: [{
+            say: `Where is my order ${ORDER}? My email is ${EMAIL}`,
+            expect: handled(/being prepared for dispatch/i),
+            alertsAfter: 0,
+        }],
+        because: 'asking where an order is must not page the warehouse',
     },
 
     // ── Alert sequences: not_found (live tests D1-D3) ───────────────────────
