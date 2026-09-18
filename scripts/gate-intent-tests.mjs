@@ -649,7 +649,16 @@ var OWN_DRIVER_LINE = "Your order has been packed and is out for delivery on the
 var ETA_DISCLAIMER = "If you haven't received it within 24 hours of the estimated date, please contact us and we'll chase it up.";
 var DRAFT_COPY = {
   notFound: "I couldn't find an order matching that number and email. Please double-check both \u2014 the email must be the one used on the order.",
+  // No MachShip consignment yet, so nothing has been booked and there is no
+  // tracking link to give. Genuinely still in the packing queue.
   preparing: "Your order is being prepared for dispatch. We'll have tracking for you once it leaves our warehouse.",
+  // CONFIRMED (Iri, 18 Sep 2026). A consignment EXISTS and MachShip has already
+  // issued a tracking link, but nothing has moved yet. The old `preparing` line was
+  // used here too, which told the customer there was no tracking and then printed a
+  // tracking link underneath it. Only use this where a link is actually shown.
+  awaitingCarrierCollection: "Your order has been completed and awaiting carrier collection. Your tracking link will start updating once it leaves our warehouse.",
+  // Same situation but MachShip gave us no tracking token, so no link is rendered.
+  awaitingCarrierCollectionNoLink: "Your order has been completed and is awaiting carrier collection.",
   held: (reason) => reason ? `Your order is currently on hold (${reason}). Please contact us and we'll sort it out.` : "Your order is currently on hold. Please contact us and we'll sort it out.",
   tooOld: "That order is outside the window I can look up here (the last 60 days). Please contact us and we will help.",
   unverifiedRefused: "To protect your order details, I can only look these up with your BigCommerce order number and the email address used on the order.",
@@ -875,7 +884,7 @@ var OrderTrackingService = class {
       message = boxCount > 1 ? `Your order is on its way in ${boxCount} boxes with ${carrier}${etaSuffix}.` : `Your order is on its way with ${carrier}${etaSuffix}.`;
     } else if (buckets.every((x) => x === "preparing")) {
       state = "preparing";
-      message = DRAFT_COPY.preparing;
+      message = boxes.some((b) => b.trackingUrl) ? DRAFT_COPY.awaitingCarrierCollection : DRAFT_COPY.awaitingCarrierCollectionNoLink;
     } else {
       state = "unknown";
       message = DRAFT_COPY.unknownStatus;
@@ -1832,7 +1841,10 @@ var SCENARIOS = [
     conversationId: "conv-queued",
     turns: [{
       say: `Where is my order ${ORDER}? My email is ${EMAIL}, it has been in queue for packing for 5 days`,
-      expect: handled(/being prepared for dispatch/i),
+      // Copy changed 18 Sep 2026 (Iri): a consignment EXISTS in this fixture, so
+      // the order is booked and waiting on the carrier rather than still being
+      // packed. Routing is what this case is for, and that is unchanged.
+      expect: handled(/awaiting carrier collection/i),
       alertsAfter: 1,
       reasonIncludes: "packing queue",
       subjectIncludes: `ALERT_WH_${NAME}`
@@ -1845,7 +1857,7 @@ var SCENARIOS = [
     conversationId: "conv-queued-quiet",
     turns: [{
       say: `Where is my order ${ORDER}? My email is ${EMAIL}`,
-      expect: handled(/being prepared for dispatch/i),
+      expect: handled(/awaiting carrier collection/i),
       alertsAfter: 0
     }],
     because: "asking where an order is must not page the warehouse"

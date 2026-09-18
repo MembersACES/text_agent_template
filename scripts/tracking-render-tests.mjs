@@ -649,7 +649,16 @@ var OWN_DRIVER_LINE = "Your order has been packed and is out for delivery on the
 var ETA_DISCLAIMER = "If you haven't received it within 24 hours of the estimated date, please contact us and we'll chase it up.";
 var DRAFT_COPY = {
   notFound: "I couldn't find an order matching that number and email. Please double-check both \u2014 the email must be the one used on the order.",
+  // No MachShip consignment yet, so nothing has been booked and there is no
+  // tracking link to give. Genuinely still in the packing queue.
   preparing: "Your order is being prepared for dispatch. We'll have tracking for you once it leaves our warehouse.",
+  // CONFIRMED (Iri, 18 Sep 2026). A consignment EXISTS and MachShip has already
+  // issued a tracking link, but nothing has moved yet. The old `preparing` line was
+  // used here too, which told the customer there was no tracking and then printed a
+  // tracking link underneath it. Only use this where a link is actually shown.
+  awaitingCarrierCollection: "Your order has been completed and awaiting carrier collection. Your tracking link will start updating once it leaves our warehouse.",
+  // Same situation but MachShip gave us no tracking token, so no link is rendered.
+  awaitingCarrierCollectionNoLink: "Your order has been completed and is awaiting carrier collection.",
   held: (reason) => reason ? `Your order is currently on hold (${reason}). Please contact us and we'll sort it out.` : "Your order is currently on hold. Please contact us and we'll sort it out.",
   tooOld: "That order is outside the window I can look up here (the last 60 days). Please contact us and we will help.",
   unverifiedRefused: "To protect your order details, I can only look these up with your BigCommerce order number and the email address used on the order.",
@@ -875,7 +884,7 @@ var OrderTrackingService = class {
       message = boxCount > 1 ? `Your order is on its way in ${boxCount} boxes with ${carrier}${etaSuffix}.` : `Your order is on its way with ${carrier}${etaSuffix}.`;
     } else if (buckets.every((x) => x === "preparing")) {
       state = "preparing";
-      message = DRAFT_COPY.preparing;
+      message = boxes.some((b) => b.trackingUrl) ? DRAFT_COPY.awaitingCarrierCollection : DRAFT_COPY.awaitingCarrierCollectionNoLink;
     } else {
       state = "unknown";
       message = DRAFT_COPY.unknownStatus;
@@ -1000,7 +1009,7 @@ function etaIn(days) {
 }
 var ETA_FUTURE = etaIn(6);
 var ETA_PAST = etaIn(-4);
-function resolver(heldReason = null, verified = true) {
+function resolver(heldReason = null, verified = true, warehouseStatusRaw = "Closed / Fulfilled") {
   return {
     provider: "test",
     async resolve() {
@@ -1012,7 +1021,7 @@ function resolver(heldReason = null, verified = true) {
         orders: [{
           sysproReference: "SO10000001",
           bareReference: "10000001",
-          warehouseStatusRaw: "Closed / Fulfilled",
+          warehouseStatusRaw,
           warehouseStatusTranslated: "Fulfilled",
           heldReason
         }],
@@ -1040,6 +1049,9 @@ function consignment(statusName, items, id = "W9DZ00000001", eta = ETA_FUTURE) {
     })),
     statusHistory: []
   };
+}
+function noToken(c) {
+  return { ...c, trackingPageAccessToken: null };
 }
 function machship(cons) {
   const svc = new MachShipService();
@@ -1168,6 +1180,29 @@ var CASES = [
     expectMessage: (m) => m === "Your order has been delivered." || m.startsWith("Your order has been delivered."),
     because: 'a one-box order should not say "All 1 boxes"'
   },
+  // ── Iri, 18 Sep 2026: the preparing line contradicted its own tracking link ──
+  {
+    name: "Booked with a tracking link says awaiting carrier collection",
+    cons: [consignment("Booked", 2)],
+    expectState: "preparing",
+    expectMessage: (m) => m.includes("awaiting carrier collection") && m.includes("tracking link will start updating") && !/We'll have tracking for you/i.test(m),
+    because: "live 10269854 said tracking was not available yet and then printed a tracking link"
+  },
+  {
+    name: "Booked with NO tracking token never mentions a tracking link",
+    cons: [noToken(consignment("Booked", 1))],
+    expectState: "preparing",
+    expectMessage: (m) => m.includes("awaiting carrier collection") && !/tracking link/i.test(m),
+    because: "promising a link that is never rendered is the same bug in reverse"
+  },
+  {
+    name: "Still in the packing queue keeps the original preparing line",
+    cons: [],
+    warehouseStatus: "In queue for packing",
+    expectState: "preparing",
+    expectMessage: (m) => m.includes("being prepared for dispatch") && !/awaiting carrier collection/i.test(m),
+    because: "no consignment means nothing is booked, so it is NOT awaiting a carrier"
+  },
   {
     name: "Unrecognised status never claims delivered",
     cons: [consignment("Something We Have Never Seen", 2)],
@@ -1180,7 +1215,10 @@ var CASES = [
   let pass = 0;
   let fail = 0;
   for (const c of CASES) {
-    const svc = new OrderTrackingService(resolver(c.held ?? null), machship(c.cons));
+    const svc = new OrderTrackingService(
+      resolver(c.held ?? null, true, c.warehouseStatus ?? "Closed / Fulfilled"),
+      machship(c.cons)
+    );
     const r = await svc.track("10000001", EMAIL);
     const stateOk = r.state === c.expectState;
     const msgOk = c.expectMessage(r.message);

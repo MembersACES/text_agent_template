@@ -33,7 +33,11 @@ function etaIn(days: number): string {
 const ETA_FUTURE = etaIn(6);
 const ETA_PAST = etaIn(-4);
 
-function resolver(heldReason: string | null = null, verified = true): FreightReferenceResolver {
+function resolver(
+    heldReason: string | null = null,
+    verified = true,
+    warehouseStatusRaw = 'Closed / Fulfilled',
+): FreightReferenceResolver {
     return {
         provider: 'test',
         async resolve(): Promise<FreightReferenceResult> {
@@ -45,7 +49,7 @@ function resolver(heldReason: string | null = null, verified = true): FreightRef
                 orders: [{
                     sysproReference: 'SO10000001',
                     bareReference: '10000001',
-                    warehouseStatusRaw: 'Closed / Fulfilled',
+                    warehouseStatusRaw,
                     warehouseStatusTranslated: 'Fulfilled',
                     heldReason,
                 }],
@@ -77,6 +81,11 @@ function consignment(statusName: string, items: number, id = 'W9DZ00000001', eta
     };
 }
 
+/** Same consignment with no tracking token, so no link is rendered. */
+function noToken(c: MachShipConsignment): MachShipConsignment {
+    return { ...c, trackingPageAccessToken: null };
+}
+
 function machship(cons: MachShipConsignment[]): MachShipService {
     const svc = new MachShipService();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,6 +102,8 @@ interface Case {
     name: string;
     cons: MachShipConsignment[];
     held?: string | null;
+    /** dotWMS status. Only matters on the no-consignment path. */
+    warehouseStatus?: string;
     expectState: string;
     expectMessage: (m: string) => boolean;
     because: string;
@@ -216,6 +227,33 @@ const CASES: Case[] = [
         expectMessage: (m) => m === 'Your order has been delivered.' || m.startsWith('Your order has been delivered.'),
         because: 'a one-box order should not say "All 1 boxes"',
     },
+    // ── Iri, 18 Sep 2026: the preparing line contradicted its own tracking link ──
+    {
+        name: 'Booked with a tracking link says awaiting carrier collection',
+        cons: [consignment('Booked', 2)],
+        expectState: 'preparing',
+        expectMessage: (m) =>
+            m.includes('awaiting carrier collection') &&
+            m.includes('tracking link will start updating') &&
+            !/We'll have tracking for you/i.test(m),
+        because: 'live 10269854 said tracking was not available yet and then printed a tracking link',
+    },
+    {
+        name: 'Booked with NO tracking token never mentions a tracking link',
+        cons: [noToken(consignment('Booked', 1))],
+        expectState: 'preparing',
+        expectMessage: (m) => m.includes('awaiting carrier collection') && !/tracking link/i.test(m),
+        because: 'promising a link that is never rendered is the same bug in reverse',
+    },
+    {
+        name: 'Still in the packing queue keeps the original preparing line',
+        cons: [],
+        warehouseStatus: 'In queue for packing',
+        expectState: 'preparing',
+        expectMessage: (m) =>
+            m.includes('being prepared for dispatch') && !/awaiting carrier collection/i.test(m),
+        because: 'no consignment means nothing is booked, so it is NOT awaiting a carrier',
+    },
     {
         name: 'Unrecognised status never claims delivered',
         cons: [consignment('Something We Have Never Seen', 2)],
@@ -229,7 +267,10 @@ const CASES: Case[] = [
     let pass = 0;
     let fail = 0;
     for (const c of CASES) {
-        const svc = new OrderTrackingService(resolver(c.held ?? null), machship(c.cons));
+        const svc = new OrderTrackingService(
+            resolver(c.held ?? null, true, c.warehouseStatus ?? 'Closed / Fulfilled'),
+            machship(c.cons),
+        );
         const r = await svc.track('10000001', EMAIL);
         const stateOk = r.state === c.expectState;
         const msgOk = c.expectMessage(r.message);

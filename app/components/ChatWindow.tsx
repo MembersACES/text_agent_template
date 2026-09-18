@@ -103,6 +103,10 @@ function invalidateChatToken(): void {
 }
 
 export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }: ChatWindowProps) {
+    // The embedded storefront widget is a 380x640 panel, so it gets trimmed chrome:
+    // one header line instead of four, and no internal tools strip. The admin and
+    // full-page views keep everything. (Iri + Welly, 18 Sep 2026.)
+    const isEmbedded = Boolean(onEmbedMinimize);
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
@@ -583,7 +587,7 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                     </div>
                     <div className="flex min-w-0 flex-col">
                         <span className="text-[13px] font-semibold tracking-tight text-white">{agentName}</span>
-                        {agentSubtitle && (
+                        {!isEmbedded && agentSubtitle && (
                             <p className="mt-0.5 line-clamp-1 text-[12px] font-medium leading-snug text-white/85">
                                 {agentSubtitle}
                             </p>
@@ -592,7 +596,7 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                             <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] animate-subtle-pulse" />
                             <span className="text-[11px] font-medium text-white/70">Online</span>
                         </div>
-                        {agentDescription && (
+                        {!isEmbedded && agentDescription && (
                             <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/75">
                                 {agentDescription}
                             </p>
@@ -616,18 +620,22 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                     <button
                         onClick={() => setShowEndChatPopup(true)}
                         className="rounded-lg p-1.5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
-                        aria-label="Clear Chat"
-                        title="Clear Chat"
+                        aria-label="End chat"
+                        title="End chat"
                     >
+                        {/* A cross, not a bin. A bin reads as "delete" and customers
+                            hesitate over it (Iri, 18 Sep 2026). The confirm dialog still
+                            says this ends and resets the conversation, so the cross
+                            cannot silently wipe anything. */}
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                         </svg>
                     </button>
                 </div>
             </div>
 
             {/* Tools strip */}
-            {agentTools.length > 0 && (
+            {!isEmbedded && agentTools.length > 0 && (
                 <div className="flex shrink-0 items-center gap-2.5 border-b border-gray-100 bg-gray-50 px-4 py-2">
                     <svg className="h-3.5 w-3.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />

@@ -360,7 +360,10 @@ const SCENARIOS: Scenario[] = [
         conversationId: 'conv-queued',
         turns: [{
             say: `Where is my order ${ORDER}? My email is ${EMAIL}, it has been in queue for packing for 5 days`,
-            expect: handled(/being prepared for dispatch/i),
+            // Copy changed 18 Sep 2026 (Iri): a consignment EXISTS in this fixture, so
+            // the order is booked and waiting on the carrier rather than still being
+            // packed. Routing is what this case is for, and that is unchanged.
+            expect: handled(/awaiting carrier collection/i),
             alertsAfter: 1,
             reasonIncludes: 'packing queue',
             subjectIncludes: `ALERT_WH_${NAME}`,
@@ -373,7 +376,7 @@ const SCENARIOS: Scenario[] = [
         conversationId: 'conv-queued-quiet',
         turns: [{
             say: `Where is my order ${ORDER}? My email is ${EMAIL}`,
-            expect: handled(/being prepared for dispatch/i),
+            expect: handled(/awaiting carrier collection/i),
             alertsAfter: 0,
         }],
         because: 'asking where an order is must not page the warehouse',

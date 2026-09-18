@@ -33,6 +33,7 @@ import { KbSearchQueryResolver } from './KbSearchQueryResolver';
 import { ComplaintsResponseGate } from './ComplaintsResponseGate';
 import { OrderStatusGate } from './OrderStatusGate';
 import { PaymentSegmentGate } from './PaymentSegmentGate';
+import { ConversationClosersGate } from './ConversationClosersGate';
 import { ProductAvailabilityGate } from './ProductAvailabilityGate';
 import { GroupGoodnessPaymentGate } from './GroupGoodnessPaymentGate';
 
@@ -135,6 +136,16 @@ export class GeminiChatService {
             if (message.startsWith(HEALTH_FORCE_ERROR_TOKEN)) {
                 logger.info('Health check forced error fallback path');
                 return { response: KB_UNAVAILABLE_FALLBACK_MESSAGE };
+            }
+
+            // A customer signing off is not a KB question. Iri, 18 Sep 2026: after a
+            // successful tracking answer, "Ok. Thank you" came back with the global
+            // no-results fallback about help-centre articles. Runs ahead of every
+            // other gate and ahead of the tool fetch, because nothing downstream
+            // wants a message that is nothing but courtesy.
+            if (ConversationClosersGate.isClosing(message, conversationHistory)) {
+                logger.info('conversation closer handled without KB search');
+                return { response: ConversationClosersGate.buildResponse(message) };
             }
 
             const tools = await AgentToolRegistry.getTools(agentId, this.contextService);

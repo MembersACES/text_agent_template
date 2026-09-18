@@ -19,8 +19,19 @@ export const ETA_DISCLAIMER =
 export const DRAFT_COPY = {
     notFound:
         "I couldn't find an order matching that number and email. Please double-check both — the email must be the one used on the order.",
+    // No MachShip consignment yet, so nothing has been booked and there is no
+    // tracking link to give. Genuinely still in the packing queue.
     preparing:
         "Your order is being prepared for dispatch. We'll have tracking for you once it leaves our warehouse.",
+    // CONFIRMED (Iri, 18 Sep 2026). A consignment EXISTS and MachShip has already
+    // issued a tracking link, but nothing has moved yet. The old `preparing` line was
+    // used here too, which told the customer there was no tracking and then printed a
+    // tracking link underneath it. Only use this where a link is actually shown.
+    awaitingCarrierCollection:
+        'Your order has been completed and awaiting carrier collection. Your tracking link will start updating once it leaves our warehouse.',
+    // Same situation but MachShip gave us no tracking token, so no link is rendered.
+    awaitingCarrierCollectionNoLink:
+        'Your order has been completed and is awaiting carrier collection.',
     held: (reason: string | null): string =>
         reason
             ? `Your order is currently on hold (${reason}). Please contact us and we'll sort it out.`

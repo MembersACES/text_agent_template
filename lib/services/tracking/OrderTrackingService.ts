@@ -306,8 +306,16 @@ export class OrderTrackingService {
                 ? `Your order is on its way in ${boxCount} boxes with ${carrier}${etaSuffix}.`
                 : `Your order is on its way with ${carrier}${etaSuffix}.`;
         } else if (buckets.every((x) => x === 'preparing')) {
+            // A consignment exists, so the order is packed and booked and is sitting
+            // waiting for the carrier. That is NOT the same as still being in the
+            // packing queue, which is the no-consignment path in classifyNoMachShip.
+            // Iri, 18 Sep 2026: the single old line claimed there was no tracking yet
+            // and then a tracking link was printed directly beneath it. Which of the
+            // two lines we use depends on whether a link will actually be rendered.
             state = 'preparing';
-            message = DRAFT_COPY.preparing;
+            message = boxes.some((b) => b.trackingUrl)
+                ? DRAFT_COPY.awaitingCarrierCollection
+                : DRAFT_COPY.awaitingCarrierCollectionNoLink;
         } else {
             state = 'unknown';
             message = DRAFT_COPY.unknownStatus;
