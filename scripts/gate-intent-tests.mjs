@@ -1196,6 +1196,7 @@ var EMAIL_RE_G = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
 var ORDER_NUM_RE_G = /\b(?:BC-?)?(?:SO)?\d{6,8}\b/gi;
 var BARE_DETAILS_FILLER = /\b(order|orders|number|numbers|no|num|ref|reference|email|e-?mail|address|my|is|are|was|it|its|it's|for|the|a|an|and|with|on|of|to|placed|under|please|thanks|thank|you|hi|hello|hey|details|here|below|see|this|that)\b/gi;
 var ASK_DETAILS_MARKER = "your order number and the email";
+var DETAILS_LOOKBACK = 6;
 var NOT_FOUND_RECONFIRM = "double-check the order number and the email";
 var COLLECTION_MARKER = "post office or collection point";
 var CREDIT_FORM_MARKER = "forms.zohopublic.com";
@@ -1269,11 +1270,12 @@ var OrderStatusGate = class _OrderStatusGate {
     const current = this.extractOrderAndEmail(message);
     const hasFreshDetails = Boolean(current.order && current.email);
     const isBareDetails = hasFreshDetails && this.isBareOrderDetails(message) && !this.lastAssistantOfferedCreditForm(history);
+    const isBareOrderNumberOnly = Boolean(current.order) && !current.email && this.isBareOrderDetails(message) && !this.lastAssistantOfferedCreditForm(history);
     const isDetailsReply = this.assistantAskedForOrderDetails(history);
     const isReconfirmReply = this.assistantAskedReconfirm(history);
     const isWontWaitFollowup = !hasFreshDetails && this.assistantRenderedPartlyDelivered(history) && WONT_WAIT_INTENT.test(message);
     const isCollectionRefusalFollowup = !hasFreshDetails && this.assistantRenderedCollection(history) && COLLECTION_REFUSED_INTENT.test(message);
-    if (!this.wantsOrderTracking(message) && !isBareDetails && !isDetailsReply && !isReconfirmReply && !isWontWaitFollowup && !isCollectionRefusalFollowup) {
+    if (!this.wantsOrderTracking(message) && !isBareDetails && !isBareOrderNumberOnly && !isDetailsReply && !isReconfirmReply && !isWontWaitFollowup && !isCollectionRefusalFollowup) {
       return null;
     }
     const isEscalationFollowup = isWontWaitFollowup || isCollectionRefusalFollowup;
@@ -1303,7 +1305,8 @@ var OrderStatusGate = class _OrderStatusGate {
       }
       return `I understand you'd prefer not to wait for the rest. Please contact ${SUPPORT_CHANNELS} and the team will sort it out.`;
     }
-    const { order, email } = current;
+    const merged = isDetailsReply || isReconfirmReply ? this.mergeDetailsFromHistory(current, history) : current;
+    const { order, email } = merged;
     if (!order || !email) {
       return this.buildAskForOrderDetails(order, email);
     }
@@ -1419,6 +1422,28 @@ ${WONT_WAIT_MARKER_SENTENCE}`;
     }
     return { order: null, email: null };
   }
+  /**
+   * Fill in whichever of order / email the current message is missing, using the
+   * most recent USER message that carried it. Bounded to the last
+   * DETAILS_LOOKBACK user messages so a long conversation cannot resurrect a
+   * stale order number. Whatever the current message supplies always wins, so a
+   * customer correcting one field is never overridden by the old value.
+   */
+  static mergeDetailsFromHistory(current, history) {
+    let { order, email } = current;
+    if (order && email) return { order, email };
+    let seen = 0;
+    for (let i = history.length - 1; i >= 0 && seen < DETAILS_LOOKBACK; i--) {
+      const m = history[i];
+      if (m.role !== "user") continue;
+      seen++;
+      const prev = this.extractOrderAndEmail(String(m.content ?? ""));
+      if (!order && prev.order) order = prev.order;
+      if (!email && prev.email) email = prev.email;
+      if (order && email) break;
+    }
+    return { order, email };
+  }
   /** Same order (digits-only) + same email (case-insensitive)? */
   static sameAttempt(o1, e1, o2, e2) {
     return o1.replace(/\D/g, "") === o2.replace(/\D/g, "") && e1.trim().toLowerCase() === e2.trim().toLowerCase();
@@ -1478,7 +1503,7 @@ Track your ${links.length > 1 ? "boxes" : "parcel"}: ${links.join("   ")}`;
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i];
       if (msg.role !== "assistant") continue;
-      return String(msg.content ?? "").includes(ASK_DETAILS_MARKER);
+      return String(msg.content ?? "").toLowerCase().includes(ASK_DETAILS_MARKER);
     }
     return false;
   }
@@ -1693,6 +1718,76 @@ var SCENARIOS = [
     cons: DELIVERED,
     turns: [{ say: `where's my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 }],
     because: "the ask is what makes the next turn a details reply"
+  },
+  // ── Iri's live widget test, 18 Sep 2026 ─────────────────────────────────
+  // The customer split the order number and the email across two turns. The
+  // second-ask copy capitalises "(Your order number and the email ...", the
+  // marker match was case-SENSITIVE, so the email-only turn was not recognised
+  // as a details reply, the gate returned null, and the KB answered
+  // "I couldn't find an article that directly answers this in the help center".
+  {
+    name: "Details split across turns: number first, then email (Iri, 18 Sep)",
+    cons: DELIVERED,
+    turns: [
+      { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+      { say: ORDER, expect: handled(/email address on the order/i), alertsAfter: 0 },
+      { say: EMAIL, expect: handled(/delivered/i), alertsAfter: 0 }
+    ],
+    because: "a customer typing the two details on separate lines is the ordinary case, not an edge case"
+  },
+  {
+    name: "Details split across turns: email first, then number",
+    cons: DELIVERED,
+    turns: [
+      { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+      { say: EMAIL, expect: handled(/order number/i), alertsAfter: 0 },
+      { say: ORDER, expect: handled(/delivered/i), alertsAfter: 0 }
+    ],
+    because: "the merge must work in either order, not just the one Iri happened to type"
+  },
+  {
+    name: "A corrected order number wins over the one held in history",
+    cons: DELIVERED,
+    turns: [
+      { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+      { say: "19999999", expect: handled(/email address on the order/i), alertsAfter: 0 },
+      // Both halves present in one turn, and the order number is a different
+      // one. The merge must not reach back and reinstate 19999999.
+      { say: `sorry, it's ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 }
+    ],
+    because: "merging from history must never override what the customer just typed"
+  },
+  {
+    name: "A cold bare order number is treated as a tracking question",
+    cons: DELIVERED,
+    turns: [{ say: ORDER, expect: handled(/email address on the order/i), alertsAfter: 0 }],
+    because: 'a first message of just the order number was reaching the KB and getting "I could not find an article"'
+  },
+  {
+    name: "A cold bare order number, then the email, completes the lookup",
+    cons: DELIVERED,
+    turns: [
+      { say: `  ${ORDER}  `, expect: handled(/email address on the order/i), alertsAfter: 0 },
+      { say: EMAIL, expect: handled(/delivered/i), alertsAfter: 0 }
+    ],
+    because: "the shortest path a real customer takes: paste the number, then the email"
+  },
+  {
+    name: "A cold bare email alone still falls through to the KB",
+    cons: DELIVERED,
+    turns: [{ say: EMAIL, expect: null, alertsAfter: 0 }],
+    because: "an email on its own is as likely a newsletter question as a tracking one"
+  },
+  {
+    name: "A cold email with no ask before it does NOT inherit an order number",
+    cons: DELIVERED,
+    turns: [
+      // No details ask in history, so nothing to merge against: the gate must
+      // stand down rather than look up whatever number it can find.
+      { say: `do you deliver to WA?`, expect: null, alertsAfter: 0, injectAssistant: "We deliver Australia wide." },
+      { say: EMAIL, expect: null, alertsAfter: 0 }
+    ],
+    because: "the lookback is only legitimate while we are mid-ask; otherwise it invents a query the customer never made"
   },
   {
     name: "Bare details mid credit-claim are NOT hijacked into tracking",

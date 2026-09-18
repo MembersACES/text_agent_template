@@ -246,6 +246,83 @@ const SCENARIOS: Scenario[] = [
         because: 'the ask is what makes the next turn a details reply',
     },
 
+    // ── Iri's live widget test, 18 Sep 2026 ─────────────────────────────────
+    // The customer split the order number and the email across two turns. The
+    // second-ask copy capitalises "(Your order number and the email ...", the
+    // marker match was case-SENSITIVE, so the email-only turn was not recognised
+    // as a details reply, the gate returned null, and the KB answered
+    // "I couldn't find an article that directly answers this in the help center".
+    {
+        name: 'Details split across turns: number first, then email (Iri, 18 Sep)',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+            { say: ORDER, expect: handled(/email address on the order/i), alertsAfter: 0 },
+            { say: EMAIL, expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'a customer typing the two details on separate lines is the ordinary case, not an edge case',
+    },
+
+    {
+        name: 'Details split across turns: email first, then number',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+            { say: EMAIL, expect: handled(/order number/i), alertsAfter: 0 },
+            { say: ORDER, expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'the merge must work in either order, not just the one Iri happened to type',
+    },
+
+    {
+        name: 'A corrected order number wins over the one held in history',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order?`, expect: handled(/order number and the email/i), alertsAfter: 0 },
+            { say: '19999999', expect: handled(/email address on the order/i), alertsAfter: 0 },
+            // Both halves present in one turn, and the order number is a different
+            // one. The merge must not reach back and reinstate 19999999.
+            { say: `sorry, it's ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'merging from history must never override what the customer just typed',
+    },
+
+    {
+        name: 'A cold bare order number is treated as a tracking question',
+        cons: DELIVERED,
+        turns: [{ say: ORDER, expect: handled(/email address on the order/i), alertsAfter: 0 }],
+        because: 'a first message of just the order number was reaching the KB and getting "I could not find an article"',
+    },
+
+    {
+        name: 'A cold bare order number, then the email, completes the lookup',
+        cons: DELIVERED,
+        turns: [
+            { say: `  ${ORDER}  `, expect: handled(/email address on the order/i), alertsAfter: 0 },
+            { say: EMAIL, expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'the shortest path a real customer takes: paste the number, then the email',
+    },
+
+    {
+        name: 'A cold bare email alone still falls through to the KB',
+        cons: DELIVERED,
+        turns: [{ say: EMAIL, expect: null, alertsAfter: 0 }],
+        because: 'an email on its own is as likely a newsletter question as a tracking one',
+    },
+
+    {
+        name: 'A cold email with no ask before it does NOT inherit an order number',
+        cons: DELIVERED,
+        turns: [
+            // No details ask in history, so nothing to merge against: the gate must
+            // stand down rather than look up whatever number it can find.
+            { say: `do you deliver to WA?`, expect: null, alertsAfter: 0, injectAssistant: 'We deliver Australia wide.' },
+            { say: EMAIL, expect: null, alertsAfter: 0 },
+        ],
+        because: 'the lookback is only legitimate while we are mid-ask; otherwise it invents a query the customer never made',
+    },
+
     {
         name: 'Bare details mid credit-claim are NOT hijacked into tracking',
         cons: DELIVERED,

@@ -25,7 +25,7 @@ import type { TrackingResult } from '@/lib/services/tracking/types';
 import { DRAFT_COPY } from '@/lib/services/tracking/trackingCopy';
 import { InternalAlertService } from '@/lib/services/alerts/InternalAlertService';
 import type { InternalAlert } from '@/lib/services/alerts/types';
-import { ConversationMessage } from './ConversationHistoryService';
+import type { ConversationMessage } from './ConversationHistoryService';
 
 const logger = getLogger('OrderStatusGate');
 
@@ -103,6 +103,10 @@ const BARE_DETAILS_FILLER =
 
 // Marker text used to recognise our own prior "give me your details" ask.
 const ASK_DETAILS_MARKER = 'your order number and the email';
+// How many recent USER messages to scan when the order number and the email arrived
+// in different turns. 6 covers "where is my order" -> number -> email -> a correction
+// or two, and stops well short of resurrecting an order from earlier in a long chat.
+const DETAILS_LOOKBACK = 6;
 
 // ── Escalation-alert markers + intents (Triggers 2 & 3) ──────────────────────
 // Markers are natural-language phrases embedded in our own replies, so they
@@ -228,6 +232,20 @@ export class OrderStatusGate {
         const isBareDetails =
             hasFreshDetails && this.isBareOrderDetails(message) && !this.lastAssistantOfferedCreditForm(history);
 
+        // A message that is nothing but an ORDER NUMBER is the same signal with one
+        // half missing. Nobody types "10269854" into a support chat for any other
+        // reason, and the worst case is that we ask for the email. Added 18 Sep 2026
+        // alongside the split-details fix: Iri opened with a sentence so she hit the
+        // ask first, but a customer whose FIRST message is just the number was
+        // getting "I couldn't find an article that directly answers this" from the KB.
+        // Deliberately NOT extended to a bare email: an email on its own is a
+        // plausible newsletter or account question, so that still falls through.
+        const isBareOrderNumberOnly =
+            Boolean(current.order) &&
+            !current.email &&
+            this.isBareOrderDetails(message) &&
+            !this.lastAssistantOfferedCreditForm(history);
+
         const isDetailsReply = this.assistantAskedForOrderDetails(history);
         const isReconfirmReply = this.assistantAskedReconfirm(history);
         const isWontWaitFollowup =
@@ -244,6 +262,7 @@ export class OrderStatusGate {
         if (
             !this.wantsOrderTracking(message) &&
             !isBareDetails &&
+            !isBareOrderNumberOnly &&
             !isDetailsReply &&
             !isReconfirmReply &&
             !isWontWaitFollowup &&
@@ -297,7 +316,18 @@ export class OrderStatusGate {
             return `I understand you'd prefer not to wait for the rest. Please contact ${SUPPORT_CHANNELS} and the team will sort it out.`;
         }
 
-        const { order, email } = current;
+        // Details can arrive across SEPARATE turns: the customer sends the order
+        // number, we ask for the email, they send only the email. `current` reads the
+        // current message alone, so before 18 Sep 2026 the second turn still had a
+        // null order and we asked for the order number again, forever. Only merge
+        // while we are mid-ask (isDetailsReply / isReconfirmReply) so a cold message
+        // can never inherit an order number from earlier in the conversation.
+        const merged =
+            isDetailsReply || isReconfirmReply
+                ? this.mergeDetailsFromHistory(current, history)
+                : current;
+
+        const { order, email } = merged;
         if (!order || !email) {
             return this.buildAskForOrderDetails(order, email);
         }
@@ -445,6 +475,33 @@ export class OrderStatusGate {
         return { order: null, email: null };
     }
 
+    /**
+     * Fill in whichever of order / email the current message is missing, using the
+     * most recent USER message that carried it. Bounded to the last
+     * DETAILS_LOOKBACK user messages so a long conversation cannot resurrect a
+     * stale order number. Whatever the current message supplies always wins, so a
+     * customer correcting one field is never overridden by the old value.
+     */
+    private static mergeDetailsFromHistory(
+        current: { order: string | null; email: string | null },
+        history: ConversationMessage[],
+    ): { order: string | null; email: string | null } {
+        let { order, email } = current;
+        if (order && email) return { order, email };
+
+        let seen = 0;
+        for (let i = history.length - 1; i >= 0 && seen < DETAILS_LOOKBACK; i--) {
+            const m = history[i];
+            if (m.role !== 'user') continue;
+            seen++;
+            const prev = this.extractOrderAndEmail(String(m.content ?? ''));
+            if (!order && prev.order) order = prev.order;
+            if (!email && prev.email) email = prev.email;
+            if (order && email) break;
+        }
+        return { order, email };
+    }
+
     /** Same order (digits-only) + same email (case-insensitive)? */
     private static sameAttempt(o1: string, e1: string, o2: string, e2: string): boolean {
         return o1.replace(/\D/g, '') === o2.replace(/\D/g, '')
@@ -517,7 +574,17 @@ export class OrderStatusGate {
         for (let i = history.length - 1; i >= 0; i--) {
             const msg = history[i];
             if (msg.role !== 'assistant') continue;
-            return String(msg.content ?? '').includes(ASK_DETAILS_MARKER);
+            // Case-INSENSITIVE. Found by Iri's live widget test 18 Sep 2026. The
+            // second-ask copy opens the bracket with a capital: "(Your order number
+            // and the email must match what's on the order.)", and String.includes
+            // is case-sensitive, so the marker never matched and the customer's
+            // reply was not recognised as a details reply. The gate returned null
+            // and the turn fell through to the KB, which answered "I couldn't find
+            // an article that directly answers this in the help center".
+            // Only the FIRST-ask wording ("What's your order number and the email
+            // address used on the order?") ever matched, which is why every test
+            // that opened with a bare "where is my order" passed.
+            return String(msg.content ?? '').toLowerCase().includes(ASK_DETAILS_MARKER);
         }
         return false;
     }
