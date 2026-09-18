@@ -108,6 +108,18 @@ const ASK_DETAILS_MARKER = 'your order number and the email';
 // or two, and stops well short of resurrecting an order from earlier in a long chat.
 const DETAILS_LOOKBACK = 6;
 
+// A customer coming back to an order we ALREADY looked up in this conversation.
+// Found live 18 Sep 2026: after a status answer, "thanks, but it still hasn't
+// arrived" carried a tracking verb but no order noun, so wantsOrderTracking() was
+// false and the turn fell through. Once the stale prompt was fixed the agent asked
+// for the order number and email it had been given three messages earlier, which
+// reads as though it has forgotten the conversation.
+// Deliberately a narrow list of NON-ARRIVAL and UPDATE phrasings rather than any
+// tracking verb: a later "can you check if you have turmeric in stock" must not be
+// dragged back onto the order.
+const TRACKING_FOLLOWUP_INTENT =
+    /\b(still (?:hasn'?t|has not|have not|haven'?t|not) (?:arrived|come|turned up|shown up|been delivered|been received)|(?:hasn'?t|has not|haven'?t|have not|didn'?t|did not|never) (?:arrived|turned up|shown up|been delivered)|not arrived|nothing (?:has )?arrived|no sign of (?:it|them|my order|the order)|where is it now|any update|any news|update on (?:my|the) order|still waiting|not here yet|not (?:yet )?received|still nothing|nothing yet)\b/i;
+
 // ── Escalation-alert markers + intents (Triggers 2 & 3) ──────────────────────
 // Markers are natural-language phrases embedded in our own replies, so they
 // survive in conversationHistory and are recognisable next turn without any
@@ -256,6 +268,15 @@ export class OrderStatusGate {
         // and the collection_refused branch further down is unreachable. Caught 1 Sep
         // 2026 by scripts/gate-intent-tests; the live test for it (D6) needed an order
         // sitting at a collection point and had never been runnable.
+        // Same shape as the two escalation follow-ups: no fresh details, and the intent
+        // only makes sense as a follow-up. The difference is that this one re-runs the
+        // LOOKUP rather than raising an alert, so the customer gets the current status
+        // instead of being asked for details they have already given.
+        const isTrackingFollowup =
+            !hasFreshDetails &&
+            TRACKING_FOLLOWUP_INTENT.test(message) &&
+            this.hasPriorOrderDetails(history);
+
         const isCollectionRefusalFollowup =
             !hasFreshDetails && this.assistantRenderedCollection(history) && COLLECTION_REFUSED_INTENT.test(message);
 
@@ -266,7 +287,8 @@ export class OrderStatusGate {
             !isDetailsReply &&
             !isReconfirmReply &&
             !isWontWaitFollowup &&
-            !isCollectionRefusalFollowup
+            !isCollectionRefusalFollowup &&
+            !isTrackingFollowup
         ) {
             return null;
         }
@@ -323,7 +345,7 @@ export class OrderStatusGate {
         // while we are mid-ask (isDetailsReply / isReconfirmReply) so a cold message
         // can never inherit an order number from earlier in the conversation.
         const merged =
-            isDetailsReply || isReconfirmReply
+            isDetailsReply || isReconfirmReply || isTrackingFollowup
                 ? this.mergeDetailsFromHistory(current, history)
                 : current;
 
@@ -500,6 +522,24 @@ export class OrderStatusGate {
             if (order && email) break;
         }
         return { order, email };
+    }
+
+    /** True when some earlier USER message in this conversation carried BOTH an order
+     *  number and an email, so a follow-up can be answered without asking again. */
+    private static hasPriorOrderDetails(history: ConversationMessage[]): boolean {
+        let order: string | null = null;
+        let email: string | null = null;
+        let seen = 0;
+        for (let i = history.length - 1; i >= 0 && seen < DETAILS_LOOKBACK; i--) {
+            const m = history[i];
+            if (m.role !== 'user') continue;
+            seen++;
+            const prev = this.extractOrderAndEmail(String(m.content ?? ''));
+            if (!order && prev.order) order = prev.order;
+            if (!email && prev.email) email = prev.email;
+            if (order && email) return true;
+        }
+        return false;
     }
 
     /** Same order (digits-only) + same email (case-insensitive)? */

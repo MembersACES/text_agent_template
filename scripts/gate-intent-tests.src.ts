@@ -287,6 +287,64 @@ const SCENARIOS: Scenario[] = [
         because: 'merging from history must never override what the customer just typed',
     },
 
+    // ── Iri's second live find, 18 Sep 2026: coming back to the same order ──────
+    {
+        name: 'Non-arrival follow-up re-reads the order instead of asking again',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+            { say: `thanks, but it still hasn't arrived`, expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'asking for details the customer gave two messages ago reads as though the agent forgot the conversation',
+    },
+    {
+        name: 'Any update / still waiting also re-reads the order',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+            { say: 'any update?', expect: handled(/delivered/i), alertsAfter: 0 },
+        ],
+        because: 'the second most likely way a customer comes back to the same order',
+    },
+    {
+        name: 'A non-arrival follow-up with NO prior details still asks',
+        cons: DELIVERED,
+        turns: [
+            { say: 'do you deliver to WA?', expect: null, alertsAfter: 0, injectAssistant: 'We deliver Australia wide.' },
+            { say: "my order still hasn't arrived", expect: handled(/order number and the email/i), alertsAfter: 0 },
+        ],
+        because: 'there is nothing to re-read, so asking is the only correct answer',
+    },
+    {
+        name: 'A stock question after a tracking answer is NOT dragged onto the order',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+            { say: 'can you check if you have turmeric powder in stock', expect: null, alertsAfter: 0 },
+        ],
+        because: 'the follow-up rule must not swallow every later message in the conversation',
+    },
+    {
+        name: 'A damage complaint after a tracking answer still stands down',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+            { say: 'it arrived but two boxes are damaged', expect: null, alertsAfter: 0 },
+        ],
+        because: 'the credit flow owns damage, and the follow-up rule must not outrank it',
+    },
+    {
+        name: 'A follow-up about a DIFFERENT order uses the new number, not the old one',
+        cons: DELIVERED,
+        turns: [
+            { say: `where is my order ${ORDER}, email ${EMAIL}`, expect: handled(/delivered/i), alertsAfter: 0 },
+            // Fresh details present, so this is a new query and the follow-up path
+            // must not fire at all.
+            { say: `where is order 19999999, email ${EMAIL}`, expect: handled(/couldn't find an order|double-check/i), alertsAfter: 0 },
+        ],
+        because: 'recovering details from history must never override details in the message',
+    },
+
     {
         name: 'A cold bare order number is treated as a tracking question',
         cons: DELIVERED,
