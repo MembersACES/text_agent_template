@@ -7,7 +7,7 @@
  * the literal follow-up string.
  */
 
-import { ConversationMessage } from './ConversationHistoryService';
+import type { ConversationMessage } from './ConversationHistoryService';
 
 const SEGMENT_ONLY_REPLY =
     /^(retail|wholesale|trade)(\s+customer)?[!.?\s]*$/i;

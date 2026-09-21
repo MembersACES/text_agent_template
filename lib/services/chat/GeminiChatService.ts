@@ -38,7 +38,13 @@ import { ProductAvailabilityGate } from './ProductAvailabilityGate';
 import { GroupGoodnessPaymentGate } from './GroupGoodnessPaymentGate';
 
 const logger = getLogger('GeminiChatService');
-const NO_RESULTS_FALLBACK_MESSAGE = "I couldn't find an article that directly answers this in the help center. You can still contact Honest to Goodness support via phone, email or web forms if you'd like more help.";
+// CONFIRMED (Iri, 21 Sep 2026). The old line talked about the help centre's
+// articles, which is the agent's internal problem and means nothing to a customer.
+// Grammar tidied from Iri's draft; substance and the enquiry-form URL are his.
+const ENQUIRY_FORM_URL = 'https://goodness.com.au/contact-us/';
+const NO_RESULTS_FALLBACK_MESSAGE =
+    "I'm so sorry, I don't have the answer to that one. One of my colleagues will be able to help. "
+    + `Please fill in our enquiry form and the team will get back to you shortly:\n\n${ENQUIRY_FORM_URL}`;
 const KB_UNAVAILABLE_FALLBACK_MESSAGE = "I'm having trouble reaching the help center right now. Please try again in a moment or contact support via phone, email or web forms.";
 const EMPTY_CLARIFICATION_RESPONSE =
     "Sorry — I'm not quite sure how to help with that. Could you let me know a bit more about what you're looking for? I can help with payment options, shipping, order status, product availability, or returns and credits.";
@@ -628,6 +634,10 @@ export class GeminiChatService {
     private isInvalidSuccessKbResponse(text: string): boolean {
         const normalized = text.toLowerCase();
         return normalized.includes("i couldn't find an article that directly answers this in the help center")
+            // Our own fallback wording changed 21 Sep 2026. Both spellings are kept:
+            // the old one so a cached or model-echoed answer is still caught, the new
+            // one so this check does not quietly stop working.
+            || normalized.includes("i don't have the answer to that one")
             || normalized.includes("i'm having trouble reaching the help center right now")
             || normalized.includes('i cannot find any information about')
             || normalized.includes('in the available knowledge bases');

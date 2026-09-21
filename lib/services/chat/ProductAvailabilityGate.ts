@@ -9,7 +9,7 @@ const SUPPORT_CHANNELS =
     'Honest to Goodness support by phone, email, or the web forms on our website';
 
 const NO_RESULTS_PHRASING =
-    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center|i cannot assist/i;
+    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center|don't have the answer|do not have the answer|one of my colleagues|i cannot assist/i;
 
 /** Order-tracking intents handled by OrderStatusGate — not product catalogue stock. */
 const ORDER_STATUS_EXCLUDE =

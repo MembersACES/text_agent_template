@@ -5,7 +5,7 @@
  * model would otherwise open with article text or a KB no-results fallback.
  */
 
-import { ConversationMessage } from './ConversationHistoryService';
+import type { ConversationMessage } from './ConversationHistoryService';
 
 export const PAYMENT_SEGMENT_OPENER =
     "Happy to help with that. Could you let me know whether you're a retail or wholesale customer? Accepted payment methods can differ between the two.";
@@ -38,7 +38,7 @@ const BANNED_OPENER_PATTERNS = [
 ];
 
 const NO_RESULTS_PHRASING =
-    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center/i;
+    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center|don't have the answer|do not have the answer|one of my colleagues/i;
 
 export class PaymentSegmentGate {
     static needsSegmentQuestion(message: string, history: ConversationMessage[] = []): boolean {

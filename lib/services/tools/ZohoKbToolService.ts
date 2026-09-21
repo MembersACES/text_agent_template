@@ -1,12 +1,14 @@
-import { FunctionDeclarationsTool, SchemaType, GoogleGenerativeAI } from '@google/generative-ai';
+import { SchemaType, GoogleGenerativeAI } from '@google/generative-ai';
+import type { FunctionDeclarationsTool } from '@google/generative-ai';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { gcsClient } from '@/lib/services/storage/GcsClient';
-import { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
+import type { AgentTool, ToolExecutionParams, ToolExecutionResult, ToolMetadata } from './AgentTool';
 import { ComplaintsResponseGate } from '../chat/ComplaintsResponseGate';
 import { PaymentSegmentGate } from '../chat/PaymentSegmentGate';
 import { KbSearchQueryResolver } from '../chat/KbSearchQueryResolver';
-import { ZohoDeskClient, ZohoArticle } from '../zoho/ZohoDeskClient';
+import { ZohoDeskClient } from '../zoho/ZohoDeskClient';
+import type { ZohoArticle } from '../zoho/ZohoDeskClient';
 import { redactPII } from '@/lib/services/privacy/redact';
 import { traceable } from 'langsmith/traceable';
 
@@ -110,7 +112,10 @@ export class ZohoKbToolService implements AgentTool {
 
         try {
             logger.info('Using public Zoho portal API search');
-            const paymentFallbackQueries = this.getPaymentFallbackQueries(query);
+            const paymentFallbackQueries = [
+                ...this.getPaymentFallbackQueries(query),
+                ...this.buildKeywordFallbackQueries(query),
+            ];
             const portal1Articles = await this.searchPortalWithFallbacks(portalId, query, paymentFallbackQueries);
             const portal1Relevant = portal1Articles.length > 0
                 && await this.isRelevantToQuery(query, portal1Articles, 'portal 1');
@@ -433,6 +438,62 @@ export class ZohoKbToolService implements AgentTool {
             }
             return normalizedGroup;
         }).filter((group) => group.length > 0);
+    }
+
+    /**
+     * Greeting and grammar that Zoho's keyword search treats as content.
+     * Superset of the stop-words used for lexical matching: this list also drops
+     * conversational openers, because the customer is typing at a chat box rather
+     * than a search field.
+     */
+    private static readonly QUERY_FILLER = new Set([
+        'a', 'about', 'an', 'and', 'any', 'anyone', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'can',
+        'could', 'did', 'do', 'does', 'for', 'from', 'get', 'guys', 'have', 'hello', 'hey', 'hi', 'how',
+        'i', 'if', 'in', 'is', 'it', 'its', 'just', 'know', 'like', 'me', 'my', 'need', 'of', 'on', 'or',
+        'our', 'please', 'so', 'some', 'tell', 'thanks', 'that', 'the', 'their', 'them', 'there', 'these',
+        'they', 'this', 'to', 'us', 'want', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'who',
+        'why', 'will', 'with', 'wondering', 'would', 'you', 'your', 'yours',
+        // Generic commerce nouns. They look like content words but carry no
+        // discriminating power in a food catalogue, and they are what pulled
+        // "Hi is your product kosher" towards every article titled "Is your ...".
+        'good', 'goods', 'item', 'items', 'order', 'orders', 'produce', 'product', 'products',
+        'stock', 'stuff', 'thing', 'things',
+    ]);
+
+    /**
+     * Retry queries built by stripping filler from the customer's sentence.
+     *
+     * Found in the Cloud Run logs 21 Sep 2026, from Iri's sweep. "Hi is your
+     * product kosher" returned "Is your packaging recyclable?", "Is your Coconut
+     * Cream homogenised?" and three more of the same shape: Zoho matched the
+     * phrase "is your" and never scored the one word that mattered. The same
+     * customer asking "are you kosher certified" got the right article first hit.
+     *
+     * So the distinctive word has to be searched on its own. Two extra queries at
+     * most, and only when searchPortalWithFallbacks judges the primary result weak,
+     * so an ordinary hit still costs one API call.
+     *
+     * Public for tests: the distillation is the part with logic in it, and it can
+     * be checked without touching Zoho.
+     */
+    buildKeywordFallbackQueries(query: string): string[] {
+        const words = this.normalizeText(query)
+            .split(' ')
+            .filter((w) => w.length > 1 && !ZohoKbToolService.QUERY_FILLER.has(w));
+        if (words.length === 0) return [];
+
+        const phrase = words.join(' ');
+
+        // Only worth a retry if stripping filler actually changed the query.
+        if (phrase === this.normalizeText(query)) return [];
+
+        // Deliberately ONE retry, the distilled phrase, and no single-word guess.
+        // The first cut of this picked the longest remaining word as "most
+        // distinctive", which turned "Hi is your product kosher" into a search for
+        // "product" — the generic word, not the one that mattered. Length is not
+        // rarity, and without a corpus there is no honest way to rank them, so the
+        // filler list does the work instead.
+        return [phrase];
     }
 
     private getPaymentFallbackQueries(query: string): string[] {

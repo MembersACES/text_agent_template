@@ -67,8 +67,13 @@ const ORDER_NOUN = /\b(order|parcel|package|shipment|consignment|#?\d{6,8})\b/i;
 // OrderStatusGate (line ~173) BEFORE ComplaintsResponseGate (line ~194), and
 // `arriv\w*` matches "arrived". Deliberately EXCLUDES refund/return/cancel — the
 // wont_wait trigger below owns "I don't want to wait, just refund it".
+// Widened 21 Sep 2026 (Iri) alongside the new quality_complaint scenario in
+// ComplaintsResponseGate. The two lists must stay in step: this one decides that
+// the TRACKING gate stands down, and that one decides who answers instead. A word
+// in only one of them either returns a delivery status to a quality complaint, or
+// drops the complaint through to the knowledge base.
 const CONDITION_COMPLAINT =
-    /\b(damaged|broken|crushed|leaking|smashed|mouldy|moldy|rotten|spoiled|spoilt|expired|out of date|wrong item|incorrect item|received the wrong|sent the wrong|missing item|item missing|short ?shipped|faulty|not in (?:my|the) order)\b/i;
+    /\b(damaged|broken|crushed|leaking|smashed|mouldy|moldy|mould|mold|rotten|rotting|spoiled|spoilt|stale|rancid|soggy|expired|out of date|use by|taste[sd]?|tasting|flavour|flavor|smell[sd]?|smelt|smelling|texture|quality|infest\w*|weevil\w*|larvae|maggot[s]?|underweight|short ?weight|incorrect weight|wrong weight|wrong item|incorrect item|received the wrong|sent the wrong|missing item|item missing|short ?shipped|faulty|not in (?:my|the) order)\b/i;
 
 // An explicit request to CHANGE something about the order is not a tracking question,
 // even though it usually carries the order number and often the word "delivery".
@@ -166,6 +171,13 @@ export class OrderStatusGate {
     private static sharedAlerts: InternalAlertService | null = null;
     static defaultAlertService(): InternalAlertService {
         return (this.sharedAlerts ??= new InternalAlertService());
+    }
+
+    /** Exposes CONDITION_COMPLAINT so complaints-gate-tests can assert that this
+     *  list and ComplaintsResponseGate's patterns stay in step. Test-only; nothing
+     *  in the request path calls it. */
+    static conditionComplaintForTests(message: string): boolean {
+        return CONDITION_COMPLAINT.test(message);
     }
 
     /** Broad order-tracking / "where is my order" intent. */

@@ -13,7 +13,8 @@
  *  - extractJsonFromResponse → parses structured JSON from the LLM response
  */
 
-import { GoogleGenerativeAI, SchemaType, FunctionDeclarationsTool } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import type { FunctionDeclarationsTool } from '@google/generative-ai';
 import { getLogger } from '@/lib/config/logger';
 import { settings } from '@/lib/config/settings';
 import { buildInvoiceExtractionPrompt, buildNoKBExtractionPrompt } from '@/lib/utils/Prompts';

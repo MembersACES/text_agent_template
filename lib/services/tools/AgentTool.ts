@@ -1,5 +1,5 @@
-import { FunctionDeclarationsTool } from '@google/generative-ai';
-import { ConversationMessage } from '../chat/ConversationHistoryService';
+import type { FunctionDeclarationsTool } from '@google/generative-ai';
+import type { ConversationMessage } from '../chat/ConversationHistoryService';
 
 export interface ToolMetadata {
     /** Human-readable name shown in the UI (e.g. "Analyse Invoices"). */

@@ -5,7 +5,7 @@
  * response, and returns scenario-specific guidance (new claim vs existing follow-up).
  */
 
-import { ConversationMessage } from './ConversationHistoryService';
+import type { ConversationMessage } from './ConversationHistoryService';
 
 export const CREDIT_REQUEST_FORM_URL =
     'https://forms.zohopublic.com/admin2553/form/ReturnsCreditForm/formperma/awlhYFHJMB1C-LHd-qUCX5ZbrW9q1OLQL1t_g-7T48Q';
@@ -14,7 +14,7 @@ const SUPPORT_CHANNELS =
     'Honest to Goodness support by phone, email, or the web forms on our website';
 
 const NO_RESULTS_PHRASING =
-    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center|i cannot assist/i;
+    /couldn't find an article|could not find an article|no article|knowledge base lacks|kb lacks|not find.*help center|don't have the answer|do not have the answer|one of my colleagues|i cannot assist/i;
 
 const GROUP_GOODNESS = /\b(group goodness|buying group|group member|group admin|group order|group cart)\b/i;
 
@@ -24,6 +24,7 @@ export type ComplaintScenario =
     | 'missing_item'
     | 'wrong_item'
     | 'wrong_price'
+    | 'quality_complaint'
     | 'generic_complaint';
 
 const SCENARIO_PATTERNS: Array<{ scenario: ComplaintScenario; pattern: RegExp }> = [
@@ -37,6 +38,15 @@ const SCENARIO_PATTERNS: Array<{ scenario: ComplaintScenario; pattern: RegExp }>
     {
         scenario: 'wrong_price',
         pattern: /\b(wrong price|overcharged|undercharged|charged (?:the )?wrong|incorrect (?:charge|amount|price)|billing (?:error|issue))\b/i,
+    },
+    // Product-quality complaints. Added 21 Sep 2026 (Iri): taste, texture, mould,
+    // quality, infestation and incorrect weight were all falling through to the KB
+    // and getting "I couldn't find an article". Live examples he sent:
+    // "the dried sultana I got in my last order tastes awful" and
+    // "you send me mouldy passata".
+    {
+        scenario: 'quality_complaint',
+        pattern: /\b(taste[sd]?|tasting|flavour|flavor|smell[sd]?|smelt|smelling|texture|soggy|stale|rancid|off|mould|mold|mouldy|moldy|rotten|rotting|spoiled|spoilt|gone bad|out of date|expired|use by|quality|poor quality|bad quality|infest\w*|weevil\w*|bug[s]?|insect[s]?|larvae|maggot[s]?|worm[s]?|underweight|short ?weight|incorrect weight|wrong weight|light on weight|not the (?:right|correct) weight)\b/i,
     },
     {
         scenario: 'generic_complaint',
@@ -99,6 +109,8 @@ export class ComplaintsResponseGate {
                 return this.buildWrongItemResponse();
             case 'wrong_price':
                 return this.buildWrongPriceResponse();
+            case 'quality_complaint':
+                return this.buildQualityComplaintResponse();
             case 'generic_complaint':
                 return this.buildGenericComplaintResponse();
             default:
@@ -129,13 +141,15 @@ export class ComplaintsResponseGate {
 
     private static buildDamagedResponse(): string {
         return [
-            "I'm sorry to hear your item arrived damaged — that's frustrating.",
+            "I'm so sorry to hear your item arrived damaged.",
             '',
-            'You can submit a new credit or returns request using our official form:',
+            'Please fill in our credit request form to enable us to investigate and rectify the issue. The link to the form is here:',
             '',
             CREDIT_REQUEST_FORM_URL,
             '',
-            'When you submit, please report damage within 2 days of receipt and include clear photos of the damage and packaging. Claims are usually processed within about 7 business days once submitted with the required information.',
+            // CONFIRMED (Iri, 21 Sep 2026), including the change from 7 business days
+            // to 3 to 4 days. His wording, not a paraphrase.
+            'Please make sure to include clear photos of the damage and the packaging. All damage claims have to be made within 2 days of receipt. Processing usually takes around 3 to 4 days once all the information is submitted.',
         ].join('\n');
     }
 
@@ -172,6 +186,21 @@ export class ComplaintsResponseGate {
             CREDIT_REQUEST_FORM_URL,
             '',
             'Please include your order number, what you were charged, and what you expected to pay. Our team will review your submission — processing is typically within about 7 business days.',
+        ].join('\n');
+    }
+
+    /** CONFIRMED wording (Iri, 21 Sep 2026). Deliberately does NOT quote the 2-day
+     *  damage window or the 3-to-4-day processing time: those are the damage policy,
+     *  and Iri asked for a 48-hour response commitment on quality complaints instead. */
+    private static buildQualityComplaintResponse(): string {
+        return [
+            "I'm so sorry to hear that.",
+            '',
+            'Please fill in our credit request form to help us investigate the issue. The link to the form is here:',
+            '',
+            CREDIT_REQUEST_FORM_URL,
+            '',
+            'Please make sure to include any relevant photos. We will get back to you within 48 hours.',
         ].join('\n');
     }
 
