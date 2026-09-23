@@ -10,6 +10,7 @@ import { KbSearchQueryResolver } from '../chat/KbSearchQueryResolver';
 import { ZohoDeskClient } from '../zoho/ZohoDeskClient';
 import type { ZohoArticle } from '../zoho/ZohoDeskClient';
 import { redactPII } from '@/lib/services/privacy/redact';
+import { internalKbService } from '../zoho/InternalKbService';
 import { traceable } from 'langsmith/traceable';
 
 const logger = getLogger('ZohoKbToolService');
@@ -100,6 +101,57 @@ export class ZohoKbToolService implements AgentTool {
                 originalQuestion: segmentFollowUp.originalQuestion,
             }),
         };
+
+        // ── Systems Support KB first ────────────────────────────────────────
+        // Iri's curated, agent-specific KB (Sep 2026). It is a superset of the
+        // public articles with the wording he wants, so when it answers, it wins.
+        // Dark until INTERNAL_KB_ENABLED=true, and every failure falls straight
+        // through to the public portals below, so switching it on cannot take the
+        // knowledge base away.
+        if (settings.zohoDesk.internalKbEnabled) {
+            try {
+                const internal = await internalKbService.search(query);
+                // A guidance-only result is not an answer: those articles say
+                // "please refer to the article X" and would be quoted at the
+                // customer. Require at least one article written as an answer.
+                const answerable = internal.filter((m) => !m.article.guidance);
+                if (answerable.length > 0) {
+                    logger.info(`Answered from the Systems Support KB (${internal.length} article(s), ${answerable.length} answerable)`);
+                    return {
+                        toolResponse: {
+                            status: 'success',
+                            source: 'systems-support',
+                            bestArticle: {
+                                title: answerable[0].article.title,
+                                summary: answerable[0].article.body,
+                                url: '',
+                            },
+                            relatedArticles: answerable.slice(1, 3).map((m) => ({
+                                title: m.article.title, summary: m.article.body, url: '',
+                            })),
+                            articles: answerable.map((m) => ({
+                                title: m.article.title, summary: m.article.body, url: '',
+                            })),
+                            // Guidance travels separately so the caller can treat it
+                            // as direction rather than as something to repeat.
+                            guidance: internal.filter((m) => m.article.guidance).map((m) => ({
+                                title: m.article.title, body: m.article.body,
+                            })),
+                            ...(segmentFollowUp && {
+                                segmentFollowUp: {
+                                    segmentAnswer: segmentFollowUp.segmentAnswer,
+                                    originalQuestion: segmentFollowUp.originalQuestion,
+                                },
+                            }),
+                        },
+                        actualArgs,
+                    };
+                }
+                logger.info('Systems Support KB had no answerable match; falling through to the public portals');
+            } catch (err) {
+                logger.error(`Systems Support KB lookup failed, falling through: ${redactPII(String(err))}`);
+            }
+        }
 
         const [portalId, portalId2] = zohoConfig?.publicPortalIds ?? [];
 

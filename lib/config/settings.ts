@@ -47,6 +47,15 @@ export const settings = {
         ),
         /** Web-based Zoho clients: same redirect_uri as API Console when exchanging / refreshing tokens */
         oauthRedirectUri: envTrim(process.env.ZOHO_REDIRECT_URI),
+        /**
+         * Systems Support department: the agent-specific KB Iri built (Sep 2026).
+         * Not published to any help centre, so it is read through the authenticated
+         * Desk API and needs Desk.articles.READ on the token.
+         * Empty disables the internal KB entirely and the public portals serve alone.
+         */
+        systemsSupportDepartmentId: envTrim(process.env.ZOHO_SS_DEPARTMENT_ID),
+        /** Dark until true, so it can deploy ahead of being switched on. */
+        internalKbEnabled: envTrim(process.env.INTERNAL_KB_ENABLED) === 'true',
     },
 
     /**
