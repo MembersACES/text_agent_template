@@ -83,7 +83,11 @@ function ChatWidgetPageContent() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-gray-200/90 bg-white shadow-2xl ring-2 ring-white/30 transition-transform hover:scale-[1.03] active:scale-[0.98]"
+          // shadow-lg, not shadow-2xl. The iframe is only 96x88, so a large soft
+          // shadow gets clipped at its edges and reads as a grey square behind the
+          // circle rather than fading out (Morgan, 23 Sep 2026). The white ring went
+          // for the same reason: it widened the halo without adding contrast.
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-gray-200/90 bg-white shadow-lg transition-transform hover:scale-[1.03] active:scale-[0.98]"
           aria-label="Open support chat"
         >
           <span className="relative h-11 w-11 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80">
