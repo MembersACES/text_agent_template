@@ -49,6 +49,16 @@ const MAX_PAGES = 10;
 const GUIDANCE_MARKERS =
     /(please refer to the article|refer to the articles|the agent (?:will |need|should)|please ask the customer|check the article titled|in subsection|sub-?category)/i;
 
+/** A sub-category whose name says these are directions to the agent. Matched on
+ *  the word rather than the exact folder name, because the folder gets renamed:
+ *  it has been 'Instruction', 'Instructions for Agent' and may be renamed again.
+ *  Current id is 493989000228268946, kept here only as a breadcrumb. */
+const GUIDANCE_CATEGORY = /instruction/i;
+
+/** Zoho serves drafts through the same endpoint as published articles. An
+ *  unfinished article must never be read out to a customer. */
+const PUBLISHED = /^published$/i;
+
 /** '$150 minimum', ' $300 minimum' — the postcode tier articles. */
 const TIER_TITLE = /^\s*\$\s*(\d+)\s*minimum\s*$/i;
 
@@ -146,7 +156,7 @@ export class InternalKbService {
             name: String((c as Record<string, unknown>).name ?? ''),
         })).filter((c) => c.id);
 
-        const raw: Array<{ id: string; title: string; category: string }> = [];
+        const raw: Array<{ id: string; title: string; rootCategory: string }> = [];
         for (const cat of categories) {
             let from = 1;
             for (let page = 0; page < MAX_PAGES; page++) {
@@ -155,7 +165,7 @@ export class InternalKbService {
                 const rows = this.data(res.json) ?? [];
                 for (const r of rows) {
                     const o = r as Record<string, unknown>;
-                    raw.push({ id: String(o.id ?? ''), title: String(o.title ?? '').trim(), category: cat.name });
+                    raw.push({ id: String(o.id ?? ''), title: String(o.title ?? '').trim(), rootCategory: cat.name });
                 }
                 if (rows.length < PAGE_SIZE) break;
                 from += PAGE_SIZE;
@@ -163,10 +173,27 @@ export class InternalKbService {
         }
 
         const articles: InternalKbArticle[] = [];
+        const skipped: string[] = [];
         for (const r of raw) {
             if (!r.id) continue;
             const full = await this.fetcher(`/articles/${encodeURIComponent(r.id)}`);
             const o = (full.ok ? full.json : null) as Record<string, unknown> | null;
+
+            // Drafts come back from the same endpoint as published articles.
+            // Reading one to a customer is quoting work in progress.
+            const status = String(o?.status ?? '');
+            if (status && !PUBLISHED.test(status)) {
+                skipped.push(`${r.title} (${status})`);
+                continue;
+            }
+
+            // The listing is done per ROOT category, so cat.name is the root and
+            // every article under it carries the same one. The real sub-category
+            // only comes back on the detail call, and that is what says whether
+            // an article is an instruction.
+            const sub = (o?.category ?? null) as Record<string, unknown> | null;
+            const category = String(sub?.name ?? '').trim() || r.rootCategory;
+
             const rawBody = stripHtml(String(o?.answer ?? o?.summary ?? ''));
             // A tier article is 20k characters of postcodes. Its codes go into the
             // lookup table; its BODY is replaced with a one-line description, so a
@@ -180,8 +207,10 @@ export class InternalKbService {
                 id: r.id,
                 title: r.title,
                 body,
-                category: r.category,
-                guidance: GUIDANCE_MARKERS.test(body),
+                category,
+                // Folder first, wording second. The folder is exact; the wording
+                // check stays as a backstop for an instruction filed elsewhere.
+                guidance: GUIDANCE_CATEGORY.test(category) || GUIDANCE_MARKERS.test(body),
                 references: [],
                 postcodeSource: tier ? rawBody : undefined,
             });
@@ -197,7 +226,7 @@ export class InternalKbService {
 
         logger.info(
             `internal KB loaded: ${articles.length} article(s), ${postcodeTiers.size} postcode(s), ` +
-            `${conflictedPostcodes.size} conflicted, ${articles.filter((a) => a.guidance).length} guidance`,
+            `${conflictedPostcodes.size} conflicted, ${articles.filter((a) => a.guidance).length} guidance` + (skipped.length ? `, ${skipped.length} unpublished skipped: ${skipped.join('; ')}` : ''),
         );
 
         return { articles, postcodeTiers, conflictedPostcodes, loadedAt: Date.now() };
