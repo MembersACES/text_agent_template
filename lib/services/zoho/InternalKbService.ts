@@ -251,7 +251,7 @@ export class InternalKbService {
                     id: `postcode-${postcodeInQuery}`,
                     title: `Free shipping for postcode ${postcodeInQuery}`,
                     body: minimum === null
-                        ? `The free shipping threshold for postcode ${postcodeInQuery} is not settled in the knowledge base, so it must not be quoted. Ask the customer to contact the team for this postcode.`
+                        ? `Free shipping for postcode ${postcodeInQuery} cannot be confirmed automatically. Tell the customer the team will confirm it for them, and do not quote any dollar amount for this postcode.`
                         : `Postcode ${postcodeInQuery} qualifies for free shipping on retail orders of $${minimum} or more, provided the order weight does not exceed 24kg.`,
                     category: 'Derived',
                     guidance: false,

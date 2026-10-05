@@ -54,9 +54,41 @@ const SCENARIO_PATTERNS: Array<{ scenario: ComplaintScenario; pattern: RegExp }>
     },
 ];
 
+/** Evidence the customer is talking about goods they actually received.
+ *  The scenario patterns above are deliberately broad, so on their own they
+ *  would route "20% off", "is the taste good" or "off the shelf" to the credit
+ *  form. A definite complaint needs both the condition word and this. */
+const RECEIVED_GOODS =
+    /\b(i (?:got|received|ordered|bought|purchased|opened|just got)|my (?:order|delivery|parcel|box|package)|you (?:sent|send|shipped|delivered)|(?:it|they|this|the \w+) (?:arrived|came)|arrived|was delivered|last order|in my order|the \w+ i (?:got|received|ordered|bought))\b/i;
+
 export class ComplaintsResponseGate {
     static matches(message: string): boolean {
         return this.classify(message) !== null;
+    }
+
+    /**
+     * A complaint about goods already received, certain enough to answer from
+     * the template instead of letting the model compose a reply.
+     *
+     * Added 5 Oct 2026. Before the Systems Support KB went live these templates
+     * were reached because the KB search failed. Now the KB answers, so the
+     * model paraphrases and Iri's agreed wording, including the 48 hour
+     * commitment, never reaches the customer.
+     *
+     * wrong_price is deliberately NOT here: Iri asked for that one to be left
+     * at seven business days and it is not a condition complaint.
+     */
+    static isDefiniteProductComplaint(message: string): boolean {
+        const scenario = this.classify(message);
+        if (
+            scenario !== 'damaged' &&
+            scenario !== 'quality_complaint' &&
+            scenario !== 'wrong_item' &&
+            scenario !== 'missing_item'
+        ) {
+            return false;
+        }
+        return RECEIVED_GOODS.test(message);
     }
 
     static classify(message: string, _history: ConversationMessage[] = []): ComplaintScenario | null {

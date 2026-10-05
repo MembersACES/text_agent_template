@@ -167,6 +167,53 @@ const CASES: Case[] = [
             console.log(`        why it matters: ${c.because}`);
         }
     }
-    console.log(`\n${pass} passed, ${fail} failed, ${CASES.length} total`);
+    // ── the strict trigger, added 5 Oct 2026 ────────────────────────────────
+    // The scenario patterns are broad on purpose, so they cannot be used on
+    // their own to short-circuit the model. These cases fix where the line is.
+    const DEFINITE: Array<[string, boolean, string]> = [
+        ['the dried sultana I got in my last order tastes awful', true,
+            "Iri's own example; must give his wording including the 48 hours"],
+        ['you send me mouldy passata', true, "Iri's other example"],
+        ['my order arrived damaged', true, 'the original damage case'],
+        ['I received the wrong item', true, 'wrong item goes to the same form'],
+        ['there was an item missing from my order', true, 'so does a missing item'],
+
+        ['do you have 20% off anything this week', false,
+            '"off" is in the quality pattern; a sale question must not reach the credit form'],
+        ['what is the quality of your olive oil', false,
+            '"quality" is in the pattern; this is a product question'],
+        ['how does the taste compare to the organic range', false,
+            '"taste" is in the pattern; this is a product question'],
+        ['I was overcharged on my order', false,
+            'wrong_price is deliberately excluded; Iri asked to leave that at seven business days'],
+        ['where is my order 10269854', false, 'tracking, not a complaint'],
+        ['I want to follow up on a credit I already submitted', false,
+            'existing claims have their own reply and must not be sent the form again'],
+    ];
+    for (const [say, want, because] of DEFINITE) {
+        const got = ComplaintsResponseGate.isDefiniteProductComplaint(say);
+        if (got === want) { pass++; console.log(`PASS  definite=${want}  ${JSON.stringify(say)}`); }
+        else {
+            fail++;
+            console.log(`FAIL  definite  ${JSON.stringify(say)}`);
+            console.log(`        expected ${want}, got ${got}`);
+            console.log(`        why it matters: ${because}`);
+        }
+    }
+
+    // The template Iri signed off has to be the one that actually goes out.
+    const qualityReply = ComplaintsResponseGate.buildFallbackResponse(
+        'the dried sultana I got in my last order tastes awful', [],
+    ) ?? '';
+    if (/within 48 hours/i.test(qualityReply) && /forms\.zohopublic\.com/i.test(qualityReply)) {
+        pass++; console.log('PASS  the quality template keeps the 48 hour commitment and the form link');
+    } else {
+        fail++;
+        console.log('FAIL  the quality template keeps the 48 hour commitment and the form link');
+        console.log(`        got: ${qualityReply.slice(0, 160)}`);
+        console.log('        why it matters: this is the wording Iri asked for on 21 Sep');
+    }
+
+    console.log(`\n${pass} passed, ${fail} failed, ${pass + fail} total`);
     process.exit(fail ? 1 : 0);
 })();

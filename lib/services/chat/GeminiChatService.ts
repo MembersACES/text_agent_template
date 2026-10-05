@@ -36,15 +36,14 @@ import { PaymentSegmentGate } from './PaymentSegmentGate';
 import { ConversationClosersGate } from './ConversationClosersGate';
 import { ProductAvailabilityGate } from './ProductAvailabilityGate';
 import { GroupGoodnessPaymentGate } from './GroupGoodnessPaymentGate';
+import { NoAnswerGate, NO_RESULTS_FALLBACK_MESSAGE } from './NoAnswerGate';
 
 const logger = getLogger('GeminiChatService');
 // CONFIRMED (Iri, 21 Sep 2026). The old line talked about the help centre's
 // articles, which is the agent's internal problem and means nothing to a customer.
 // Grammar tidied from Iri's draft; substance and the enquiry-form URL are his.
-const ENQUIRY_FORM_URL = 'https://goodness.com.au/contact-us/';
-const NO_RESULTS_FALLBACK_MESSAGE =
-    "I'm so sorry, I don't have the answer to that one. One of my colleagues will be able to help. "
-    + `Please fill in our enquiry form and the team will get back to you shortly:\n\n${ENQUIRY_FORM_URL}`;
+// The wording and the enquiry form now live in NoAnswerGate, because the model
+// composes its own no-answer replies and they have to be caught there too.
 const KB_UNAVAILABLE_FALLBACK_MESSAGE = "I'm having trouble reaching the help center right now. Please try again in a moment or contact support via phone, email or web forms.";
 const EMPTY_CLARIFICATION_RESPONSE =
     "Sorry — I'm not quite sure how to help with that. Could you let me know a bit more about what you're looking for? I can help with payment options, shipping, order status, product availability, or returns and credits.";
@@ -218,6 +217,22 @@ export class GeminiChatService {
                 return {
                     response: ComplaintsResponseGate.buildFallbackResponse(message, conversationHistory)!,
                 };
+            }
+
+            // A complaint about goods already received is answered from Iri's
+            // template, not composed by the model. Before the Systems Support KB
+            // went live these templates were reached because the KB search
+            // failed; now the KB answers and the wording was being lost.
+            if (
+                useKnowledgeBase &&
+                hasKbTool &&
+                ComplaintsResponseGate.isDefiniteProductComplaint(message)
+            ) {
+                logger.info(
+                    `Complaints gate: definite product complaint (${complaintScenario}); answering from template.`,
+                );
+                const templated = ComplaintsResponseGate.buildFallbackResponse(message, conversationHistory);
+                if (templated) return { response: templated };
             }
 
             const historyContext = this.historyService.format(conversationHistory);
@@ -578,6 +593,15 @@ export class GeminiChatService {
                 return { response: PaymentSegmentGate.getSegmentOpener(userMessage) };
             }
             return { response: this.buildBestArticleResponse(result.toolResponse) };
+        }
+
+        if (functionName === 'search_knowledge_base' && NoAnswerGate.shouldReplace(responseText)) {
+            logger.warn(
+                'No-answer gate: replacing the model\'s own non-answer with the enquiry form reply'
+                + ` (cannotAnswer=${NoAnswerGate.saysCannotAnswer(responseText)},`
+                + ` internals=${NoAnswerGate.mentionsInternals(responseText)}).`,
+            );
+            return { response: NO_RESULTS_FALLBACK_MESSAGE };
         }
 
         const reportSuffix = result.generateReport === undefined

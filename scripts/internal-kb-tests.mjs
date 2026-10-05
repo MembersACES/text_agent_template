@@ -611,7 +611,7 @@ var InternalKbService = class {
         article: {
           id: `postcode-${postcodeInQuery}`,
           title: `Free shipping for postcode ${postcodeInQuery}`,
-          body: minimum === null ? `The free shipping threshold for postcode ${postcodeInQuery} is not settled in the knowledge base, so it must not be quoted. Ask the customer to contact the team for this postcode.` : `Postcode ${postcodeInQuery} qualifies for free shipping on retail orders of $${minimum} or more, provided the order weight does not exceed 24kg.`,
+          body: minimum === null ? `Free shipping for postcode ${postcodeInQuery} cannot be confirmed automatically. Tell the customer the team will confirm it for them, and do not quote any dollar amount for this postcode.` : `Postcode ${postcodeInQuery} qualifies for free shipping on retail orders of $${minimum} or more, provided the order weight does not exceed 24kg.`,
           category: "Derived",
           guidance: false,
           references: []
@@ -968,11 +968,18 @@ function check(name, ok, detail = "", because = "") {
     "membership of a 4,000 entry list is a lookup, not a comprehension task"
   );
   const conflicted = await svc.search("free shipping to 2280");
+  const conflictedBody = conflicted[0]?.article.body ?? "";
   check(
     "a conflicted postcode refuses rather than picking",
-    /must not be quoted/.test(conflicted[0]?.article.body ?? ""),
-    `got ${conflicted[0]?.article.body?.slice(0, 120)}`,
+    /cannot be confirmed/i.test(conflictedBody) && !/\$\s?\d/.test(conflictedBody),
+    `got ${conflictedBody.slice(0, 140)}`,
     "2280 is in both the $300 and $400 tiers on the live KB"
+  );
+  check(
+    "the refusal never names the knowledge base",
+    !/knowledge base/i.test(conflictedBody),
+    `got ${conflictedBody.slice(0, 140)}`,
+    'on 5 Oct the sandbox told a customer the threshold was "not settled in our knowledge base"'
   );
   const broken = new InternalKbService(brokenFetcher(), DEPT);
   check(

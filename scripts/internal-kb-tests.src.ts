@@ -226,10 +226,16 @@ function check(name: string, ok: boolean, detail = '', because = '') {
         'membership of a 4,000 entry list is a lookup, not a comprehension task');
 
     const conflicted = await svc.search('free shipping to 2280');
+    const conflictedBody = conflicted[0]?.article.body ?? '';
     check('a conflicted postcode refuses rather than picking',
-        /must not be quoted/.test(conflicted[0]?.article.body ?? ''),
-        `got ${conflicted[0]?.article.body?.slice(0, 120)}`,
+        /cannot be confirmed/i.test(conflictedBody) && !/\$\s?\d/.test(conflictedBody),
+        `got ${conflictedBody.slice(0, 140)}`,
         '2280 is in both the $300 and $400 tiers on the live KB');
+
+    check('the refusal never names the knowledge base',
+        !/knowledge base/i.test(conflictedBody),
+        `got ${conflictedBody.slice(0, 140)}`,
+        'on 5 Oct the sandbox told a customer the threshold was "not settled in our knowledge base"');
 
     // ── resilience ──────────────────────────────────────────────────────────
     const broken = new InternalKbService(brokenFetcher(), DEPT);
