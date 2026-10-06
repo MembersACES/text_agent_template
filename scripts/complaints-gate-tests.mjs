@@ -29,9 +29,29 @@ var SCENARIO_PATTERNS = [
     pattern: /\b(return|refund|credit request|complaint|faulty|problem with my order)\b/i
   }
 ];
+var RECEIVED_GOODS = /\b(i (?:got|received|ordered|bought|purchased|opened|just got)|my (?:order|delivery|parcel|box|package)|you (?:sent|send|shipped|delivered)|(?:it|they|this|the \w+) (?:arrived|came)|arrived|was delivered|last order|in my order|the \w+ i (?:got|received|ordered|bought))\b/i;
 var ComplaintsResponseGate = class {
   static matches(message) {
     return this.classify(message) !== null;
+  }
+  /**
+   * A complaint about goods already received, certain enough to answer from
+   * the template instead of letting the model compose a reply.
+   *
+   * Added 5 Oct 2026. Before the Systems Support KB went live these templates
+   * were reached because the KB search failed. Now the KB answers, so the
+   * model paraphrases and Iri's agreed wording, including the 48 hour
+   * commitment, never reaches the customer.
+   *
+   * wrong_price is deliberately NOT here: Iri asked for that one to be left
+   * at seven business days and it is not a condition complaint.
+   */
+  static isDefiniteProductComplaint(message) {
+    const scenario = this.classify(message);
+    if (scenario !== "damaged" && scenario !== "quality_complaint" && scenario !== "wrong_item" && scenario !== "missing_item") {
+      return false;
+    }
+    return RECEIVED_GOODS.test(message);
   }
   static classify(message, _history = []) {
     for (const { scenario, pattern } of SCENARIO_PATTERNS) {
@@ -406,7 +426,16 @@ var settings = {
       `desk.zoho.${envTrim(process.env.ZOHO_DATACENTER, "com.au")}`
     ),
     /** Web-based Zoho clients: same redirect_uri as API Console when exchanging / refreshing tokens */
-    oauthRedirectUri: envTrim(process.env.ZOHO_REDIRECT_URI)
+    oauthRedirectUri: envTrim(process.env.ZOHO_REDIRECT_URI),
+    /**
+     * Systems Support department: the agent-specific KB Iri built (Sep 2026).
+     * Not published to any help centre, so it is read through the authenticated
+     * Desk API and needs Desk.articles.READ on the token.
+     * Empty disables the internal KB entirely and the public portals serve alone.
+     */
+    systemsSupportDepartmentId: envTrim(process.env.ZOHO_SS_DEPARTMENT_ID),
+    /** Dark until true, so it can deploy ahead of being switched on. */
+    internalKbEnabled: envTrim(process.env.INTERNAL_KB_ENABLED) === "true"
   },
   /**
    * dotWMS — the Syspro-era warehouse lookup that translates a BigCommerce
@@ -1887,7 +1916,69 @@ var CASES = [
       console.log(`        why it matters: ${c.because}`);
     }
   }
+  const DEFINITE = [
+    [
+      "the dried sultana I got in my last order tastes awful",
+      true,
+      "Iri's own example; must give his wording including the 48 hours"
+    ],
+    ["you send me mouldy passata", true, "Iri's other example"],
+    ["my order arrived damaged", true, "the original damage case"],
+    ["I received the wrong item", true, "wrong item goes to the same form"],
+    ["there was an item missing from my order", true, "so does a missing item"],
+    [
+      "do you have 20% off anything this week",
+      false,
+      '"off" is in the quality pattern; a sale question must not reach the credit form'
+    ],
+    [
+      "what is the quality of your olive oil",
+      false,
+      '"quality" is in the pattern; this is a product question'
+    ],
+    [
+      "how does the taste compare to the organic range",
+      false,
+      '"taste" is in the pattern; this is a product question'
+    ],
+    [
+      "I was overcharged on my order",
+      false,
+      "wrong_price is deliberately excluded; Iri asked to leave that at seven business days"
+    ],
+    ["where is my order 10269854", false, "tracking, not a complaint"],
+    [
+      "I want to follow up on a credit I already submitted",
+      false,
+      "existing claims have their own reply and must not be sent the form again"
+    ]
+  ];
+  for (const [say, want, because] of DEFINITE) {
+    const got = ComplaintsResponseGate.isDefiniteProductComplaint(say);
+    if (got === want) {
+      pass++;
+      console.log(`PASS  definite=${want}  ${JSON.stringify(say)}`);
+    } else {
+      fail++;
+      console.log(`FAIL  definite  ${JSON.stringify(say)}`);
+      console.log(`        expected ${want}, got ${got}`);
+      console.log(`        why it matters: ${because}`);
+    }
+  }
+  const qualityReply = ComplaintsResponseGate.buildFallbackResponse(
+    "the dried sultana I got in my last order tastes awful",
+    []
+  ) ?? "";
+  if (/within 48 hours/i.test(qualityReply) && /forms\.zohopublic\.com/i.test(qualityReply)) {
+    pass++;
+    console.log("PASS  the quality template keeps the 48 hour commitment and the form link");
+  } else {
+    fail++;
+    console.log("FAIL  the quality template keeps the 48 hour commitment and the form link");
+    console.log(`        got: ${qualityReply.slice(0, 160)}`);
+    console.log("        why it matters: this is the wording Iri asked for on 21 Sep");
+  }
   console.log(`
-${pass} passed, ${fail} failed, ${CASES.length} total`);
+${pass} passed, ${fail} failed, ${pass + fail} total`);
   process.exit(fail ? 1 : 0);
 })();
