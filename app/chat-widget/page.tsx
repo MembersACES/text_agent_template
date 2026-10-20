@@ -91,7 +91,7 @@ function ChatWidgetPageContent() {
           aria-label="Open support chat"
         >
           <span className="relative h-11 w-11 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80">
-            <Image src={logoSrc} alt="" width={44} height={44} className="h-full w-full object-cover" />
+            <Image src={logoSrc} alt="" width={132} height={132} className="h-full w-full object-cover" />
           </span>
         </button>
       )}

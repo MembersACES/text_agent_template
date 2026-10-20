@@ -583,7 +583,7 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
             <div className="chat-panel-header flex shrink-0 items-center justify-between px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2.5">
                     <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-white/15 ring-1 ring-white/25">
-                        <Image src={getBranchLogoUrl(agentId)} alt="" width={32} height={32} className="h-full w-full object-cover" />
+                        <Image src={getBranchLogoUrl(agentId)} alt="" width={96} height={96} className="h-full w-full object-cover" />
                     </div>
                     <div className="flex min-w-0 flex-col">
                         <span className="text-[13px] font-semibold tracking-tight text-white">{agentName}</span>
@@ -661,7 +661,7 @@ export default function ChatWindow({ refreshTrigger, agentId, onEmbedMinimize }:
                     <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-start gap-2`}>
                         {message.role === 'assistant' && (
                             <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200/80 mt-0.5">
-                                <Image src={getBranchLogoUrl(agentId)} alt="" width={32} height={32} className="h-full w-full object-cover" />
+                                <Image src={getBranchLogoUrl(agentId)} alt="" width={96} height={96} className="h-full w-full object-cover" />
                             </div>
                         )}
                         <div
